@@ -30,6 +30,11 @@ void run_accept(struct accept_param* param) {
 	spfd.fd = param->server_fd;
 	while (1) {
 		struct conn* c = xmalloc(sizeof(struct conn));
+		c->readBuffer = NULL;
+		c->readBuffer_size = 0;
+		c->readBuffer_checked = 0;
+		c->writeBuffer = NULL;
+		c->readBuffer_size = 0;
 		if (poll(&spfd, 1, -1) < 0) {
 			printf("Error while polling server: %s\n", strerror(errno));
 			xfree(c);

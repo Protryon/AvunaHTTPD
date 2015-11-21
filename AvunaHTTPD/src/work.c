@@ -17,6 +17,9 @@
 #include "collection.h"
 #include "util.h"
 #include "streams.h"
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include "http.h"
 
 void run_work(struct work_param* param) {
 	if (pipe(param->pipes) != 0) {
@@ -55,15 +58,52 @@ void run_work(struct work_param* param) {
 		for (int i = 0; i < cc; i++) {
 			int re = fds[i].revents;
 			if ((re & POLLIN) == POLLIN) {
-				while (readLine(fds[i].fd, (char*) mbuf, 1024) < ((size_t) - 1)) {
-					printf("%s\n", mbuf);
-					writeLine(fds[i].fd, (char*) mbuf, strlen((char*) mbuf));
+				int tr = 0;
+				ioctl(fds[i].fd, FIONREAD, &tr);
+				unsigned char* loc;
+				if (conns[i]->readBuffer == NULL) {
+					conns[i]->readBuffer = xmalloc(tr); // TODO: max upload?
+					conns[i]->readBuffer_size = tr;
+					loc = conns[i]->readBuffer;
+				} else {
+					conns[i]->readBuffer_size += tr;
+					conns[i]->readBuffer = xrealloc(conns[i]->readBuffer, conns[i]->readBuffer_size);
+					loc = conns[i]->readBuffer + conns[i]->readBuffer_size - tr;
+				}
+				int r = 0;
+				while (r < tr) {
+					int x = read(fds[i].fd, loc + r, tr - r);
+					if (x <= 0) {
+						close(fds[i].fd);
+						rem_collection(param->conns, &conns[i]);
+						xfree(&conns[i]);
+					}
+				}
+				static unsigned char tm[4] = { 0x0A, 0x0D, 0x0A, 0x0D };
+				int ml = 0;
+				for (int x = conns[i]->readBuffer_checked; x < conns[i]->readBuffer_size; x++) {
+					if (conns[i]->readBuffer[x] == tm[ml]) {
+						ml++;
+						if (ml == 4) {
+							unsigned char* reqd = xmalloc(x);
+							memcpy(reqd, conns[i]->readBuffer, x);
+							conns[i]->readBuffer_size -= x;
+							conns[i]->readBuffer_checked = 0;
+							memmove(conns[i]->readBuffer, conns[i]->readBuffer + x, conns[i]->readBuffer_size);
+							struct request req = xmalloc(sizeof(struct request));
+							parseRequest(req, reqd);
+							struct response resp = xmalloc(sizeof(struct response));
+							generateResponse(conns[i], &resp, &req);
+
+						}
+					}
 				}
 			}
 			if ((re & POLLERR) == POLLERR) {
 				printf("POLLERR in worker poll! This is bad!\n");
 			}
 			if ((re & POLLHUP) == POLLHUP) {
+				close(fds[i].fd);
 				rem_collection(param->conns, &conns[i]);
 				xfree(&conns[i]);
 			}
@@ -73,4 +113,5 @@ void run_work(struct work_param* param) {
 			if (--cp == 0) break;
 		}
 	}
+	xfree(mbuf);
 }

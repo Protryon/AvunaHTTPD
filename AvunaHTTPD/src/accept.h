@@ -25,6 +25,11 @@ struct conn {
 		int fd;
 		struct sockaddr addr;
 		socklen_t addrlen;
+		unsigned char* readBuffer;
+		ssize_t readBuffer_size;
+		ssize_t readBuffer_checked;
+		unsigned char* writeBuffer;
+		ssize_t writeBuffer_size;
 };
 
 void run_accept(struct accept_param* param);
