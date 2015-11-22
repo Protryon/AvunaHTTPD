@@ -41,7 +41,7 @@ int main(int argc, char* argv[]) {
 	if (argc == 1) {
 		memcpy(cwd, "/etc/avuna/", 11);
 		cwd[11] = 0;
-		char* dn = (char*) xcopy(DAEMON_NAME, strlen(DAEMON_NAME), 0);
+		char* dn = (char*) xcopy(DAEMON_NAME, strlen(DAEMON_NAME) + 1, 0);
 		strcat(cwd, toLowerCase(dn));
 		xfree(dn);
 	} else {
@@ -202,6 +202,13 @@ int main(int argc, char* argv[]) {
 			else printf("Error creating socket for server, %s\n", strerror(errno));
 			continue;
 		}
+		int one = 1;
+		if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one)) == -1) {
+			if (serv->id != NULL) printf("Error setting SO_REUSEADDR for server: %s, %s\n", serv->id, strerror(errno));
+			else printf("Error setting SO_REUSEADDR for server, %s\n", strerror(errno));
+			close (sfd);
+			continue;
+		}
 		if (namespace == PF_INET) {
 			struct sockaddr_in bip;
 			bip.sin_family = AF_INET;
@@ -239,13 +246,6 @@ int main(int argc, char* argv[]) {
 			close (sfd);
 			continue;
 		}
-		int one = 1;
-		if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one)) == -1) {
-			if (serv->id != NULL) printf("Error setting SO_REUSEADDR for server: %s, %s\n", serv->id, strerror(errno));
-			else printf("Error setting SO_REUSEADDR for server, %s\n", strerror(errno));
-			close (sfd);
-			continue;
-		}
 		if (fcntl(sfd, F_SETFL, fcntl(sfd, F_GETFL) | O_NONBLOCK) < 0) {
 			if (serv->id != NULL) printf("Error setting non-blocking for server: %s, %s\n", serv->id, strerror(errno));
 			else printf("Error setting non-blocking for server, %s\n", strerror(errno));
@@ -263,7 +263,7 @@ int main(int argc, char* argv[]) {
 		ap->works = xmalloc(sizeof(struct work_param*) * tc);
 		for (int i = 0; i < tc; i++) {
 			struct work_param* wp = xmalloc(sizeof(struct work_param));
-			wp->conns = new_collection(mc < 1 ? 0 : mc / tc, sizeof(struct conn));
+			wp->conns = new_collection(mc < 1 ? 0 : mc / tc, sizeof(struct conn*));
 			ap->works[i] = wp;
 		}
 		pthread_t pt;

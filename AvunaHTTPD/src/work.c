@@ -21,6 +21,14 @@
 #include <sys/ioctl.h>
 #include "http.h"
 
+void closeConn(struct collection* coll, struct conn* conn) {
+	close(conn->fd);
+	rem_collection(coll, conn);
+	if (conn->readBuffer != NULL) xfree(conn->readBuffer);
+	if (conn->writeBuffer != NULL) xfree(conn->writeBuffer);
+	xfree(conn);
+}
+
 void run_work(struct work_param* param) {
 	if (pipe(param->pipes) != 0) {
 		printf("Failed to create pipe! %s\n", strerror(errno));
@@ -38,7 +46,7 @@ void run_work(struct work_param* param) {
 			if (param->conns->data[i * param->conns->dsize] != NULL) {
 				conns[fdi] = (param->conns->data[i * param->conns->dsize]);
 				fds[fdi].fd = conns[fdi]->fd;
-				fds[fdi].events = POLLIN;
+				fds[fdi].events = POLLIN | (conns[fdi]->writeBuffer_size > 0 ? POLLOUT : 0);
 				fds[fdi++].revents = 0;
 				if (fdi == cc) break;
 			}
@@ -74,43 +82,99 @@ void run_work(struct work_param* param) {
 				while (r < tr) {
 					int x = read(fds[i].fd, loc + r, tr - r);
 					if (x <= 0) {
-						close(fds[i].fd);
-						rem_collection(param->conns, &conns[i]);
-						xfree(&conns[i]);
+						closeConn(param->conns, conns[i]);
+						conns[i] = NULL;
+						goto cont;
 					}
+					r += x;
 				}
-				static unsigned char tm[4] = { 0x0A, 0x0D, 0x0A, 0x0D };
+				static unsigned char tm[4] = { 0x0D, 0x0A, 0x0D, 0x0A };
 				int ml = 0;
 				for (int x = conns[i]->readBuffer_checked; x < conns[i]->readBuffer_size; x++) {
 					if (conns[i]->readBuffer[x] == tm[ml]) {
 						ml++;
 						if (ml == 4) {
-							unsigned char* reqd = xmalloc(x);
-							memcpy(reqd, conns[i]->readBuffer, x);
-							conns[i]->readBuffer_size -= x;
+							unsigned char* reqd = xmalloc(x + 2);
+							memcpy(reqd, conns[i]->readBuffer, x + 1);
+							reqd[x + 1] = 0;
+							conns[i]->readBuffer_size -= x + 1;
 							conns[i]->readBuffer_checked = 0;
-							memmove(conns[i]->readBuffer, conns[i]->readBuffer + x, conns[i]->readBuffer_size);
-							struct request req = xmalloc(sizeof(struct request));
-							parseRequest(req, reqd);
-							struct response resp = xmalloc(sizeof(struct response));
-							generateResponse(conns[i], &resp, &req);
-
+							memmove(conns[i]->readBuffer, conns[i]->readBuffer + x + 1, conns[i]->readBuffer_size);
+							struct request* req = xmalloc(sizeof(struct request));
+							if (parseRequest(req, (char*) reqd) < 0) {
+								printf("Malformed Request!\n");
+								xfree(req);
+								xfree(reqd);
+								closeConn(param->conns, conns[i]);
+								goto cont;
+							}
+							struct response* resp = xmalloc(sizeof(struct response));
+							generateResponse(conns[i], resp, req);
+							size_t rl = 0;
+							unsigned char* rda = serializeResponse(resp, &rl);
+							size_t mtr = write(fds[i].fd, rda, rl);
+							if (mtr < 0 && errno != EAGAIN) {
+								closeConn(param->conns, conns[i]);
+								conns[i] = NULL;
+							} else if (mtr >= rl) {
+								//done writing!
+							} else {
+								unsigned char* stw = rda + mtr;
+								rl -= mtr;
+								if (conns[i]->writeBuffer == NULL) {
+									conns[i]->writeBuffer = xmalloc(rl); // TODO: max upload?
+									conns[i]->writeBuffer_size = rl;
+									loc = conns[i]->writeBuffer;
+								} else {
+									conns[i]->writeBuffer_size += rl;
+									conns[i]->writeBuffer = xrealloc(conns[i]->writeBuffer, conns[i]->writeBuffer_size);
+									loc = conns[i]->writeBuffer + conns[i]->writeBuffer_size - rl;
+								}
+								memcpy(loc, stw, rl);
+							}
+							xfree(rda);
+							xfree(req->path);
+							xfree(req->version);
+							freeHeaders(&req->headers);
+							xfree(req);
+							freeHeaders(&resp->headers);
+							xfree(resp);
+							//TODO: free bodies
 						}
-					}
+					} else ml = 0;
+				}
+				if (conns[i] != NULL) {
+					conns[i]->readBuffer_checked = conns[i]->readBuffer_size - 10;
+					if (conns[i]->readBuffer_checked < 0) conns[i]->readBuffer_checked = 0;
 				}
 			}
-			if ((re & POLLERR) == POLLERR) {
-				printf("POLLERR in worker poll! This is bad!\n");
+			if ((re & POLLOUT) == POLLOUT && conns[i] != NULL) {
+				size_t mtr = write(fds[i].fd, conns[i]->writeBuffer, conns[i]->writeBuffer_size);
+				if (mtr < 0) {
+					closeConn(param->conns, conns[i]);
+					conns[i] = NULL;
+					goto cont;
+				} else if (mtr < conns[i]->writeBuffer_size) {
+					memmove(conns[i]->writeBuffer, conns[i]->writeBuffer + mtr, conns[i]->writeBuffer_size - mtr);
+					conns[i]->writeBuffer_size -= mtr;
+					conns[i]->writeBuffer = xrealloc(conns[i]->writeBuffer, conns[i]->writeBuffer_size);
+				} else {
+					conns[i]->writeBuffer_size = 0;
+					xfree(conns[i]->writeBuffer);
+					conns[i]->writeBuffer = NULL;
+				}
 			}
-			if ((re & POLLHUP) == POLLHUP) {
-				close(fds[i].fd);
-				rem_collection(param->conns, &conns[i]);
-				xfree(&conns[i]);
+			if ((re & POLLERR) == POLLERR) { //TODO: probably a HUP
+				//printf("POLLERR in worker poll! This is bad!\n");
+			}
+			if ((re & POLLHUP) == POLLHUP && conns[i] != NULL) {
+				closeConn(param->conns, conns[i]);
+				conns[i] = NULL;
 			}
 			if ((re & POLLNVAL) == POLLNVAL) {
 				printf("Invalid FD in worker poll! This is bad!\n");
 			}
-			if (--cp == 0) break;
+			cont: if (--cp == 0) break;
 		}
 	}
 	xfree(mbuf);

@@ -15,7 +15,7 @@
 void* xmalloc(size_t size) {
 	void* m = malloc(size);
 	if (m == NULL) {
-		printf("Out of Memory!\n");
+		printf("Out of Memory! @ malloc size %u\n", size);
 		exit(1);
 	}
 	return m;
@@ -28,16 +28,20 @@ void xfree(void* ptr) {
 void* xcalloc(size_t size) {
 	void* m = calloc(1, size);
 	if (m == NULL) {
-		printf("Out of Memory!\n");
+		printf("Out of Memory! @ calloc size %u\n", size);
 		exit(1);
 	}
 	return m;
 }
 
 void* xrealloc(void* ptr, size_t size) {
+	if (size == 0) {
+		xfree(ptr);
+		return NULL;
+	}
 	void* m = realloc(ptr, size);
 	if (m == NULL) {
-		printf("Out of Memory!\n");
+		printf("Out of Memory! @ realloc size %u\n", size);
 		exit(1);
 	}
 	return m;

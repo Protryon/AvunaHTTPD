@@ -9,6 +9,7 @@
 #define UTIL_H_
 
 #include <sys/stat.h>
+#include <stdlib.h>
 
 void* xmalloc(size_t size);
 

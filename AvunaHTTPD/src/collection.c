@@ -19,6 +19,7 @@ struct collection* new_collection(size_t capacity, size_t data_size) {
 	coll->rc = capacity == 0 ? 1 : 0;
 	coll->dsize = data_size;
 	coll->size = 0;
+	coll->count = 0;
 	if (pthread_mutex_init(&coll->data_mutex, NULL)) {
 		xfree(coll->data);
 		coll->data = NULL;

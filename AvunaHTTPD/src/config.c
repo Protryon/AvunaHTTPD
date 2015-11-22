@@ -80,9 +80,9 @@ struct config* loadConfig(const char* file) {
 			if (id == NULL) {
 				cat->id = NULL;
 			} else {
-				int idl = strlen(id + 1);
+				int idl = strlen(id) + 1;
 				cat->id = xmalloc(idl);
-				memcpy(cat->id, id, idl + 1);
+				memcpy(cat->id, id, idl);
 			}
 		} else {
 			char* value = strchr(wl, '=');

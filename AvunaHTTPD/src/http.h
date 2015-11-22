@@ -5,6 +5,9 @@
  *      Author: root
  */
 
+#include <stdlib.h>
+#include "accept.h"
+
 #ifndef HTTP_H_
 #define HTTP_H_
 
@@ -19,12 +22,20 @@ struct headers {
 		char** values;
 };
 
-int parseHeaders(struct headers* headers, unsigned char* data);
-unsigned char* serializeHeaders(struct headers* headers, ssize_t* len);
+const char* header_get(const struct headers* headers, const char* name);
+
+int header_set(struct headers* headers, const char* name, const char* value);
+
+int header_add(struct headers* headers, const char* name, const char* value);
+
+int parseHeaders(struct headers* headers, char* data);
+char* serializeHeaders(struct headers* headers, size_t* len);
+
+void freeHeaders(struct headers* headers);
 
 struct body {
 		char* mime_type;
-		ssize_t len;
+		size_t len;
 		unsigned char* data;
 };
 
@@ -36,18 +47,18 @@ struct request {
 		struct body* body; // may be NULL
 };
 
-int parseRequest(struct request* request, unsigned char* data);
-unsigned char* serializeRequest(struct request* request, ssize_t* len);
+int parseRequest(struct request* request, char* data);
+unsigned char* serializeRequest(struct request* request, size_t* len);
 
 struct response {
 		char* version;
-		struct response_code *rcode;
+		char* code;
 		struct headers headers;
 		struct body* body; // may be NULL
 };
 
-int parseResponse(struct response* response, unsigned char* data);
-unsigned char* serializeResponse(struct response* response, ssize_t* len);
+int parseResponse(struct response* response, char* data);
+unsigned char* serializeResponse(struct response* response, size_t* len);
 
 int generateResponse(struct conn* sender, struct response* response, struct request* request);
 
