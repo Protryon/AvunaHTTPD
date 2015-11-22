@@ -214,6 +214,7 @@ int generateResponse(struct conn* sender, struct response* response, struct requ
 	strcat(svr, VERSION);
 	header_add(&response->headers, "Server", svr);
 	response->body = NULL;
+	header_add(&response->headers, "Connection", "keep-alive");
 	//body stuff
 	header_add(&response->headers, "Content-Type", response->body == NULL ? "text/html" : response->body->mime_type);
 	char l[16];

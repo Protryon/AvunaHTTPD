@@ -23,7 +23,9 @@
 
 void closeConn(struct collection* coll, struct conn* conn) {
 	close(conn->fd);
-	rem_collection(coll, conn);
+	if (rem_collection(coll, conn)) {
+		printf("Failed to delete connection properly! This is bad!\n");
+	}
 	if (conn->readBuffer != NULL) xfree(conn->readBuffer);
 	if (conn->writeBuffer != NULL) xfree(conn->writeBuffer);
 	xfree(conn);
@@ -43,10 +45,11 @@ void run_work(struct work_param* param) {
 		struct conn* conns[cc];
 		int fdi = 0;
 		for (int i = 0; i < param->conns->size; i++) {
-			if (param->conns->data[i * param->conns->dsize] != NULL) {
-				conns[fdi] = (param->conns->data[i * param->conns->dsize]);
-				fds[fdi].fd = conns[fdi]->fd;
-				fds[fdi].events = POLLIN | (conns[fdi]->writeBuffer_size > 0 ? POLLOUT : 0);
+			struct conn* conn = param->conns->data[i];
+			if (conn != NULL) {
+				conns[fdi] = conn;
+				fds[fdi].fd = conn->fd;
+				fds[fdi].events = POLLIN | (conn->writeBuffer_size > 0 ? POLLOUT : 0);
 				fds[fdi++].revents = 0;
 				if (fdi == cc) break;
 			}
@@ -65,6 +68,7 @@ void run_work(struct work_param* param) {
 		}
 		for (int i = 0; i < cc; i++) {
 			int re = fds[i].revents;
+			if (re == 0) continue;
 			if ((re & POLLIN) == POLLIN) {
 				int tr = 0;
 				ioctl(fds[i].fd, FIONREAD, &tr);

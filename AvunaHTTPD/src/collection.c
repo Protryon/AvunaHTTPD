@@ -67,10 +67,11 @@ int rem_collection(struct collection* coll, void* data) {
 		if (coll->data[i] == data) {
 			coll->data[i] = NULL;
 			coll->count--;
-			break;
+			pthread_mutex_unlock(&coll->data_mutex);
+			return 0;
 		}
 	}
 	pthread_mutex_unlock(&coll->data_mutex);
-	return 0;
+	return -1;
 }
 
