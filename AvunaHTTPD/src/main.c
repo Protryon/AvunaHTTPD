@@ -27,6 +27,7 @@
 #include "globals.h"
 #include "collection.h"
 #include "work.h"
+#include <sys/types.h>
 
 int main(int argc, char* argv[]) {
 	if (getuid() != 0 || getgid() != 0) {
@@ -285,6 +286,13 @@ int main(int argc, char* argv[]) {
 		pthread_create(&pt, NULL, (void *) run_accept, ap);
 		sr++;
 	}
+	char* uids = getConfigValue(dm, "uid");
+	char* gids = getConfigValue(dm, "gid");
+	uid_t uid = uids == NULL ? 0 : atol(uids);
+	uid_t gid = gids == NULL ? 0 : atol(gids);
+	if (gid > 0) setgid(gid);
+	if (uid > 0) setuid(uid);
+	//TODO print de-escalation
 	while (sr > 0)
 		sleep(1);
 	return 0;
