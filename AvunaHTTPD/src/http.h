@@ -16,6 +16,8 @@
 #define METHOD_POST 1
 #define METHOD_HEAD 2
 
+const char* getMethod(int m);
+
 struct headers {
 		int count;
 		char** names;

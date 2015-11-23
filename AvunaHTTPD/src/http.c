@@ -13,6 +13,18 @@
 #include "version.h"
 #include <stdio.h>
 
+const char* getMethod(int m) {
+	if (m == METHOD_GET) {
+		return "GET";
+	} else if (m == METHOD_POST) {
+		return "POST";
+	} else if (m == METHOD_HEAD) {
+		return "HEAD";
+	} else {
+		return "UNKNOWN";
+	}
+}
+
 const char* header_get(const struct headers* headers, const char* name) {
 	if (headers->count == 0) return NULL;
 	for (int i = 0; i < headers->count; i++) {

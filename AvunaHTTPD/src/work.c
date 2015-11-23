@@ -21,11 +21,13 @@
 #include <sys/ioctl.h>
 #include "http.h"
 #include "log.h"
+#include "time.h"
+#include <arpa/inet.h>
 
 void closeConn(struct work_param* param, struct conn* conn) {
 	close(conn->fd);
 	if (rem_collection(param->conns, conn)) {
-		errlog(param->logsess, "Failed to delete connection properly! This is bad!\n");
+		errlog(param->logsess, "Failed to delete connection properly! This is bad!");
 	}
 	if (conn->readBuffer != NULL) xfree(conn->readBuffer);
 	if (conn->writeBuffer != NULL) xfree(conn->writeBuffer);
@@ -34,11 +36,12 @@ void closeConn(struct work_param* param, struct conn* conn) {
 
 void run_work(struct work_param* param) {
 	if (pipe(param->pipes) != 0) {
-		errlog(param->logsess, "Failed to create pipe! %s\n", strerror(errno));
+		errlog(param->logsess, "Failed to create pipe! %s", strerror(errno));
 		return;
 	}
 	unsigned char wb;
 	unsigned char* mbuf = xmalloc(1024);
+	char tip[48];
 	while (1) {
 		pthread_mutex_lock(&param->conns->data_mutex);
 		size_t cc = param->conns->count;
@@ -61,10 +64,10 @@ void run_work(struct work_param* param) {
 		fds[cc].revents = 0;
 		int cp = poll(fds, cc + 1, -1);
 		if (cp < 0) {
-			errlog(param->logsess, "Poll error in worker thread! %s\n", strerror(errno));
+			errlog(param->logsess, "Poll error in worker thread! %s", strerror(errno));
 		} else if (cp == 0) continue;
 		else if ((fds[cc].revents & POLLIN) == POLLIN) {
-			if (read(param->pipes[0], &wb, 1) < 1) errlog(param->logsess, "Error reading from pipe, infinite loop COULD happen here.\n");
+			if (read(param->pipes[0], &wb, 1) < 1) errlog(param->logsess, "Error reading from pipe, infinite loop COULD happen here.");
 			if (cp-- == 1) continue;
 		}
 		for (int i = 0; i < cc; i++) {
@@ -105,9 +108,11 @@ void run_work(struct work_param* param) {
 							conns[i]->readBuffer_size -= x + 1;
 							conns[i]->readBuffer_checked = 0;
 							memmove(conns[i]->readBuffer, conns[i]->readBuffer + x + 1, conns[i]->readBuffer_size);
+							struct timespec stt;
+							clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
 							struct request* req = xmalloc(sizeof(struct request));
 							if (parseRequest(req, (char*) reqd) < 0) {
-								errlog(param->logsess, "Malformed Request!\n");
+								errlog(param->logsess, "Malformed Request!");
 								xfree(req);
 								xfree(reqd);
 								closeConn(param, conns[i]);
@@ -117,6 +122,25 @@ void run_work(struct work_param* param) {
 							generateResponse(conns[i], resp, req);
 							size_t rl = 0;
 							unsigned char* rda = serializeResponse(resp, &rl);
+							struct timespec stt2;
+							clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt2);
+							double msp = (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt.tv_nsec / 1000000.0 + stt.tv_sec * 1000.0);
+							const char* mip = NULL;
+							if (conns[i]->addr.sa_family == AF_INET) {
+								struct sockaddr_in *sip4 = (struct sockaddr_in*) &conns[i]->addr;
+								mip = inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
+							} else if (conns[i]->addr.sa_family == AF_INET6) {
+								struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &conns[i]->addr;
+								mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
+							} else if (conns[i]->addr.sa_family == AF_LOCAL) {
+								mip = "UNIX";
+							} else {
+								mip = "UNKNOWN";
+							}
+							if (mip == NULL) {
+								errlog(param->logsess, "Invalid IP Address: %s", strerror(errno));
+							}
+							acclog(param->logsess, "%s %s %s returned %s took: %f ms", mip, getMethod(req->method), req->path, resp->code, msp);
 							size_t mtr = write(fds[i].fd, rda, rl);
 							if (mtr < 0 && errno != EAGAIN) {
 								closeConn(param, conns[i]);
@@ -177,7 +201,7 @@ void run_work(struct work_param* param) {
 				conns[i] = NULL;
 			}
 			if ((re & POLLNVAL) == POLLNVAL) {
-				errlog(param->logsess, "Invalid FD in worker poll! This is bad!\n");
+				errlog(param->logsess, "Invalid FD in worker poll! This is bad!");
 			}
 			cont: if (--cp == 0) break;
 		}

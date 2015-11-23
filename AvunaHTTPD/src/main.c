@@ -263,8 +263,8 @@ int main(int argc, char* argv[]) {
 		slog->access_fd = lal == NULL ? NULL : fopen(lal, "a");
 		const char* lel = getConfigValue(serv, "error-log");
 		slog->error_fd = lel == NULL ? NULL : fopen(lel, "a");
-		if (serv->id != NULL) acclog(delog, "Server %s listening for connections!\n", serv->id);
-		else acclog(delog, "Server listening for connections!\n");
+		if (serv->id != NULL) acclog(delog, "Server %s listening for connections!", serv->id);
+		else acclog(delog, "Server listening for connections!");
 		struct accept_param* ap = xmalloc(sizeof(struct accept_param));
 		ap->port = port;
 		ap->server_fd = sfd;

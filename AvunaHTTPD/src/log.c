@@ -42,6 +42,8 @@ void acclog(struct logsess* logsess, char* template, ...) {
 	if (vfprintf(stdout, tp, arg) < 0) {
 		errlog(logsess, "Failed writing to stdout!");
 	}
+	va_end(arg);
+	va_start(arg, template);
 	if (logsess->access_fd != NULL) {
 		if (vfprintf(logsess->access_fd, tp, arg) < 0) {
 			errlog(logsess, "Failed writing to accesslog!");
@@ -82,6 +84,8 @@ void errlog(struct logsess* logsess, char* template, ...) {
 	if (vfprintf(stdout, tp, arg) < 0) {
 		//TODO: we can't write to stdout, nothing we can do!
 	}
+	va_end(arg);
+	va_start(arg, template);
 	if (logsess->error_fd != NULL) {
 		if (vfprintf(logsess->error_fd, tp, arg) < 0) {
 			//its in the console
