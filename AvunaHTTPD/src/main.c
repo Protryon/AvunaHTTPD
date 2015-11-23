@@ -156,6 +156,7 @@ int main(int argc, char* argv[]) {
 	int servsl;
 	struct cnode** servs = getCatsByCat(cfg, CAT_SERVER, &servsl);
 	int sr = 0;
+	struct accept_param* aps[servsl];
 	for (int i = 0; i < servsl; i++) {
 		struct cnode* serv = servs[i];
 		const char* bind_mode = getConfigValue(serv, "bind-mode");
@@ -273,26 +274,45 @@ int main(int argc, char* argv[]) {
 		ap->works_count = tc;
 		ap->logsess = slog;
 		ap->works = xmalloc(sizeof(struct work_param*) * tc);
-		for (int i = 0; i < tc; i++) {
+		for (int x = 0; x < tc; x++) {
 			struct work_param* wp = xmalloc(sizeof(struct work_param));
 			wp->conns = new_collection(mc < 1 ? 0 : mc / tc, sizeof(struct conn*));
 			wp->logsess = slog;
-			ap->works[i] = wp;
+			ap->works[x] = wp;
 		}
-		pthread_t pt;
-		for (int i = 0; i < tc; i++) {
-			pthread_create(&pt, NULL, (void *) run_work, ap->works[i]);
-		}
-		pthread_create(&pt, NULL, (void *) run_accept, ap);
+		aps[i] = ap;
 		sr++;
 	}
-	char* uids = getConfigValue(dm, "uid");
-	char* gids = getConfigValue(dm, "gid");
+	const char* uids = getConfigValue(dm, "uid");
+	const char* gids = getConfigValue(dm, "gid");
 	uid_t uid = uids == NULL ? 0 : atol(uids);
 	uid_t gid = gids == NULL ? 0 : atol(gids);
-	if (gid > 0) setgid(gid);
-	if (uid > 0) setuid(uid);
-	//TODO print de-escalation
+	if (gid > 0) {
+		if (setgid(gid) != 0) {
+			errlog(delog, "Failed to setgid! %s", strerror(errno));
+		}
+	}
+	if (uid > 0) {
+		if (setuid(uid) != 0) {
+			errlog(delog, "Failed to setuid! %s", strerror(errno));
+		}
+	}
+	acclog(delog, "Running as UID = %u, GID = %u, starting workers.", getuid(), getgid());
+	for (int i = 0; i < servsl; i++) {
+		pthread_t pt;
+		for (int x = 0; x < aps[i]->works_count; x++) {
+			int c = pthread_create(&pt, NULL, (void *) run_work, aps[i]->works[x]);
+			if (c != 0) {
+				if (servs[i]->id != NULL) errlog(delog, "Error creating thread: pthread errno = %i, this will cause occasional connection hanging @ %s server.", c, servs[i]->id);
+				else errlog(delog, "Error creating thread: pthread errno = %i, this will cause occasional connection hanging.", c);
+			}
+		}
+		int c = pthread_create(&pt, NULL, (void *) run_accept, aps[i]);
+		if (c != 0) {
+			if (servs[i]->id != NULL) errlog(delog, "Error creating thread: pthread errno = %i, server %s is shutting down.", c, servs[i]->id);
+			else errlog(delog, "Error creating thread: pthread errno = %i, server is shutting down.", c);
+		}
+	}
 	while (sr > 0)
 		sleep(1);
 	return 0;
