@@ -13,13 +13,14 @@
 #include <stdio.h>
 
 struct logsess {
-		pthread_mutex_t* lmutex;
+		pthread_mutex_t lmutex;
+		int pi;
 		FILE* access_fd;
 		FILE* error_fd;
 };
 
-void accessLog(char* log, struct logsess* logsess);
+void acclog(struct logsess* logsess, char* template, ...);
 
-void errorLog(char* log, struct logsess* logsess);
+void errlog(struct logsess* logsess, char* template, ...);
 
 #endif /* LOG_H_ */

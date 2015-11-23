@@ -9,5 +9,5 @@
 #define GLOBALS_H_
 
 struct config* cfg;
-
+struct logsess* delog;
 #endif /* GLOBALS_H_ */

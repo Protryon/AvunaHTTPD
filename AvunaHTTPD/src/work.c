@@ -20,11 +20,12 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include "http.h"
+#include "log.h"
 
-void closeConn(struct collection* coll, struct conn* conn) {
+void closeConn(struct work_param* param, struct conn* conn) {
 	close(conn->fd);
-	if (rem_collection(coll, conn)) {
-		printf("Failed to delete connection properly! This is bad!\n");
+	if (rem_collection(param->conns, conn)) {
+		errlog(param->logsess, "Failed to delete connection properly! This is bad!\n");
 	}
 	if (conn->readBuffer != NULL) xfree(conn->readBuffer);
 	if (conn->writeBuffer != NULL) xfree(conn->writeBuffer);
@@ -33,7 +34,7 @@ void closeConn(struct collection* coll, struct conn* conn) {
 
 void run_work(struct work_param* param) {
 	if (pipe(param->pipes) != 0) {
-		printf("Failed to create pipe! %s\n", strerror(errno));
+		errlog(param->logsess, "Failed to create pipe! %s\n", strerror(errno));
 		return;
 	}
 	unsigned char wb;
@@ -60,10 +61,10 @@ void run_work(struct work_param* param) {
 		fds[cc].revents = 0;
 		int cp = poll(fds, cc + 1, -1);
 		if (cp < 0) {
-			printf("Poll error in worker thread! %s\n", strerror(errno));
+			errlog(param->logsess, "Poll error in worker thread! %s\n", strerror(errno));
 		} else if (cp == 0) continue;
 		else if ((fds[cc].revents & POLLIN) == POLLIN) {
-			if (read(param->pipes[0], &wb, 1) < 1) printf("Error reading from pipe, infinite loop COULD happen here.\n");
+			if (read(param->pipes[0], &wb, 1) < 1) errlog(param->logsess, "Error reading from pipe, infinite loop COULD happen here.\n");
 			if (cp-- == 1) continue;
 		}
 		for (int i = 0; i < cc; i++) {
@@ -86,7 +87,7 @@ void run_work(struct work_param* param) {
 				while (r < tr) {
 					int x = read(fds[i].fd, loc + r, tr - r);
 					if (x <= 0) {
-						closeConn(param->conns, conns[i]);
+						closeConn(param, conns[i]);
 						conns[i] = NULL;
 						goto cont;
 					}
@@ -106,10 +107,10 @@ void run_work(struct work_param* param) {
 							memmove(conns[i]->readBuffer, conns[i]->readBuffer + x + 1, conns[i]->readBuffer_size);
 							struct request* req = xmalloc(sizeof(struct request));
 							if (parseRequest(req, (char*) reqd) < 0) {
-								printf("Malformed Request!\n");
+								errlog(param->logsess, "Malformed Request!\n");
 								xfree(req);
 								xfree(reqd);
-								closeConn(param->conns, conns[i]);
+								closeConn(param, conns[i]);
 								goto cont;
 							}
 							struct response* resp = xmalloc(sizeof(struct response));
@@ -118,7 +119,7 @@ void run_work(struct work_param* param) {
 							unsigned char* rda = serializeResponse(resp, &rl);
 							size_t mtr = write(fds[i].fd, rda, rl);
 							if (mtr < 0 && errno != EAGAIN) {
-								closeConn(param->conns, conns[i]);
+								closeConn(param, conns[i]);
 								conns[i] = NULL;
 							} else if (mtr >= rl) {
 								//done writing!
@@ -155,7 +156,7 @@ void run_work(struct work_param* param) {
 			if ((re & POLLOUT) == POLLOUT && conns[i] != NULL) {
 				size_t mtr = write(fds[i].fd, conns[i]->writeBuffer, conns[i]->writeBuffer_size);
 				if (mtr < 0) {
-					closeConn(param->conns, conns[i]);
+					closeConn(param, conns[i]);
 					conns[i] = NULL;
 					goto cont;
 				} else if (mtr < conns[i]->writeBuffer_size) {
@@ -172,11 +173,11 @@ void run_work(struct work_param* param) {
 				//printf("POLLERR in worker poll! This is bad!\n");
 			}
 			if ((re & POLLHUP) == POLLHUP && conns[i] != NULL) {
-				closeConn(param->conns, conns[i]);
+				closeConn(param, conns[i]);
 				conns[i] = NULL;
 			}
 			if ((re & POLLNVAL) == POLLNVAL) {
-				printf("Invalid FD in worker poll! This is bad!\n");
+				errlog(param->logsess, "Invalid FD in worker poll! This is bad!\n");
 			}
 			cont: if (--cp == 0) break;
 		}

@@ -12,6 +12,7 @@
 #include "collection.h"
 #include <sys/socket.h>
 #include "work.h"
+#include "log.h"
 
 struct accept_param {
 		int server_fd;
@@ -19,6 +20,7 @@ struct accept_param {
 		struct cnode* config;
 		int works_count;
 		struct work_param** works;
+		struct logsess* logsess;
 };
 
 struct conn {

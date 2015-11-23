@@ -121,6 +121,11 @@ int main(int argc, char* argv[]) {
 #else
 	printf("Daemonized! PID = %i\n", getpid());
 #endif
+	delog = xmalloc(sizeof(struct logsess));
+	delog->pi = 0;
+	delog->access_fd = NULL;
+	char* el = getConfigValue(dm, "error-log");
+	delog->error_fd = el == NULL ? NULL : fopen(el, "a"); // fopen will return NULL on error, which works.
 	int pfpl = strlen(pid_file);
 	char* pfp = xcopy(pid_file, pfpl + 1, 0);
 	for (int i = pfpl - 1; i--; i >= 0) {
@@ -130,21 +135,21 @@ int main(int argc, char* argv[]) {
 		}
 	}
 	if (recur_mkdir(pfp, 0750) == -1) {
-		printf("Error making directories for PID file: %s.\n", strerror(errno));
+		errlog(delog, "Error making directories for PID file: %s.\n", strerror(errno));
 		return 1;
 	}
 //TODO: chown group to de-escalated
 	FILE *pfd = fopen(pid_file, "w");
 	if (pfd == NULL) {
-		printf("Error writing PID file: %s.\n", strerror(errno));
+		errlog(delog, "Error writing PID file: %s.\n", strerror(errno));
 		return 1;
 	}
 	if (fprintf(pfd, "%i", getpid()) < 0) {
-		printf("Error writing PID file: %s.\n", strerror(errno));
+		errlog(delog, "Error writing PID file: %s.\n", strerror(errno));
 		return 1;
 	}
 	if (fclose(pfd) < 0) {
-		printf("Error writing PID file: %s.\n", strerror(errno));
+		errlog(delog, "Error writing PID file: %s.\n", strerror(errno));
 		return 1;
 	}
 	int servsl;
@@ -161,8 +166,8 @@ int main(int argc, char* argv[]) {
 			bind_ip = getConfigValue(serv, "bind-ip");
 			const char* bind_port = getConfigValue(serv, "bind-port");
 			if (!strisunum(bind_port)) {
-				if (serv->id != NULL) printf("Invalid bind-port for server: %s\n", serv->id);
-				else printf("Invalid bind-port for server.\n");
+				if (serv->id != NULL) errlog(delog, "Invalid bind-port for server: %s\n", serv->id);
+				else errlog(delog, "Invalid bind-port for server.\n");
 				continue;
 			}
 			port = atoi(bind_port);
@@ -171,41 +176,41 @@ int main(int argc, char* argv[]) {
 			bind_file = getConfigValue(serv, "bind-file");
 			namespace = PF_LOCAL;
 		} else {
-			if (serv->id != NULL) printf("Invalid bind-mode for server: %s\n", serv->id);
-			else printf("Invalid bind-mode for server.\n");
+			if (serv->id != NULL) errlog(delog, "Invalid bind-mode for server: %s\n", serv->id);
+			else errlog(delog, "Invalid bind-mode for server.\n");
 			continue;
 		}
 		const char* tcc = getConfigValue(serv, "threads");
 		if (!strisunum(tcc)) {
-			if (serv->id != NULL) printf("Invalid threads for server: %s\n", serv->id);
-			else printf("Invalid threads for server.\n");
+			if (serv->id != NULL) errlog(delog, "Invalid threads for server: %s\n", serv->id);
+			else errlog(delog, "Invalid threads for server.\n");
 			continue;
 		}
 		int tc = atoi(tcc);
 		const char* mcc = getConfigValue(serv, "max-conn");
 		if (!strisunum(mcc)) {
-			if (serv->id != NULL) printf("Invalid max-conn for server: %s\n", serv->id);
-			else printf("Invalid max-conn for server.\n");
+			if (serv->id != NULL) errlog(delog, "Invalid max-conn for server: %s\n", serv->id);
+			else errlog(delog, "Invalid max-conn for server.\n");
 			continue;
 		}
 		int mc = atoi(mcc);
 		const char* mpc = getConfigValue(serv, "max-post");
 		if (!strisunum(mpc)) {
-			if (serv->id != NULL) printf("Invalid max-post for server: %s\n", serv->id);
-			else printf("Invalid max-post for server.\n");
+			if (serv->id != NULL) errlog(delog, "Invalid max-post for server: %s\n", serv->id);
+			else errlog(delog, "Invalid max-post for server.\n");
 			continue;
 		}
 		int mp = atoi(mpc);
 		int sfd = socket(namespace, SOCK_STREAM, 0);
 		if (sfd < 0) {
-			if (serv->id != NULL) printf("Error creating socket for server: %s, %s\n", serv->id, strerror(errno));
-			else printf("Error creating socket for server, %s\n", strerror(errno));
+			if (serv->id != NULL) errlog(delog, "Error creating socket for server: %s, %s\n", serv->id, strerror(errno));
+			else errlog(delog, "Error creating socket for server, %s\n", strerror(errno));
 			continue;
 		}
 		int one = 1;
 		if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one)) == -1) {
-			if (serv->id != NULL) printf("Error setting SO_REUSEADDR for server: %s, %s\n", serv->id, strerror(errno));
-			else printf("Error setting SO_REUSEADDR for server, %s\n", strerror(errno));
+			if (serv->id != NULL) errlog(delog, "Error setting SO_REUSEADDR for server: %s, %s\n", serv->id, strerror(errno));
+			else errlog(delog, "Error setting SO_REUSEADDR for server, %s\n", strerror(errno));
 			close (sfd);
 			continue;
 		}
@@ -214,14 +219,14 @@ int main(int argc, char* argv[]) {
 			bip.sin_family = AF_INET;
 			if (!inet_aton(bind_ip, &(bip.sin_addr))) {
 				close (sfd);
-				if (serv->id != NULL) printf("Error binding socket for server: %s, invalid bind-ip\n", serv->id);
-				else printf("Error binding socket for server, invalid bind-ip\n");
+				if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, invalid bind-ip\n", serv->id);
+				else errlog(delog, "Error binding socket for server, invalid bind-ip\n");
 				continue;
 			}
 			bip.sin_port = htons(port);
 			if (bind(sfd, (struct sockaddr*) &bip, sizeof(bip))) {
-				if (serv->id != NULL) printf("Error binding socket for server: %s, %s\n", serv->id, strerror(errno));
-				else printf("Error binding socket for server, %s\n", strerror(errno));
+				if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, %s\n", serv->id, strerror(errno));
+				else errlog(delog, "Error binding socket for server, %s\n", strerror(errno));
 				close (sfd);
 				continue;
 			}
@@ -229,41 +234,48 @@ int main(int argc, char* argv[]) {
 			struct sockaddr_un uip;
 			strncpy(uip.sun_path, bind_file, 108);
 			if (bind(sfd, (struct sockaddr*) &uip, sizeof(uip))) {
-				if (serv->id != NULL) printf("Error binding socket for server: %s, %s\n", serv->id, strerror(errno));
-				else printf("Error binding socket for server, %s\n", strerror(errno));
+				if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, %s\n", serv->id, strerror(errno));
+				else errlog(delog, "Error binding socket for server, %s\n", strerror(errno));
 				close (sfd);
 				continue;
 			}
 		} else {
-			if (serv->id != NULL) printf("Invalid family for server: %s\n", serv->id);
-			else printf("Invalid family for server\n");
+			if (serv->id != NULL) errlog(delog, "Invalid family for server: %s\n", serv->id);
+			else errlog(delog, "Invalid family for server\n");
 			close (sfd);
 			continue;
 		}
 		if (listen(sfd, 50)) {
-			if (serv->id != NULL) printf("Error listening on socket for server: %s, %s\n", serv->id, strerror(errno));
-			else printf("Error listening on socket for server, %s\n", strerror(errno));
+			if (serv->id != NULL) errlog(delog, "Error listening on socket for server: %s, %s\n", serv->id, strerror(errno));
+			else errlog(delog, "Error listening on socket for server, %s\n", strerror(errno));
 			close (sfd);
 			continue;
 		}
 		if (fcntl(sfd, F_SETFL, fcntl(sfd, F_GETFL) | O_NONBLOCK) < 0) {
-			if (serv->id != NULL) printf("Error setting non-blocking for server: %s, %s\n", serv->id, strerror(errno));
-			else printf("Error setting non-blocking for server, %s\n", strerror(errno));
+			if (serv->id != NULL) errlog(delog, "Error setting non-blocking for server: %s, %s\n", serv->id, strerror(errno));
+			else errlog(delog, "Error setting non-blocking for server, %s\n", strerror(errno));
 			close (sfd);
 			continue;
 		}
-
-		if (serv->id != NULL) printf("Server %s listening for connections!\n", serv->id);
-		else printf("Server listening for connections!\n");
+		struct logsess* slog = xmalloc(sizeof(struct logsess));
+		slog->pi = 0;
+		const char* lal = getConfigValue(serv, "access-log");
+		slog->access_fd = lal == NULL ? NULL : fopen(lal, "a");
+		const char* lel = getConfigValue(serv, "error-log");
+		slog->error_fd = lel == NULL ? NULL : fopen(lel, "a");
+		if (serv->id != NULL) acclog(delog, "Server %s listening for connections!\n", serv->id);
+		else acclog(delog, "Server listening for connections!\n");
 		struct accept_param* ap = xmalloc(sizeof(struct accept_param));
 		ap->port = port;
 		ap->server_fd = sfd;
 		ap->config = serv;
 		ap->works_count = tc;
+		ap->logsess = slog;
 		ap->works = xmalloc(sizeof(struct work_param*) * tc);
 		for (int i = 0; i < tc; i++) {
 			struct work_param* wp = xmalloc(sizeof(struct work_param));
 			wp->conns = new_collection(mc < 1 ? 0 : mc / tc, sizeof(struct conn*));
+			wp->logsess = slog;
 			ap->works[i] = wp;
 		}
 		pthread_t pt;
