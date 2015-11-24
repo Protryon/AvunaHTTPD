@@ -415,6 +415,8 @@ int generateResponse(struct reqsess rs) {
 			generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
 			goto pvh;
 		}
+		//TODO: overrides
+
 	} else if (vh->type == VHOST_RPROXY) {
 
 	} else if (vh->type == VHOST_REDIRECT) {

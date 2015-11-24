@@ -14,6 +14,9 @@
 #include <stdio.h>
 
 void* xmalloc(size_t size) {
+	if (size > 10485760) {
+		printf("Big malloc %u!\n", size);
+	}
 	void* m = malloc(size);
 	if (m == NULL) {
 		printf("Out of Memory! @ malloc size %u\n", size);
@@ -27,6 +30,9 @@ void xfree(void* ptr) {
 }
 
 void* xcalloc(size_t size) {
+	if (size > 10485760) {
+		printf("Big calloc %u!\n", size);
+	}
 	void* m = calloc(1, size);
 	if (m == NULL) {
 		printf("Out of Memory! @ calloc size %u\n", size);
@@ -39,6 +45,9 @@ void* xrealloc(void* ptr, size_t size) {
 	if (size == 0) {
 		xfree(ptr);
 		return NULL;
+	}
+	if (size > 10485760) {
+		printf("Big realloc %u!\n", size);
 	}
 	void* m = realloc(ptr, size);
 	if (m == NULL) {

@@ -28,6 +28,7 @@
 #include "collection.h"
 #include "work.h"
 #include <sys/types.h>
+#include "mime.h"
 
 int main(int argc, char* argv[]) {
 	if (getuid() != 0 || getgid() != 0) {
@@ -139,6 +140,15 @@ int main(int argc, char* argv[]) {
 		errlog(delog, "Error making directories for PID file: %s.\n", strerror(errno));
 		return 1;
 	}
+	const char* mtf = getConfigValue(dm, "mime-types");
+	if (mtf == NULL) {
+		errlog(delog, "No mime-types in daemon config!");
+		return 1;
+	}
+	if (access(mtf, R_OK) || loadMimes(mtf)) {
+		errlog(delog, "Cannot read or mime-types file does not exist: %s", mtf);
+		return 1;
+	}
 //TODO: chown group to de-escalated
 	FILE *pfd = fopen(pid_file, "w");
 	if (pfd == NULL) {
@@ -153,6 +163,7 @@ int main(int argc, char* argv[]) {
 		errlog(delog, "Error writing PID file: %s.\n", strerror(errno));
 		return 1;
 	}
+
 	int servsl;
 	struct cnode** servs = getCatsByCat(cfg, CAT_SERVER, &servsl);
 	int sr = 0;
@@ -297,6 +308,7 @@ int main(int argc, char* argv[]) {
 			vohs[vhc - 1] = xmalloc(sizeof(struct vhost));
 			struct vhost* cv = vohs[vhc - 1];
 			cv->id = vcn->id;
+			cv->hosts = NULL;
 			const char* vht = getConfigValue(vcn, "type");
 			if (streq(vht, "htdocs")) {
 				cv->type = VHOST_HTDOCS;
@@ -337,6 +349,8 @@ int main(int argc, char* argv[]) {
 			}
 			if (cv->type == VHOST_HTDOCS) {
 				struct vhost_htdocs* vhb = &cv->sub.htdocs;
+				vhb->index = NULL;
+				vhb->errpages = NULL;
 				vhb->htdocs = getConfigValue(vcn, "htdocs");
 				if (vhb->htdocs == NULL) {
 					errlog(slog, "No htdocs at vhost: %s", vcn->id);

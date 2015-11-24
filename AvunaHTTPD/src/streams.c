@@ -18,6 +18,9 @@ size_t readLine(int fd, char* line, size_t len) {
 		if ((s == 0 && i == 0) || s < 0) {
 			return -1;
 		}
+		if (s == 0) {
+			break;
+		}
 		if (s > 0 && b != 13 && b != 10) {
 			line[i++] = b;
 		}
