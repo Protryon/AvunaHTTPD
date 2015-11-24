@@ -11,6 +11,7 @@
 #include <linux/limits.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <stdio.h>
 
 void* xmalloc(size_t size) {
 	void* m = malloc(size);
@@ -47,10 +48,14 @@ void* xrealloc(void* ptr, size_t size) {
 	return m;
 }
 
-void* xcopy(void* ptr, size_t size, size_t expand) {
+void* xcopy(const void* ptr, size_t size, size_t expand) {
 	void* alloc = xmalloc(size + expand);
 	memcpy(alloc, ptr, size);
 	return alloc;
+}
+
+char* xstrdup(const char* str, size_t expand) {
+	return xcopy(str, strlen(str) + 1, expand);
 }
 
 int recur_mkdir(const char* path, mode_t mode) {

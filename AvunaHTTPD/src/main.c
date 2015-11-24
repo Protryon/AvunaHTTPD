@@ -265,14 +265,103 @@ int main(int argc, char* argv[]) {
 		slog->access_fd = lal == NULL ? NULL : fopen(lal, "a");
 		const char* lel = getConfigValue(serv, "error-log");
 		slog->error_fd = lel == NULL ? NULL : fopen(lel, "a");
-		if (serv->id != NULL) acclog(delog, "Server %s listening for connections!", serv->id);
-		else acclog(delog, "Server listening for connections!");
+		if (serv->id != NULL) acclog(slog, "Server %s listening for connections!", serv->id);
+		else acclog(slog, "Server listening for connections!");
 		struct accept_param* ap = xmalloc(sizeof(struct accept_param));
 		ap->port = port;
 		ap->server_fd = sfd;
 		ap->config = serv;
 		ap->works_count = tc;
 		ap->logsess = slog;
+		int vhc = 0;
+		struct vhost** vohs = NULL;
+		char* ovh = xstrdup(getConfigValue(serv, "vhosts"), 0);
+		char* np = NULL;
+		while ((np = strchr(ovh, ',')) != NULL || strlen(ovh) > 0) {
+			if (np != NULL) {
+				np[0] = 0;
+				np++;
+			}
+			ovh = trim(ovh);
+			struct cnode* vcn = getCatByID(cfg, trim(ovh));
+			if (vcn == NULL) {
+				errlog(slog, "Could not find VHost: %s", ovh);
+				goto cont_vh;
+			}
+			vhc++;
+			if (vohs == NULL) {
+				vohs = xmalloc(sizeof(struct vhost*));
+			} else {
+				vohs = xrealloc(vohs, sizeof(struct vhost*) * vhc);
+			}
+			vohs[vhc - 1] = xmalloc(sizeof(struct vhost));
+			struct vhost* cv = vohs[vhc - 1];
+			const char* vht = getConfigValue(vcn, "type");
+			if (streq(vht, "htdocs")) {
+				cv->type = VHOST_HTDOCS;
+			} else if (streq(vht, "reverse-proxy")) {
+				cv->type = VHOST_RPROXY;
+			} else if (streq(vht, "redirect")) {
+				cv->type = VHOST_REDIRECT;
+			} else if (streq(vht, "proxy")) {
+				cv->type = VHOST_PROXY;
+			} else {
+				errlog(slog, "Invalid VHost Type: %s", vht);
+				xfree(cv);
+				vohs[vhc - 1] = NULL;
+				vhc--;
+				goto cont_vh;
+			}
+			char* hnv = xstrdup(getConfigValue(vcn, "host"), 0);
+			char* nph = NULL;
+			while ((nph = strchr(hnv, ',')) != NULL || strlen(hnv) > 0) {
+				if (nph != NULL) {
+					nph[0] = 0;
+					nph++;
+				}
+				hnv = trim(hnv);
+				if (streq(hnv, "*")) {
+					cv->host_count = 0;
+					free(hnv);
+					break;
+				}
+				if (cv->hosts == NULL) {
+					cv->hosts = xmalloc(sizeof(char*));
+					cv->host_count = 1;
+				} else {
+					cv->hosts = xrealloc(cv->hosts, sizeof(char*) * ++cv->host_count);
+				}
+				cv->hosts[cv->host_count - 1] = hnv;
+				hnv = nph == NULL ? hnv + strlen(hnv) : nph;
+			}
+			if (cv->type == VHOST_HTDOCS) {
+				struct vhost_htdocs* vhb = &cv->sub.htdocs;
+				vhb->htdocs = getConfigValue(vcn, "htdocs");
+				if (vhb->htdocs == NULL) {
+					errlog(slog, "No htdocs at vhost: %s", vcn->id);
+					if (cv->hosts != NULL) xfree(cv->hosts);
+					free(hnv);
+					xfree(cv);
+					vohs[vhc - 1] = NULL;
+					vhc--;
+					goto cont_vh;
+				}
+				char* nhl = getConfigValue(vcn, "nohardlinks");
+				vhb->nohardlinks = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+				nhl = getConfigValue(vcn, "symlock");
+				vhb->symlock = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+			} else if (cv->type == VHOST_RPROXY) {
+				struct vhost_rproxy* vhb = &cv->sub.rproxy;
+
+			} else if (cv->type == VHOST_REDIRECT) {
+				struct vhost_redirect* vhb = &cv->sub.redirect;
+
+			} else if (cv->type == VHOST_PROXY) {
+				struct vhost_proxy* vhb = &cv->sub.proxy;
+
+			}
+			cont_vh: ovh = np == NULL ? ovh + strlen(ovh) : np;
+		}
 		ap->works = xmalloc(sizeof(struct work_param*) * tc);
 		for (int x = 0; x < tc; x++) {
 			struct work_param* wp = xmalloc(sizeof(struct work_param));
