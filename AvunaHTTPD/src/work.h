@@ -18,7 +18,7 @@
 #define VHOST_PROXY 3
 
 struct errpage {
-		int code;
+		char* code;
 		char* page;
 };
 
@@ -29,7 +29,7 @@ struct vhost_htdocs {
 		size_t index_count;
 		char** index;
 		size_t errpage_count;
-		struct errpage* errpages;
+		struct errpage** errpages;
 };
 
 struct vhost_rproxy {
@@ -57,6 +57,7 @@ struct vhost {
 		int type;
 		size_t host_count; // if 0, all hosts match
 		char** hosts;
+		char* id;
 		union vhost_sub sub;
 };
 
@@ -65,7 +66,7 @@ struct work_param {
 		int pipes[2];
 		struct logsess* logsess;
 		size_t vhosts_count;
-		struct vhost* vhosts;
+		struct vhost** vhosts;
 };
 
 void run_work(struct work_param* param);

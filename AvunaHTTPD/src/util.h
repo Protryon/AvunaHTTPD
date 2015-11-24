@@ -21,7 +21,7 @@ void* xrealloc(void* ptr, size_t size);
 
 void* xcopy(void* ptr, size_t size, size_t expand);
 
-char* xstrdup(char* str, size_t expand);
+char* xstrdup(const char* str, size_t expand);
 
 int recur_mkdir(const char* path, mode_t mode);
 

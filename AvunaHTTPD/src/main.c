@@ -296,6 +296,7 @@ int main(int argc, char* argv[]) {
 			}
 			vohs[vhc - 1] = xmalloc(sizeof(struct vhost));
 			struct vhost* cv = vohs[vhc - 1];
+			cv->id = vcn->id;
 			const char* vht = getConfigValue(vcn, "type");
 			if (streq(vht, "htdocs")) {
 				cv->type = VHOST_HTDOCS;
@@ -346,16 +347,78 @@ int main(int argc, char* argv[]) {
 					vhc--;
 					goto cont_vh;
 				}
-				char* nhl = getConfigValue(vcn, "nohardlinks");
+				vhb->htdocs = realpath(vhb->htdocs, NULL);
+				size_t htl = strlen(vhb->htdocs);
+				if (vhb->htdocs[htl - 1] != '/') {
+					vhb->htdocs = xrealloc(vhb->htdocs, ++htl + 1);
+					vhb->htdocs[htl - 1] = '/';
+					vhb->htdocs[htl] = 0;
+				}
+				recur_mkdir(vhb->htdocs, 0750);
+				const char* nhl = getConfigValue(vcn, "nohardlinks");
 				vhb->nohardlinks = nhl == NULL ? 1 : streq_nocase(nhl, "true");
 				nhl = getConfigValue(vcn, "symlock");
 				vhb->symlock = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+				const char* ic = getConfigValue(vcn, "index");
+				if (ic == NULL) {
+					errlog(slog, "No index at vhost: %s", vcn->id);
+					if (cv->hosts != NULL) xfree(cv->hosts);
+					free(hnv);
+					xfree(cv);
+					vohs[vhc - 1] = NULL;
+					vhc--;
+					goto cont_vh;
+				}
+				char* ivh = xstrdup(ic, 0);
+				char* npi = NULL;
+				while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
+					if (npi != NULL) {
+						npi[0] = 0;
+						npi++;
+					}
+					ivh = trim(ivh);
+					if (vhb->index == NULL) {
+						vhb->index = xmalloc(sizeof(char*));
+						vhb->index_count = 1;
+					} else {
+						vhb->index = xrealloc(vhb->index, sizeof(char*) * ++vhb->index_count);
+					}
+					vhb->index[vhb->index_count] = ivh;
+					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
+				}
+				for (int i = 0; i < vcn->entries; i++) {
+					if (startsWith_nocase(vcn->keys[i], "error-")) {
+						const char* en = vcn->keys[i] + 6;
+						if (!strisunum(en)) {
+							errlog(slog, "Invalid error page specifier at vhost: %s", vcn->id);
+						}
+						struct errpage* ep = xmalloc(sizeof(struct errpage));
+						ep->code = en;
+						ep->page = vcn->values[i];
+						if (vhb->errpages == NULL) {
+							vhb->errpages = xmalloc(sizeof(struct errpage*));
+							vhb->errpage_count = 1;
+						} else {
+							vhb->errpages = xrealloc(vhb->errpages, sizeof(struct errpage*) * ++vhb->errpage_count);
+						}
+						vhb->errpages[vhb->errpage_count - 1] = ep;
+					}
+				}
 			} else if (cv->type == VHOST_RPROXY) {
 				struct vhost_rproxy* vhb = &cv->sub.rproxy;
 
 			} else if (cv->type == VHOST_REDIRECT) {
 				struct vhost_redirect* vhb = &cv->sub.redirect;
-
+				vhb->redir = getConfigValue(vcn, "redirect");
+				if (vhb->redir == NULL) {
+					errlog(slog, "No redirect at vhost: %s", vcn->id);
+					if (cv->hosts != NULL) xfree(cv->hosts);
+					free(hnv);
+					xfree(cv);
+					vohs[vhc - 1] = NULL;
+					vhc--;
+					goto cont_vh;
+				}
 			} else if (cv->type == VHOST_PROXY) {
 				struct vhost_proxy* vhb = &cv->sub.proxy;
 
@@ -367,6 +430,8 @@ int main(int argc, char* argv[]) {
 			struct work_param* wp = xmalloc(sizeof(struct work_param));
 			wp->conns = new_collection(mc < 1 ? 0 : mc / tc, sizeof(struct conn*));
 			wp->logsess = slog;
+			wp->vhosts = vohs;
+			wp->vhosts_count = vhc;
 			ap->works[x] = wp;
 		}
 		aps[i] = ap;

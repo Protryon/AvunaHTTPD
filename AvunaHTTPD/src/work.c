@@ -119,7 +119,12 @@ void run_work(struct work_param* param) {
 								goto cont;
 							}
 							struct response* resp = xmalloc(sizeof(struct response));
-							generateResponse(conns[i], resp, req);
+							struct reqsess rs;
+							rs.wp = param;
+							rs.sender = conns[i];
+							rs.response = resp;
+							rs.request = req;
+							generateResponse(rs);
 							size_t rl = 0;
 							unsigned char* rda = serializeResponse(resp, &rl);
 							struct timespec stt2;
@@ -165,16 +170,23 @@ void run_work(struct work_param* param) {
 							xfree(req->path);
 							xfree(req->version);
 							freeHeaders(&req->headers);
+							if (req->body != NULL) {
+								xfree(req->body->data);
+								xfree(req->body);
+							}
 							xfree(req);
+							if (resp->body != NULL) {
+								xfree(resp->body->data);
+								xfree(resp->body);
+							}
 							freeHeaders(&resp->headers);
 							xfree(resp);
-							//TODO: free bodies
 						}
 					} else ml = 0;
 				}
 				if (conns[i] != NULL) {
-					conns[i]->readBuffer_checked = conns[i]->readBuffer_size - 10;
-					if (conns[i]->readBuffer_checked < 0) conns[i]->readBuffer_checked = 0;
+					if (conns[i]->readBuffer_size >= 10) conns[i]->readBuffer_checked = conns[i]->readBuffer_size - 10;
+					else conns[i]->readBuffer_checked = 0;
 				}
 			}
 			if ((re & POLLOUT) == POLLOUT && conns[i] != NULL) {
