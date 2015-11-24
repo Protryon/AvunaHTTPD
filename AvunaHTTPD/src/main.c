@@ -397,7 +397,7 @@ int main(int argc, char* argv[]) {
 					} else {
 						vhb->index = xrealloc(vhb->index, sizeof(char*) * ++vhb->index_count);
 					}
-					vhb->index[vhb->index_count] = ivh;
+					vhb->index[vhb->index_count - 1] = ivh;
 					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
 				}
 				for (int i = 0; i < vcn->entries; i++) {

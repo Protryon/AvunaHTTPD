@@ -363,12 +363,28 @@ int generateResponse(struct reqsess rs) {
 			generateDefaultErrorPage(rs, vh, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
 			goto pvh;
 		}
-		char tp[htdl + pl + 1];
+		char* tp = xmalloc(htdl + pl);
 		memcpy(tp, vh->sub.htdocs.htdocs, htdl);
 		memcpy(tp + htdl, rs.request->path + 1, pl);
 		tp[htdl + pl - 1] = 0;
 		// TODO cache! HERE!
+		if (tp[htdl + pl - 2] == '/' && !access(tp, R_OK)) { // TODO: extra paths!
+			for (int ii = 0; ii < vh->sub.htdocs.index_count; ii++) {
+				size_t cl = strlen(vh->sub.htdocs.index[ii]);
+				char* tp2 = xmalloc(htdl + pl + cl);
+				memcpy(tp2, tp, htdl + pl - 1);
+				memcpy(tp2 + htdl + pl - 1, vh->sub.htdocs.index[ii], cl + 1);
+				if (!access(tp2, R_OK)) {
+					xfree(tp);
+					tp = tp2;
+					break;
+				} else {
+					xfree(tp2);
+				}
+			}
+		}
 		char* rtp = realpath(tp, NULL);
+		xfree(tp);
 		if (rtp == NULL) {
 			if (errno == ENOENT || errno == ENOTDIR) {
 				rs.response->code = "404 Not Found";

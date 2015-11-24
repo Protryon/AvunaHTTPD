@@ -20,6 +20,10 @@ int startsWith(const char* str, const char* with);
 
 int startsWith_nocase(const char* str, const char* with);
 
+int endsWith(const char* str, const char* with);
+
+int endsWith_nocase(const char* str, const char* with);
+
 char* toLowerCase(char* str);
 
 char* toUpperCase(char* str);
