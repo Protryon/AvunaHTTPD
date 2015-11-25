@@ -117,6 +117,44 @@ int endsWith_nocase(const char* str, const char* with) {
 	return 1;
 }
 
+int contains(const char* str, const char* with) {
+	if (str == NULL || with == NULL) return 0;
+	if (str == with) return 1;
+	int l1 = strlen(str);
+	int l2 = strlen(with);
+	if (l1 < l2) return 0;
+	int ml = 0;
+	for (int i = 0; i < l1; i++) {
+		if (str[i] == with[ml]) {
+			if (++ml == l2) {
+				return 1;
+			}
+		} else ml = 0;
+	}
+	return 0;
+}
+
+int contains_nocase(const char* str, const char* with) {
+	if (str == NULL || with == NULL) return 0;
+	if (str == with) return 1;
+	int l1 = strlen(str);
+	int l2 = strlen(with);
+	if (l1 < l2) return 0;
+	int ml = 0;
+	for (int i = 0; i < l1; i++) {
+		char s1 = str[i];
+		if (s1 >= 'A' && s1 <= 'Z') s1 += ' ';
+		char s2 = with[ml];
+		if (s2 >= 'A' && s2 <= 'Z') s2 += ' ';
+		if (s1 == s2) {
+			if (++ml == l2) {
+				return 1;
+			}
+		} else ml = 0;
+	}
+	return 0;
+}
+
 char* toLowerCase(char* str) {
 	if (str == NULL) return NULL;
 	size_t l = strlen(str);

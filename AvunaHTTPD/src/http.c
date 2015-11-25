@@ -16,6 +16,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "mime.h"
+#include <fcntl.h>
+#include <nettle/md5.h>
+#include <zlib.h>
 
 const char* getMethod(int m) {
 	if (m == METHOD_GET) {
@@ -361,7 +365,7 @@ int generateResponse(struct reqsess rs) {
 		if (pl < 1 || rs.request->path[0] != '/') {
 			rs.response->code = "500 Internal Server Error";
 			generateDefaultErrorPage(rs, vh, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
-			goto pvh;
+			goto epage;
 		}
 		char* tp = xmalloc(htdl + pl);
 		memcpy(tp, vh->sub.htdocs.htdocs, htdl);
@@ -394,16 +398,16 @@ int generateResponse(struct reqsess rs) {
 				generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
 			} else {
 				rs.response->code = "500 Internal Server Error";
-				generateDefaultErrorPage(rs, vh, "An unknown error occured trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 			}
-			goto pvh;
+			goto epage;
 		}
 		struct stat st;
 		if (stat(rtp, &st) != 0) {
 			errlog(rs.wp->logsess, "Failed stat on <%s>: %s", rtp, strerror(errno));
 			rs.response->code = "500 Internal Server Error";
-			generateDefaultErrorPage(rs, vh, "An unknown error occured trying to serve your request! If you believe this to be an error, please contact your system administrator.");
-			goto pvh;
+			generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+			goto epage;
 		}
 		if ((st.st_mode & S_IFDIR) && rs.request->path[pl - 1] != '/') {
 			rs.response->code = "302 Found";
@@ -413,6 +417,7 @@ int generateResponse(struct reqsess rs) {
 			np[pl] = '/';
 			np[pl + 1] = 0;
 			header_add(&rs.response->headers, "Location", np);
+			xfree(rtp);
 			goto pvh;
 		}
 		size_t rtpl = strlen(rtp);
@@ -424,15 +429,101 @@ int generateResponse(struct reqsess rs) {
 		if (vh->sub.htdocs.symlock && !startsWith(rtp, vh->sub.htdocs.htdocs)) {
 			rs.response->code = "403 Forbidden";
 			generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
-			goto pvh;
+			goto epage;
 		}
 		if (vh->sub.htdocs.nohardlinks && st.st_nlink != 1 && !(st.st_mode & S_IFDIR)) {
 			rs.response->code = "403 Forbidden";
 			generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
-			goto pvh;
+			goto epage;
 		}
 		//TODO: overrides
+		rs.response->body = xmalloc(sizeof(struct body));
+		rs.response->body->len = 0;
+		rs.response->body->data = NULL;
+		const char* ext = strrchr(rtp, '.');
+		rs.response->body->mime_type = ext == NULL ? "application/octet-stream" : getMimeForExt(ext + 1);
+		if (vh->sub.htdocs.maxAge > 0) {
+			int dcc = 0;
+			for (int i = 0; i < vh->sub.htdocs.cacheType_count; i++) {
+				if (streq_nocase(vh->sub.htdocs.cacheTypes[i], rs.response->body->mime_type)) {
+					dcc = 1;
+					break;
+				} else if (endsWith(vh->sub.htdocs.cacheTypes[i], "/*")) {
+					char* nct = xstrdup(vh->sub.htdocs.cacheTypes[i], 0);
+					nct[strlen(nct) - 1] = 0;
+					if (startsWith(rs.response->body->mime_type, nct)) {
+						dcc = 1;
+						xfree(nct);
+						break;
+					}
+					xfree(nct);
+				}
+			}
 
+			char ccbuf[64];
+			memcpy(ccbuf, "max-age=", 8);
+			int snr = snprintf(ccbuf + 8, 18, "%u", vh->sub.htdocs.maxAge);
+			if (dcc) {
+				memcpy(ccbuf + 8 + snr, ", no-cache", 11);
+			} else {
+				ccbuf[8 + snr] = 0;
+			}
+			header_add(&rs.response->headers, "Cache-Control", ccbuf);
+		}
+		int ffd = open(rtp, O_RDONLY);
+		if (ffd < 0) {
+			errlog(rs.wp->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
+			rs.response->code = "500 Internal Server Error";
+			generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+			goto epage;
+		}
+
+		rs.response->body->data = xmalloc(st.st_size);
+		int r = 0;
+		while ((r = read(ffd, rs.response->body->data + rs.response->body->len, st.st_size - rs.response->body->len)) > 0) {
+			rs.response->body->len += r;
+		}
+		if (r < 0) {
+			errlog(rs.wp->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
+			rs.response->code = "500 Internal Server Error";
+			generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+			goto epage;
+		}
+		//TODO: FCGI
+		//TODO: CGI
+		//TODO: SCGI
+		//TODO: SO-CGI
+		//TODO: SSI
+		epage: ;
+		if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
+			struct md5_ctx md5ctx;
+			md5_init(&md5ctx);
+			md5_update(&md5ctx, rs.response->body->len, rs.response->body->data);
+			unsigned char md5raw[16];
+			md5_digest(&md5ctx, 16, md5raw);
+			char md5[35];
+			md5[34] = 0;
+			md5[0] = '\"';
+			for (int i = 0; i < 16; i++) {
+				snprintf(md5 + (i * 2) + 1, 3, "%02X", md5raw[i]);
+			}
+			md5[33] = '\"';
+			header_add(&rs.response->headers, "ETag", md5);
+			if (streq(md5, header_get(&rs.request->headers, "If-None-Match"))) {
+				rs.response->code = "304 Not Modified";
+				xfree(rs.response->body->data);
+				xfree(rs.response->body);
+				rs.response->body = NULL;
+			}
+		}
+		if (rs.response->body != NULL && rs.response->body->len > 0) {
+			const char* accenc = header_get(&rs.request->headers, "Accept-Encoding");
+			if (contains_nocase(accenc, "gzip")) {
+
+			}
+		}
+		//TODO: Chunked
+		xfree(rtp);
 	} else if (vh->type == VHOST_RPROXY) {
 
 	} else if (vh->type == VHOST_REDIRECT) {
@@ -442,10 +533,10 @@ int generateResponse(struct reqsess rs) {
 
 	}
 	pvh:
-	//body stuff
+//body stuff
 	if (rs.response->body != NULL) header_setoradd(&rs.response->headers, "Content-Type", rs.response->body->mime_type);
 	char l[16];
-	if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len); //TODO: might be a size limit here
+	if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
 	header_setoradd(&rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
 	return 0;
 }

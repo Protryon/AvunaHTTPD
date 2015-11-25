@@ -126,7 +126,7 @@ int main(int argc, char* argv[]) {
 	delog = xmalloc(sizeof(struct logsess));
 	delog->pi = 0;
 	delog->access_fd = NULL;
-	char* el = getConfigValue(dm, "error-log");
+	const char* el = getConfigValue(dm, "error-log");
 	delog->error_fd = el == NULL ? NULL : fopen(el, "a"); // fopen will return NULL on error, which works.
 	int pfpl = strlen(pid_file);
 	char* pfp = xcopy(pid_file, pfpl + 1, 0);
@@ -214,6 +214,7 @@ int main(int argc, char* argv[]) {
 			continue;
 		}
 		int mp = atoi(mpc);
+		//TODO: impl maxpost
 		int sfd = socket(namespace, SOCK_STREAM, 0);
 		if (sfd < 0) {
 			if (serv->id != NULL) errlog(delog, "Error creating socket for server: %s, %s\n", serv->id, strerror(errno));
@@ -287,6 +288,7 @@ int main(int argc, char* argv[]) {
 		int vhc = 0;
 		struct vhost** vohs = NULL;
 		char* ovh = xstrdup(getConfigValue(serv, "vhosts"), 0);
+		char* oovh = ovh;
 		char* np = NULL;
 		while ((np = strchr(ovh, ',')) != NULL || strlen(ovh) > 0) {
 			if (np != NULL) {
@@ -294,7 +296,7 @@ int main(int argc, char* argv[]) {
 				np++;
 			}
 			ovh = trim(ovh);
-			struct cnode* vcn = getCatByID(cfg, trim(ovh));
+			struct cnode* vcn = getCatByID(cfg, ovh);
 			if (vcn == NULL) {
 				errlog(slog, "Could not find VHost: %s", ovh);
 				goto cont_vh;
@@ -351,15 +353,14 @@ int main(int argc, char* argv[]) {
 				struct vhost_htdocs* vhb = &cv->sub.htdocs;
 				vhb->index = NULL;
 				vhb->errpages = NULL;
+				vhb->enableGzip = 1;
+				vhb->cacheTypes = NULL;
+				vhb->cacheType_count = 0;
+				vhb->maxAge = 604800;
 				vhb->htdocs = getConfigValue(vcn, "htdocs");
 				if (vhb->htdocs == NULL) {
-					errlog(slog, "No htdocs at vhost: %s", vcn->id);
-					if (cv->hosts != NULL) xfree(cv->hosts);
-					free(hnv);
-					xfree(cv);
-					vohs[vhc - 1] = NULL;
-					vhc--;
-					goto cont_vh;
+					errlog(slog, "No htdocs at vhost: %s, assuming default", vcn->id);
+					vhb->htdocs = "/var/www/html/";
 				}
 				vhb->htdocs = realpath(vhb->htdocs, NULL);
 				size_t htl = strlen(vhb->htdocs);
@@ -371,17 +372,29 @@ int main(int argc, char* argv[]) {
 				recur_mkdir(vhb->htdocs, 0750);
 				const char* nhl = getConfigValue(vcn, "nohardlinks");
 				vhb->nohardlinks = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+				if (nhl == NULL) {
+					errlog(slog, "No nohardlinks at vhost: %s, assuming default", vcn->id);
+				}
 				nhl = getConfigValue(vcn, "symlock");
 				vhb->symlock = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+				if (nhl == NULL) {
+					errlog(slog, "No symlock at vhost: %s, assuming default", vcn->id);
+				}
+				nhl = getConfigValue(vcn, "cache-maxage");
+				if (nhl == NULL || !strisunum(nhl)) {
+					errlog(slog, "No cache-maxage at vhost: %s, assuming default", vcn->id);
+					nhl = "604800";
+				}
+				vhb->maxAge = atol(nhl);
+				nhl = getConfigValue(vcn, "enable-gzip");
+				vhb->enableGzip = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+				if (nhl == NULL) {
+					errlog(slog, "No enable-gzip at vhost: %s, assuming default", vcn->id);
+				}
 				const char* ic = getConfigValue(vcn, "index");
 				if (ic == NULL) {
-					errlog(slog, "No index at vhost: %s", vcn->id);
-					if (cv->hosts != NULL) xfree(cv->hosts);
-					free(hnv);
-					xfree(cv);
-					vohs[vhc - 1] = NULL;
-					vhc--;
-					goto cont_vh;
+					errlog(slog, "No index at vhost: %s, assuming default", vcn->id);
+					ic = "index.php, index.html, index.htm";
 				}
 				char* ivh = xstrdup(ic, 0);
 				char* npi = NULL;
@@ -400,6 +413,28 @@ int main(int argc, char* argv[]) {
 					vhb->index[vhb->index_count - 1] = ivh;
 					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
 				}
+				ic = getConfigValue(vcn, "cache-types");
+				if (ic == NULL) {
+					errlog(slog, "No cache-types at vhost: %s, assuming default", vcn->id);
+					ic = "text/css,application/javascript,image/*";
+				}
+				ivh = xstrdup(ic, 0);
+				while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
+					if (npi != NULL) {
+						npi[0] = 0;
+						npi++;
+					}
+					ivh = trim(ivh);
+					if (vhb->cacheTypes == NULL) {
+						vhb->cacheTypes = xmalloc(sizeof(char*));
+						vhb->cacheType_count = 1;
+					} else {
+						vhb->cacheTypes = xrealloc(vhb->cacheTypes, sizeof(char*) * ++vhb->cacheType_count);
+					}
+					vhb->cacheTypes[vhb->cacheType_count - 1] = ivh;
+					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
+				}
+				npi = NULL;
 				for (int i = 0; i < vcn->entries; i++) {
 					if (startsWith_nocase(vcn->keys[i], "error-")) {
 						const char* en = vcn->keys[i] + 6;
@@ -427,7 +462,7 @@ int main(int argc, char* argv[]) {
 				if (vhb->redir == NULL) {
 					errlog(slog, "No redirect at vhost: %s", vcn->id);
 					if (cv->hosts != NULL) xfree(cv->hosts);
-					free(hnv);
+					xfree(hnv);
 					xfree(cv);
 					vohs[vhc - 1] = NULL;
 					vhc--;
@@ -439,6 +474,7 @@ int main(int argc, char* argv[]) {
 			}
 			cont_vh: ovh = np == NULL ? ovh + strlen(ovh) : np;
 		}
+		xfree(oovh);
 		ap->works = xmalloc(sizeof(struct work_param*) * tc);
 		for (int x = 0; x < tc; x++) {
 			struct work_param* wp = xmalloc(sizeof(struct work_param));

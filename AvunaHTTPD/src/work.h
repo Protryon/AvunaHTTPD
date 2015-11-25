@@ -30,6 +30,10 @@ struct vhost_htdocs {
 		char** index;
 		size_t errpage_count;
 		struct errpage** errpages;
+		size_t cacheType_count;
+		char** cacheTypes;
+		size_t maxAge;
+		int enableGzip;
 };
 
 struct vhost_rproxy {

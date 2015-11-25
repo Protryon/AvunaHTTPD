@@ -23,6 +23,7 @@
 #include "log.h"
 #include "time.h"
 #include <arpa/inet.h>
+#include <sys/mman.h>
 
 void closeConn(struct work_param* param, struct conn* conn) {
 	close(conn->fd);
@@ -119,6 +120,9 @@ void run_work(struct work_param* param) {
 								goto cont;
 							}
 							struct response* resp = xmalloc(sizeof(struct response));
+							resp->body = NULL;
+							resp->code = "500 Internal Server Error";
+							resp->version = "HTTP/1.1";
 							struct reqsess rs;
 							rs.wp = param;
 							rs.sender = conns[i];
