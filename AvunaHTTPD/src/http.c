@@ -516,12 +516,50 @@ int generateResponse(struct reqsess rs) {
 				rs.response->body = NULL;
 			}
 		}
-		if (rs.response->body != NULL && rs.response->body->len > 0) {
+		if (rs.response->body != NULL && rs.response->body->len > 1024) {
 			const char* accenc = header_get(&rs.request->headers, "Accept-Encoding");
 			if (contains_nocase(accenc, "gzip")) {
-
+				z_stream strm;
+				strm.zalloc = Z_NULL;
+				strm.zfree = Z_NULL;
+				strm.opaque = Z_NULL;
+				int dr = 0;
+				if ((dr = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY)) != Z_OK) { // TODO: configurable level?
+					errlog(rs.wp->logsess, "Error with zlib defaultInit: %i", dr);
+					goto pgzip;
+				}
+				strm.avail_in = rs.response->body->len;
+				strm.next_in = rs.response->body->data;
+				void* cdata = xmalloc(16384);
+				size_t ts = 0;
+				size_t cc = 16384;
+				strm.avail_out = cc - ts;
+				strm.next_out = cdata + ts;
+				do {
+					dr = deflate(&strm, Z_FINISH);
+					ts = strm.total_out;
+					if (ts >= cc) {
+						cc = ts + 16384;
+						cdata = xrealloc(cdata, cc);
+					}
+					if (dr == Z_STREAM_ERROR) {
+						xfree(cdata);
+						errlog(rs.wp->logsess, "Stream error with zlib deflate");
+						goto pgzip;
+					}
+					strm.avail_out = cc - ts;
+					strm.next_out = cdata + ts;
+				} while (strm.avail_out == 0);
+				deflateEnd(&strm);
+				xfree(rs.response->body->data);
+				cdata = xrealloc(cdata, ts); // shrink
+				rs.response->body->data = cdata;
+				rs.response->body->len = ts;
+				header_add(&rs.response->headers, "Content-Encoding", "gzip");
+				header_add(&rs.response->headers, "Vary", "Accept-Encoding");
 			}
 		}
+		pgzip:
 		//TODO: Chunked
 		xfree(rtp);
 	} else if (vh->type == VHOST_RPROXY) {
