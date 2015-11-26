@@ -25,4 +25,6 @@ char* xstrdup(const char* str, size_t expand);
 
 int recur_mkdir(const char* path, mode_t mode);
 
+int memeq(const unsigned char* mem1, size_t mem1_size, const unsigned char* mem2, size_t mem2_size);
+
 #endif /* UTIL_H_ */

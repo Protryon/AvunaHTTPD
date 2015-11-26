@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <nettle/md5.h>
 #include <zlib.h>
+#include "cache.h"
 
 const char* getMethod(int m) {
 	if (m == METHOD_GET) {
@@ -194,9 +195,11 @@ void freeHeaders(struct headers* headers) {
 	}
 	if (headers->names != NULL) xfree(headers->names);
 	if (headers->values != NULL) xfree(headers->values);
+	xfree(headers);
 }
 
 int parseRequest(struct request* request, char* data) {
+	request->atc = 0;
 	char* cd = data;
 	char* eol1 = strchr(cd, '\n');
 	if (eol1 == NULL) {
@@ -235,10 +238,11 @@ int parseRequest(struct request* request, char* data) {
 	request->version = xmalloc(pl);
 	memcpy(request->version, cd, pl);
 	cd += pl + 1;
-	request->headers.count = 0;
-	request->headers.names = NULL;
-	request->headers.values = NULL;
-	parseHeaders(&request->headers, cd);
+	request->headers = xmalloc(sizeof(struct headers));
+	request->headers->count = 0;
+	request->headers->names = NULL;
+	request->headers->values = NULL;
+	parseHeaders(request->headers, cd);
 	request->body = NULL;
 	xfree(data);
 	return 0;
@@ -254,30 +258,30 @@ int parseResponse(struct response* response, char* data) {
 	return 0;
 }
 
-unsigned char* serializeResponse(struct response* response, size_t* len) {
+unsigned char* serializeResponse(struct reqsess rs, size_t* len) {
 	*len = 0;
-	size_t vl = strlen(response->version);
-	size_t cl = strlen(response->code);
+	size_t vl = strlen(rs.response->version);
+	size_t cl = strlen(rs.response->code);
 	*len = vl + 1 + cl + 2;
 	size_t hl = 0;
-	char* headers = serializeHeaders(&response->headers, &hl);
+	char* headers = serializeHeaders(rs.response->headers, &hl);
 	*len += hl;
-	if (response->body != NULL) *len += response->body->len;
+	if (rs.response->body != NULL) *len += rs.response->body->len;
 	unsigned char* ret = xmalloc(*len);
 	size_t wr = 0;
-	memcpy(ret, response->version, vl);
+	memcpy(ret, rs.response->version, vl);
 	wr += vl;
 	ret[wr++] = ' ';
-	memcpy(ret + wr, response->code, cl);
+	memcpy(ret + wr, rs.response->code, cl);
 	wr += cl;
 	ret[wr++] = '\r';
 	ret[wr++] = '\n';
 	memcpy(ret + wr, headers, hl);
 	wr += hl;
 	xfree(headers);
-	if (response->body != NULL) {
-		memcpy(ret + wr, response->body->data, response->body->len);
-		wr += response->body->len;
+	if (rs.request->method != METHOD_HEAD && rs.response->body != NULL) {
+		memcpy(ret + wr, rs.response->body->data, rs.response->body->len);
+		wr += rs.response->body->len;
 	}
 	return ret;
 }
@@ -322,7 +326,7 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 	if (vh != NULL && vh->sub.htdocs.errpage_count > 0) {
 		for (int i = 0; i < vh->sub.htdocs.errpage_count; i++) {
 			if (startsWith_nocase(rs.response->code, vh->sub.htdocs.errpages[i]->code)) {
-				header_add(&rs.response->headers, "Location", vh->sub.htdocs.errpages[i]->page);
+				header_add(rs.response->headers, "Location", vh->sub.htdocs.errpages[i]->page);
 			}
 		}
 	}
@@ -332,10 +336,10 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 int generateResponse(struct reqsess rs) {
 	rs.response->version = "HTTP/1.1";
 	rs.response->code = "200 OK";
-	rs.response->headers.count = 0;
-	rs.response->headers.names = NULL;
-	rs.response->headers.values = NULL;
-	const char* host = header_get(&rs.request->headers, "Host");
+	rs.response->headers->count = 0;
+	rs.response->headers->names = NULL;
+	rs.response->headers->values = NULL;
+	const char* host = header_get(rs.request->headers, "Host");
 	if (host == NULL) host = "";
 	struct vhost* vh = NULL;
 	for (int i = 0; i < rs.wp->vhosts_count; i++) {
@@ -353,25 +357,41 @@ int generateResponse(struct reqsess rs) {
 	char svr[16];
 	strcpy(svr, "Avuna/");
 	strcat(svr, VERSION);
-	header_add(&rs.response->headers, "Server", svr);
+	header_add(rs.response->headers, "Server", svr);
 	rs.response->body = NULL;
-	header_add(&rs.response->headers, "Connection", "keep-alive");
+	header_add(rs.response->headers, "Connection", "keep-alive");
 	if (vh == NULL) {
 		rs.response->code = "500 Internal Server Error";
 		generateDefaultErrorPage(rs, NULL, "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
 	} else if (vh->type == VHOST_HTDOCS) {
+		int isStatic = 1;
 		size_t htdl = strlen(vh->sub.htdocs.htdocs);
 		size_t pl = strlen(rs.request->path);
+		char* tp = xmalloc(htdl + pl);
+		memcpy(tp, vh->sub.htdocs.htdocs, htdl);
+		memcpy(tp + htdl, rs.request->path + 1, pl);
+		tp[htdl + pl - 1] = 0;
+		char* rtp = NULL;
+		struct scache* osc = getSCache(&vh->sub.htdocs.cache, rs.request->path, contains_nocase(header_get(rs.request->headers, "Accept-Encoding"), "gzip"));
+		if (osc != NULL) {
+			rs.response->atc = 1;
+			rs.response->body = osc->body;
+			xfree(rs.response->headers);
+			rs.response->headers = osc->headers;
+			rs.response->code = osc->code;
+			if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
+				if (streq(osc->etag, header_get(rs.request->headers, "If-None-Match"))) {
+					rs.response->code = "304 Not Modified";
+					rs.response->body = NULL;
+				}
+			}
+			goto pcacheadd;
+		}
 		if (pl < 1 || rs.request->path[0] != '/') {
 			rs.response->code = "500 Internal Server Error";
 			generateDefaultErrorPage(rs, vh, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
 			goto epage;
 		}
-		char* tp = xmalloc(htdl + pl);
-		memcpy(tp, vh->sub.htdocs.htdocs, htdl);
-		memcpy(tp + htdl, rs.request->path + 1, pl);
-		tp[htdl + pl - 1] = 0;
-		// TODO cache! HERE!
 		if (tp[htdl + pl - 2] == '/' && !access(tp, R_OK)) { // TODO: extra paths!
 			for (int ii = 0; ii < vh->sub.htdocs.index_count; ii++) {
 				size_t cl = strlen(vh->sub.htdocs.index[ii]);
@@ -387,7 +407,7 @@ int generateResponse(struct reqsess rs) {
 				}
 			}
 		}
-		char* rtp = realpath(tp, NULL);
+		rtp = realpath(tp, NULL);
 		xfree(tp);
 		if (rtp == NULL) {
 			if (errno == ENOENT || errno == ENOTDIR) {
@@ -416,7 +436,7 @@ int generateResponse(struct reqsess rs) {
 			memcpy(np, rs.request->path, pl);
 			np[pl] = '/';
 			np[pl + 1] = 0;
-			header_add(&rs.response->headers, "Location", np);
+			header_add(rs.response->headers, "Location", np);
 			xfree(rtp);
 			goto pvh;
 		}
@@ -468,7 +488,7 @@ int generateResponse(struct reqsess rs) {
 			} else {
 				ccbuf[8 + snr] = 0;
 			}
-			header_add(&rs.response->headers, "Cache-Control", ccbuf);
+			header_add(rs.response->headers, "Cache-Control", ccbuf);
 		}
 		int ffd = open(rtp, O_RDONLY);
 		if (ffd < 0) {
@@ -495,29 +515,36 @@ int generateResponse(struct reqsess rs) {
 		//TODO: SO-CGI
 		//TODO: SSI
 		epage: ;
+		char etag[35];
+		int hetag = 0;
+		int nm = 0;
 		if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
 			struct md5_ctx md5ctx;
 			md5_init(&md5ctx);
 			md5_update(&md5ctx, rs.response->body->len, rs.response->body->data);
-			unsigned char md5raw[16];
-			md5_digest(&md5ctx, 16, md5raw);
-			char md5[35];
-			md5[34] = 0;
-			md5[0] = '\"';
+			unsigned char rawmd5[16];
+			md5_digest(&md5ctx, 16, rawmd5);
+			hetag = 1;
+			etag[34] = 0;
+			etag[0] = '\"';
 			for (int i = 0; i < 16; i++) {
-				snprintf(md5 + (i * 2) + 1, 3, "%02X", md5raw[i]);
+				snprintf(etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
 			}
-			md5[33] = '\"';
-			header_add(&rs.response->headers, "ETag", md5);
-			if (streq(md5, header_get(&rs.request->headers, "If-None-Match"))) {
-				rs.response->code = "304 Not Modified";
-				xfree(rs.response->body->data);
-				xfree(rs.response->body);
-				rs.response->body = NULL;
+			etag[33] = '\"';
+			header_add(rs.response->headers, "ETag", etag);
+			if (streq(etag, header_get(rs.request->headers, "If-None-Match"))) {
+				nm = 1;
+				if (!isStatic) {
+					rs.response->code = "304 Not Modified";
+					xfree(rs.response->body->data);
+					xfree(rs.response->body);
+					rs.response->body = NULL;
+				}
 			}
 		}
-		if (rs.response->body != NULL && rs.response->body->len > 1024) {
-			const char* accenc = header_get(&rs.request->headers, "Accept-Encoding");
+		int wgz = 0;
+		if (rs.response->body != NULL && rs.response->body->len > 1024 && header_get(rs.response->headers, "Content-Encoding") == NULL) {
+			const char* accenc = header_get(rs.request->headers, "Accept-Encoding");
 			if (contains_nocase(accenc, "gzip")) {
 				z_stream strm;
 				strm.zalloc = Z_NULL;
@@ -555,26 +582,61 @@ int generateResponse(struct reqsess rs) {
 				cdata = xrealloc(cdata, ts); // shrink
 				rs.response->body->data = cdata;
 				rs.response->body->len = ts;
-				header_add(&rs.response->headers, "Content-Encoding", "gzip");
-				header_add(&rs.response->headers, "Vary", "Accept-Encoding");
+				header_add(rs.response->headers, "Content-Encoding", "gzip");
+				header_add(rs.response->headers, "Vary", "Accept-Encoding");
+				wgz = 1;
 			}
 		}
-		pgzip:
+		pgzip: if (isStatic) {
+			struct scache* sc = xmalloc(sizeof(struct scache));
+			sc->body = rs.response->body;
+			sc->ce = wgz;
+			sc->code = rs.response->code;
+			if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
+			char l[16];
+			if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
+			header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
+			sc->headers = rs.response->headers;
+			sc->rp = rs.request->path;
+			if (!hetag) {
+				struct md5_ctx md5ctx;
+				md5_init(&md5ctx);
+				md5_update(&md5ctx, rs.response->body->len, rs.response->body->data);
+				unsigned char rawmd5[16];
+				md5_digest(&md5ctx, 16, rawmd5);
+				hetag = 1;
+				etag[34] = 0;
+				etag[0] = '\"';
+				for (int i = 0; i < 16; i++) {
+					snprintf(etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
+				}
+				etag[33] = '\"';
+			}
+			memcpy(sc->etag, etag, 35);
+			addSCache(&vh->sub.htdocs.cache, sc);
+			rs.response->atc = 1;
+			rs.request->atc = 1;
+			if (nm) {
+				rs.response->body = NULL;
+				rs.response->code = "304 Not Modified";
+			}
+		}
+		pcacheadd:
 		//TODO: Chunked
-		xfree(rtp);
+		if (rtp != NULL) xfree(rtp);
 	} else if (vh->type == VHOST_RPROXY) {
 
 	} else if (vh->type == VHOST_REDIRECT) {
 		rs.response->code = "302 Found";
-		header_add(&rs.response->headers, "Location", vh->sub.redirect.redir);
+		header_add(rs.response->headers, "Location", vh->sub.redirect.redir);
 	} else if (vh->type == VHOST_PROXY) {
 
 	}
 	pvh:
 //body stuff
-	if (rs.response->body != NULL) header_setoradd(&rs.response->headers, "Content-Type", rs.response->body->mime_type);
+	if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
 	char l[16];
 	if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
-	header_setoradd(&rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
+	header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
 	return 0;
 }

@@ -20,7 +20,7 @@ struct collection* new_collection(size_t capacity, size_t data_size) {
 	coll->dsize = data_size;
 	coll->size = 0;
 	coll->count = 0;
-	if (pthread_mutex_init(&coll->data_mutex, NULL)) {
+	if (pthread_rwlock_init(&coll->data_mutex, NULL)) {
 		xfree(coll->data);
 		coll->data = NULL;
 		xfree(coll);
@@ -31,7 +31,7 @@ struct collection* new_collection(size_t capacity, size_t data_size) {
 
 int del_collection(struct collection* coll) {
 	if (coll == NULL || coll->data == NULL) return -1;
-	if (pthread_mutex_destroy(&coll->data_mutex)) return -1;
+	if (pthread_rwlock_destroy(&coll->data_mutex)) return -1;
 	xfree(coll->data);
 	coll->data = NULL;
 	xfree(coll);
@@ -39,12 +39,12 @@ int del_collection(struct collection* coll) {
 }
 
 int add_collection(struct collection* coll, void* data) {
-	pthread_mutex_lock(&coll->data_mutex);
+	pthread_rwlock_wrlock(&coll->data_mutex);
 	for (int i = 0; i < coll->size; i++) {
 		if (coll->data[i] == NULL) {
 			coll->count++;
 			coll->data[i] = data;
-			pthread_mutex_unlock(&coll->data_mutex);
+			pthread_rwlock_unlock(&coll->data_mutex);
 			return 0;
 		}
 	}
@@ -57,21 +57,21 @@ int add_collection(struct collection* coll, void* data) {
 	}
 	coll->data[coll->size++] = data;
 	coll->count++;
-	pthread_mutex_unlock(&coll->data_mutex);
+	pthread_rwlock_unlock(&coll->data_mutex);
 	return 0;
 }
 
 int rem_collection(struct collection* coll, void* data) {
-	pthread_mutex_lock(&coll->data_mutex);
+	pthread_rwlock_wrlock(&coll->data_mutex);
 	for (int i = 0; i < coll->size; i++) {
 		if (coll->data[i] == data) {
 			coll->data[i] = NULL;
 			coll->count--;
-			pthread_mutex_unlock(&coll->data_mutex);
+			pthread_rwlock_unlock(&coll->data_mutex);
 			return 0;
 		}
 	}
-	pthread_mutex_unlock(&coll->data_mutex);
+	pthread_rwlock_unlock(&coll->data_mutex);
 	return -1;
 }
 

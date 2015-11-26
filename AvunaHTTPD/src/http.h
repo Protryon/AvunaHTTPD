@@ -56,8 +56,9 @@ struct request {
 		int method;
 		char* path;
 		char* version;
-		struct headers headers;
+		struct headers* headers;
 		struct body* body; // may be NULL
+		int atc;
 };
 
 int parseRequest(struct request* request, char* data);
@@ -66,12 +67,13 @@ unsigned char* serializeRequest(struct request* request, size_t* len);
 struct response {
 		char* version;
 		char* code;
-		struct headers headers;
+		struct headers* headers;
 		struct body* body; // may be NULL
+		int atc;
 };
 
 int parseResponse(struct response* response, char* data);
-unsigned char* serializeResponse(struct response* response, size_t* len);
+unsigned char* serializeResponse(struct reqsess rs, size_t* len);
 
 int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* msg);
 

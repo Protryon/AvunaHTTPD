@@ -24,8 +24,8 @@ char* trim(char* str) {
 int streq(const char* str1, const char* str2) {
 	if (str1 == NULL || str2 == NULL) return 0;
 	if (str1 == str2) return 1;
-	int l1 = strlen(str1);
-	int l2 = strlen(str2);
+	size_t l1 = strlen(str1);
+	size_t l2 = strlen(str2);
 	if (l1 != l2) return 0;
 	for (int i = 0; i < l1; i++) {
 		if (str1[i] != str2[i]) {
@@ -38,8 +38,8 @@ int streq(const char* str1, const char* str2) {
 int streq_nocase(const char* str1, const char* str2) {
 	if (str1 == NULL || str2 == NULL) return 0;
 	if (str1 == str2) return 1;
-	int l1 = strlen(str1);
-	int l2 = strlen(str2);
+	size_t l1 = strlen(str1);
+	size_t l2 = strlen(str2);
 	if (l1 != l2) return 0;
 	for (int i = 0; i < l1; i++) {
 		char s1 = str1[i];
@@ -56,8 +56,8 @@ int streq_nocase(const char* str1, const char* str2) {
 int startsWith(const char* str, const char* with) {
 	if (str == NULL || with == NULL) return 0;
 	if (str == with) return 1;
-	int l1 = strlen(str);
-	int l2 = strlen(with);
+	size_t l1 = strlen(str);
+	size_t l2 = strlen(with);
 	if (l1 < l2) return 0;
 	for (int i = 0; i < l2; i++) {
 		if (str[i] != with[i]) {
@@ -70,8 +70,8 @@ int startsWith(const char* str, const char* with) {
 int startsWith_nocase(const char* str, const char* with) {
 	if (str == NULL || with == NULL) return 0;
 	if (str == with) return 1;
-	int l1 = strlen(str);
-	int l2 = strlen(with);
+	size_t l1 = strlen(str);
+	size_t l2 = strlen(with);
 	if (l1 < l2) return 0;
 	for (int i = 0; i < l2; i++) {
 		char s1 = str[i];
@@ -88,8 +88,8 @@ int startsWith_nocase(const char* str, const char* with) {
 int endsWith(const char* str, const char* with) {
 	if (str == NULL || with == NULL) return 0;
 	if (str == with) return 1;
-	int l1 = strlen(str);
-	int l2 = strlen(with);
+	size_t l1 = strlen(str);
+	size_t l2 = strlen(with);
 	if (l1 < l2) return 0;
 	for (int i = l2 - 1; i >= 0; i--) {
 		if (str[i] != with[i]) {
@@ -102,8 +102,8 @@ int endsWith(const char* str, const char* with) {
 int endsWith_nocase(const char* str, const char* with) {
 	if (str == NULL || with == NULL) return 0;
 	if (str == with) return 1;
-	int l1 = strlen(str);
-	int l2 = strlen(with);
+	size_t l1 = strlen(str);
+	size_t l2 = strlen(with);
 	if (l1 < l2) return 0;
 	for (int i = l2 - 1; i >= 0; i--) {
 		char s1 = str[i];
@@ -120,8 +120,8 @@ int endsWith_nocase(const char* str, const char* with) {
 int contains(const char* str, const char* with) {
 	if (str == NULL || with == NULL) return 0;
 	if (str == with) return 1;
-	int l1 = strlen(str);
-	int l2 = strlen(with);
+	size_t l1 = strlen(str);
+	size_t l2 = strlen(with);
 	if (l1 < l2) return 0;
 	int ml = 0;
 	for (int i = 0; i < l1; i++) {
@@ -137,8 +137,8 @@ int contains(const char* str, const char* with) {
 int contains_nocase(const char* str, const char* with) {
 	if (str == NULL || with == NULL) return 0;
 	if (str == with) return 1;
-	int l1 = strlen(str);
-	int l2 = strlen(with);
+	size_t l1 = strlen(str);
+	size_t l2 = strlen(with);
 	if (l1 < l2) return 0;
 	int ml = 0;
 	for (int i = 0; i < l1; i++) {

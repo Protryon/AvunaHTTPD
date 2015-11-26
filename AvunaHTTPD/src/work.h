@@ -11,6 +11,7 @@
 #include "collection.h"
 #include "accept.h"
 #include "log.h"
+#include "cache.h"
 
 #define VHOST_HTDOCS 0
 #define VHOST_RPROXY 1
@@ -34,6 +35,7 @@ struct vhost_htdocs {
 		char** cacheTypes;
 		size_t maxAge;
 		int enableGzip;
+		struct cache cache;
 };
 
 struct vhost_rproxy {

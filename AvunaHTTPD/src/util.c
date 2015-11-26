@@ -94,3 +94,15 @@ int recur_mkdir(const char* path, mode_t mode) {
 	}
 	return 0;
 }
+
+int memeq(const unsigned char* mem1, size_t mem1_size, const unsigned char* mem2, size_t mem2_size) {
+	if (mem1 == NULL || mem2 == NULL) return 0;
+	if (mem1 == mem2 && mem1_size == mem2_size) return 1;
+	if (mem1_size != mem2_size) return 0;
+	for (int i = 0; i < mem1_size; i++) {
+		if (mem1[i] != mem2[i]) {
+			return 0;
+		}
+	}
+	return 1;
+}

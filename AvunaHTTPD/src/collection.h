@@ -17,7 +17,7 @@ struct collection {
 		size_t dsize;
 		size_t rc;
 		void** data;
-		pthread_mutex_t data_mutex;
+		pthread_rwlock_t data_mutex;
 };
 
 struct collection* new_collection(size_t capacity, size_t data_size);

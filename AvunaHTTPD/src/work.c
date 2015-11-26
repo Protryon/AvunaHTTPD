@@ -44,7 +44,7 @@ void run_work(struct work_param* param) {
 	unsigned char* mbuf = xmalloc(1024);
 	char tip[48];
 	while (1) {
-		pthread_mutex_lock(&param->conns->data_mutex);
+		pthread_rwlock_rdlock(&param->conns->data_mutex);
 		size_t cc = param->conns->count;
 		struct pollfd fds[cc + 1];
 		struct conn* conns[cc];
@@ -59,7 +59,7 @@ void run_work(struct work_param* param) {
 				if (fdi == cc) break;
 			}
 		}
-		pthread_mutex_unlock(&param->conns->data_mutex);
+		pthread_rwlock_unlock(&param->conns->data_mutex);
 		fds[cc].fd = param->pipes[0];
 		fds[cc].events = POLLIN;
 		fds[cc].revents = 0;
@@ -130,8 +130,10 @@ void run_work(struct work_param* param) {
 							}
 							struct response* resp = xmalloc(sizeof(struct response));
 							resp->body = NULL;
+							resp->atc = 0;
 							resp->code = "500 Internal Server Error";
 							resp->version = "HTTP/1.1";
+							resp->headers = xmalloc(sizeof(struct headers));
 							struct reqsess rs;
 							rs.wp = param;
 							rs.sender = conns[i];
@@ -139,7 +141,7 @@ void run_work(struct work_param* param) {
 							rs.request = req;
 							generateResponse(rs);
 							size_t rl = 0;
-							unsigned char* rda = serializeResponse(resp, &rl);
+							unsigned char* rda = serializeResponse(rs, &rl);
 							struct timespec stt2;
 							clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt2);
 							double msp = (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt.tv_nsec / 1000000.0 + stt.tv_sec * 1000.0);
@@ -180,19 +182,21 @@ void run_work(struct work_param* param) {
 								memcpy(loc, stw, rl);
 							}
 							xfree(rda);
-							xfree(req->path);
+							if (!req->atc) xfree(req->path);
 							xfree(req->version);
-							freeHeaders(&req->headers);
+							freeHeaders(req->headers);
 							if (req->body != NULL) {
 								xfree(req->body->data);
 								xfree(req->body);
 							}
 							xfree(req);
-							if (resp->body != NULL) {
-								xfree(resp->body->data);
-								xfree(resp->body);
+							if (!resp->atc) {
+								if (resp->body != NULL) {
+									xfree(resp->body->data);
+									xfree(resp->body);
+								}
+								freeHeaders(resp->headers);
 							}
-							freeHeaders(&resp->headers);
 							xfree(resp);
 						}
 					} else ml = 0;
