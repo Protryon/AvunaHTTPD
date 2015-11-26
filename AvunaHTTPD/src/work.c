@@ -88,6 +88,15 @@ void run_work(struct work_param* param) {
 					loc = conns[i]->readBuffer + conns[i]->readBuffer_size - tr;
 				}
 				int r = 0;
+				if (r == 0 && tr == 0) { // nothing to read, but wont block.
+					int x = read(fds[i].fd, loc + r, tr - r);
+					if (x <= 0) {
+						closeConn(param, conns[i]);
+						conns[i] = NULL;
+						goto cont;
+					}
+					r += x;
+				}
 				while (r < tr) {
 					int x = read(fds[i].fd, loc + r, tr - r);
 					if (x <= 0) {
