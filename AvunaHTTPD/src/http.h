@@ -62,7 +62,7 @@ struct request {
 		int atc;
 };
 
-int parseRequest(struct request* request, char* data);
+int parseRequest(struct request* request, char* data, size_t maxPost);
 unsigned char* serializeRequest(struct request* request, size_t* len);
 
 struct response {

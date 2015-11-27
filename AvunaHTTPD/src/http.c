@@ -200,7 +200,7 @@ void freeHeaders(struct headers* headers) {
 	xfree(headers);
 }
 
-int parseRequest(struct request* request, char* data) {
+int parseRequest(struct request* request, char* data, size_t maxPost) {
 	request->atc = 0;
 	char* cd = data;
 	char* eol1 = strchr(cd, '\n');
@@ -247,6 +247,17 @@ int parseRequest(struct request* request, char* data) {
 	parseHeaders(request->headers, cd);
 	request->body = NULL;
 	xfree(data);
+	char* cl = header_get(request->headers, "Content-Length");
+	if (request->method == METHOD_POST && cl != NULL && strisunum(cl)) {
+		long int cli = atol(cl);
+		if (maxPost == 0 || cli < maxPost) {
+			request->body = xmalloc(sizeof(struct body));
+			request->body->len = cli;
+			request->body->data = xmalloc(cli);
+			request->body->mime_type = "application/x-www-form-urlencoded";
+			request->body->freeMime = 0;
+		}
+	}
 	return 0;
 }
 
@@ -370,7 +381,7 @@ int generateResponse(struct reqsess rs) {
 		rs.response->code = "500 Internal Server Error";
 		generateDefaultErrorPage(rs, NULL, "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
 	} else if (vh->type == VHOST_HTDOCS) {
-		int isStatic = 1;
+		int isStatic = rs.request->method != METHOD_POST;
 		size_t htdl = strlen(vh->sub.htdocs.htdocs);
 		size_t pl = strlen(rs.request->path);
 		char* tp = xmalloc(htdl + pl);

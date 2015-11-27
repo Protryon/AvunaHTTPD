@@ -37,6 +37,8 @@ void run_accept(struct accept_param* param) {
 		c->readBuffer_checked = 0;
 		c->writeBuffer = NULL;
 		c->writeBuffer_size = 0;
+		c->postLeft = 0;
+		c->reqPosting = NULL;
 		if (poll(&spfd, 1, -1) < 0) {
 			errlog(param->logsess, "Error while polling server: %s", strerror(errno));
 			xfree(c);

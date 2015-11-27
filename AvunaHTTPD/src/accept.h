@@ -32,6 +32,8 @@ struct conn {
 		size_t readBuffer_checked;
 		unsigned char* writeBuffer;
 		size_t writeBuffer_size;
+		size_t postLeft;
+		struct request* reqPosting;
 };
 
 void run_accept(struct accept_param* param);

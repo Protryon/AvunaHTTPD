@@ -35,6 +35,83 @@ void closeConn(struct work_param* param, struct conn* conn) {
 	xfree(conn);
 }
 
+void handleRequest(int wfd, struct timespec* stt, struct conn* conn, struct work_param* param, struct request* req) {
+	struct response* resp = xmalloc(sizeof(struct response));
+	resp->body = NULL;
+	resp->atc = 0;
+	resp->code = "500 Internal Server Error";
+	resp->version = "HTTP/1.1";
+	resp->headers = xmalloc(sizeof(struct headers));
+	struct reqsess rs;
+	rs.wp = param;
+	rs.sender = conn;
+	rs.response = resp;
+	rs.request = req;
+	generateResponse(rs);
+	size_t rl = 0;
+	unsigned char* rda = serializeResponse(rs, &rl);
+	struct timespec stt2;
+	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt2);
+	double msp = (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt->tv_nsec / 1000000.0 + stt->tv_sec * 1000.0);
+	const char* mip = NULL;
+	char tip[48];
+	if (conn->addr.sa_family == AF_INET) {
+		struct sockaddr_in *sip4 = (struct sockaddr_in*) &conn->addr;
+		mip = inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
+	} else if (conn->addr.sa_family == AF_INET6) {
+		struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &conn->addr;
+		mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
+	} else if (conn->addr.sa_family == AF_LOCAL) {
+		mip = "UNIX";
+	} else {
+		mip = "UNKNOWN";
+	}
+	if (mip == NULL) {
+		errlog(param->logsess, "Invalid IP Address: %s", strerror(errno));
+	}
+	acclog(param->logsess, "%s %s %s returned %s took: %f ms", mip, getMethod(req->method), req->path, resp->code, msp);
+	size_t mtr = write(wfd, rda, rl);
+	if (mtr < 0 && errno != EAGAIN) {
+		closeConn(param, conn);
+		conn = NULL;
+	} else if (mtr >= rl) {
+		//done writing!
+	} else {
+		unsigned char* stw = rda + mtr;
+		rl -= mtr;
+		unsigned char* loc = NULL;
+		if (conn->writeBuffer == NULL) {
+			conn->writeBuffer = xmalloc(rl); // TODO: max upload?
+			conn->writeBuffer_size = rl;
+			loc = conn->writeBuffer;
+		} else {
+			conn->writeBuffer_size += rl;
+			conn->writeBuffer = xrealloc(conn->writeBuffer, conn->writeBuffer_size);
+			loc = conn->writeBuffer + conn->writeBuffer_size - rl;
+		}
+		memcpy(loc, stw, rl);
+	}
+	xfree(rda);
+	if (!req->atc) xfree(req->path);
+	xfree(req->version);
+	freeHeaders(req->headers);
+	if (req->body != NULL) {
+		if (req->body->freeMime) xfree(req->body->mime_type);
+		xfree(req->body->data);
+		xfree(req->body);
+	}
+	xfree(req);
+	if (!resp->atc) {
+		if (resp->body != NULL) {
+			if (resp->body->freeMime) xfree(resp->body->mime_type);
+			xfree(resp->body->data);
+			xfree(resp->body);
+		}
+		freeHeaders(resp->headers);
+	}
+	xfree(resp);
+}
+
 void run_work(struct work_param* param) {
 	if (pipe(param->pipes) != 0) {
 		errlog(param->logsess, "Failed to create pipe! %s", strerror(errno));
@@ -106,6 +183,22 @@ void run_work(struct work_param* param) {
 					}
 					r += x;
 				}
+				reqp: if (conns[i]->reqPosting != NULL && conns[i]->postLeft > 0) {
+					if (conns[i]->readBuffer_size >= conns[i]->postLeft) {
+						struct timespec stt;
+						clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
+						memcpy(conns[i]->reqPosting->body->data + conns[i]->reqPosting->body->len - conns[i]->postLeft, conns[i]->readBuffer, conns[i]->postLeft);
+						size_t os = conns[i]->readBuffer_size;
+						conns[i]->readBuffer_size -= conns[i]->postLeft;
+						conns[i]->readBuffer_checked = 0;
+						memmove(conns[i]->readBuffer, conns[i]->readBuffer + conns[i]->postLeft, conns[i]->readBuffer_size);
+						conns[i]->postLeft -= os;
+						if (conns[i]->postLeft == 0) {
+							handleRequest(fds[i].fd, &stt, conns[i], param, conns[i]->reqPosting);
+							conns[i]->reqPosting = NULL;
+						}
+					} else goto pc;
+				}
 				static unsigned char tm[4] = { 0x0D, 0x0A, 0x0D, 0x0A };
 				int ml = 0;
 				for (int x = conns[i]->readBuffer_checked; x < conns[i]->readBuffer_size; x++) {
@@ -121,88 +214,23 @@ void run_work(struct work_param* param) {
 							struct timespec stt;
 							clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
 							struct request* req = xmalloc(sizeof(struct request));
-							if (parseRequest(req, (char*) reqd) < 0) {
+							if (parseRequest(req, (char*) reqd, param->maxPost) < 0) {
 								errlog(param->logsess, "Malformed Request!");
 								xfree(req);
 								xfree(reqd);
 								closeConn(param, conns[i]);
 								goto cont;
 							}
-							struct response* resp = xmalloc(sizeof(struct response));
-							resp->body = NULL;
-							resp->atc = 0;
-							resp->code = "500 Internal Server Error";
-							resp->version = "HTTP/1.1";
-							resp->headers = xmalloc(sizeof(struct headers));
-							struct reqsess rs;
-							rs.wp = param;
-							rs.sender = conns[i];
-							rs.response = resp;
-							rs.request = req;
-							generateResponse(rs);
-							size_t rl = 0;
-							unsigned char* rda = serializeResponse(rs, &rl);
-							struct timespec stt2;
-							clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt2);
-							double msp = (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt.tv_nsec / 1000000.0 + stt.tv_sec * 1000.0);
-							const char* mip = NULL;
-							if (conns[i]->addr.sa_family == AF_INET) {
-								struct sockaddr_in *sip4 = (struct sockaddr_in*) &conns[i]->addr;
-								mip = inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
-							} else if (conns[i]->addr.sa_family == AF_INET6) {
-								struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &conns[i]->addr;
-								mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
-							} else if (conns[i]->addr.sa_family == AF_LOCAL) {
-								mip = "UNIX";
-							} else {
-								mip = "UNKNOWN";
-							}
-							if (mip == NULL) {
-								errlog(param->logsess, "Invalid IP Address: %s", strerror(errno));
-							}
-							acclog(param->logsess, "%s %s %s returned %s took: %f ms", mip, getMethod(req->method), req->path, resp->code, msp);
-							size_t mtr = write(fds[i].fd, rda, rl);
-							if (mtr < 0 && errno != EAGAIN) {
-								closeConn(param, conns[i]);
-								conns[i] = NULL;
-							} else if (mtr >= rl) {
-								//done writing!
-							} else {
-								unsigned char* stw = rda + mtr;
-								rl -= mtr;
-								if (conns[i]->writeBuffer == NULL) {
-									conns[i]->writeBuffer = xmalloc(rl); // TODO: max upload?
-									conns[i]->writeBuffer_size = rl;
-									loc = conns[i]->writeBuffer;
-								} else {
-									conns[i]->writeBuffer_size += rl;
-									conns[i]->writeBuffer = xrealloc(conns[i]->writeBuffer, conns[i]->writeBuffer_size);
-									loc = conns[i]->writeBuffer + conns[i]->writeBuffer_size - rl;
-								}
-								memcpy(loc, stw, rl);
-							}
-							xfree(rda);
-							if (!req->atc) xfree(req->path);
-							xfree(req->version);
-							freeHeaders(req->headers);
 							if (req->body != NULL) {
-								xfree(req->body->data);
-								xfree(req->body);
+								conns[i]->reqPosting = req;
+								conns[i]->postLeft = req->body->len;
+								goto reqp;
 							}
-							xfree(req);
-							if (!resp->atc) {
-								if (resp->body != NULL) {
-									if (resp->body->freeMime) xfree(resp->body->mime_type);
-									xfree(resp->body->data);
-									xfree(resp->body);
-								}
-								freeHeaders(resp->headers);
-							}
-							xfree(resp);
+							handleRequest(fds[i].fd, &stt, conns[i], param, req);
 						}
 					} else ml = 0;
 				}
-				if (conns[i] != NULL) {
+				pc: if (conns[i] != NULL) {
 					if (conns[i]->readBuffer_size >= 10) conns[i]->readBuffer_checked = conns[i]->readBuffer_size - 10;
 					else conns[i]->readBuffer_checked = 0;
 				}

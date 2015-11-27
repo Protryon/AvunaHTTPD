@@ -85,6 +85,7 @@ struct work_param {
 		size_t vhosts_count;
 		struct vhost** vhosts;
 		int sport;
+		size_t maxPost;
 };
 
 void run_work(struct work_param* param);

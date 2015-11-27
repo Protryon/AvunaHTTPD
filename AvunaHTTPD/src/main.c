@@ -213,7 +213,7 @@ int main(int argc, char* argv[]) {
 			else errlog(delog, "Invalid max-post for server.\n");
 			continue;
 		}
-		int mp = atoi(mpc);
+		long int mp = atol(mpc);
 		//TODO: impl maxpost
 		int sfd = socket(namespace, SOCK_STREAM, 0);
 		if (sfd < 0) {
@@ -584,6 +584,7 @@ int main(int argc, char* argv[]) {
 			wp->vhosts_count = vhc;
 			wp->i = x;
 			wp->sport = port;
+			wp->maxPost = mp;
 			ap->works[x] = wp;
 		}
 		aps[i] = ap;
