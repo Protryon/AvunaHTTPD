@@ -381,7 +381,7 @@ int generateResponse(struct reqsess rs) {
 		rs.response->code = "500 Internal Server Error";
 		generateDefaultErrorPage(rs, NULL, "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
 	} else if (vh->type == VHOST_HTDOCS) {
-		int isStatic = rs.request->method != METHOD_POST;
+		int isStatic = 1;
 		size_t htdl = strlen(vh->sub.htdocs.htdocs);
 		size_t pl = strlen(rs.request->path);
 		char* tp = xmalloc(htdl + pl);
@@ -662,7 +662,7 @@ int generateResponse(struct reqsess rs) {
 				ff.type = FCGI_STDIN;
 				if (rs.request->body != NULL && rs.request->body->len > 0) {
 					ff.len = rs.request->body->len;
-					ff.data = rs.request->body.data;
+					ff.data = rs.request->body->data;
 					writeFCGIFrame(ffd, &ff);
 				}
 				ff.len = 0;
