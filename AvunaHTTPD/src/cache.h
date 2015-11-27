@@ -21,11 +21,7 @@ struct scache {
 		char* code;
 		struct headers* headers;
 		struct body* body;
-};
-
-struct dcache {
-		unsigned char md5[16];
-		struct scache scache;
+		int isStatic;
 };
 
 struct cache {
@@ -39,10 +35,6 @@ struct cache {
 
 struct scache* getSCache(struct cache* cache, char* rp, int ce);
 
-struct dcache* getDCache(struct cache* cache, char* rp, int ce, unsigned char* md5);
-
 int addSCache(struct cache* cache, struct scache* scache);
-
-int addDCache(struct cache* cache, struct dcache* dcache);
 
 #endif /* CACHE_H_ */

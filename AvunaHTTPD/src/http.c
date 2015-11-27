@@ -395,25 +395,29 @@ int generateResponse(struct reqsess rs) {
 		char* rtp = NULL;
 		struct scache* osc = getSCache(&vh->sub.htdocs.cache, rs.request->path, contains_nocase(header_get(rs.request->headers, "Accept-Encoding"), "gzip"));
 		if (osc != NULL) {
-			rs.response->atc = 1;
-			rs.response->body = osc->body;
-			if (rs.response->headers->count > 0) for (int i = 0; i < rs.response->headers->count; i++) {
-				xfree(rs.response->headers->names[i]);
-				xfree(rs.response->headers->values[i]);
-			}
-			if (rs.response->headers->names != NULL) xfree(rs.response->headers->names);
-			if (rs.response->headers->values != NULL) xfree(rs.response->headers->values);
-			rs.response->headers->count = osc->headers->count;
-			rs.response->headers->names = xcopy(osc->headers->names, osc->headers->count * sizeof(char*), 0);
-			rs.response->headers->values = xcopy(osc->headers->values, osc->headers->count * sizeof(char*), 0);
-			rs.response->code = osc->code;
-			if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
-				if (streq(osc->etag, header_get(rs.request->headers, "If-None-Match"))) {
-					rs.response->code = "304 Not Modified";
-					rs.response->body = NULL;
+			if (osc->isStatic) {
+				rs.response->atc = 1;
+				rs.response->body = osc->body;
+				if (rs.response->headers->count > 0) for (int i = 0; i < rs.response->headers->count; i++) {
+					xfree(rs.response->headers->names[i]);
+					xfree(rs.response->headers->values[i]);
 				}
+				if (rs.response->headers->names != NULL) xfree(rs.response->headers->names);
+				if (rs.response->headers->values != NULL) xfree(rs.response->headers->values);
+				rs.response->headers->count = osc->headers->count;
+				rs.response->headers->names = xcopy(osc->headers->names, osc->headers->count * sizeof(char*), 0);
+				rs.response->headers->values = xcopy(osc->headers->values, osc->headers->count * sizeof(char*), 0);
+				rs.response->code = osc->code;
+				if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
+					if (streq(osc->etag, header_get(rs.request->headers, "If-None-Match"))) {
+						rs.response->code = "304 Not Modified";
+						rs.response->body = NULL;
+					}
+				}
+				goto pcacheadd;
+			} else {
+				isStatic = 0;
 			}
-			goto pcacheadd;
 		}
 		if (pl < 1 || rs.request->path[0] != '/') {
 			rs.response->code = "500 Internal Server Error";
@@ -519,26 +523,26 @@ int generateResponse(struct reqsess rs) {
 			}
 			header_add(rs.response->headers, "Cache-Control", ccbuf);
 		}
-		int ffd = open(rtp, O_RDONLY);
-		if (ffd < 0) {
-			errlog(rs.wp->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
-			rs.response->code = "500 Internal Server Error";
-			generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
-			goto epage;
+		if (isStatic) {
+			int ffd = open(rtp, O_RDONLY);
+			if (ffd < 0) {
+				errlog(rs.wp->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
+				rs.response->code = "500 Internal Server Error";
+				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+				goto epage;
+			}
+			rs.response->body->data = xmalloc(st.st_size);
+			int r = 0;
+			while ((r = read(ffd, rs.response->body->data + rs.response->body->len, st.st_size - rs.response->body->len)) > 0) {
+				rs.response->body->len += r;
+			}
+			if (r < 0) {
+				errlog(rs.wp->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
+				rs.response->code = "500 Internal Server Error";
+				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+				goto epage;
+			}
 		}
-
-		rs.response->body->data = xmalloc(st.st_size);
-		int r = 0;
-		while ((r = read(ffd, rs.response->body->data + rs.response->body->len, st.st_size - rs.response->body->len)) > 0) {
-			rs.response->body->len += r;
-		}
-		if (r < 0) {
-			errlog(rs.wp->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
-			rs.response->code = "500 Internal Server Error";
-			generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
-			goto epage;
-		}
-		//todo if we end up doing FCGI/CGI, we should NOT read the file ourselves!
 		if (rs.response->body != NULL && rs.response->body->mime_type != NULL) for (int i = 0; i < vh->sub.htdocs.fcgi_count; i++) {
 			struct fcgi* fcgi = vh->sub.htdocs.fcgis[i];
 			int df = 0;
@@ -835,6 +839,7 @@ int generateResponse(struct reqsess rs) {
 		}
 		pgzip: if (isStatic) {
 			struct scache* sc = xmalloc(sizeof(struct scache));
+			sc->isStatic = 1;
 			sc->body = rs.response->body;
 			sc->ce = wgz;
 			sc->code = rs.response->code;
@@ -866,6 +871,10 @@ int generateResponse(struct reqsess rs) {
 				rs.response->body = NULL;
 				rs.response->code = "304 Not Modified";
 			}
+		} else {
+			struct scache* sc = xmalloc(sizeof(struct scache));
+			sc->isStatic = 0;
+			addSCache(&vh->sub.htdocs.cache, sc);
 		}
 		pcacheadd:
 		//TODO: Chunked
