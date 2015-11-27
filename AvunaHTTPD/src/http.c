@@ -660,6 +660,11 @@ int generateResponse(struct reqsess rs) {
 				}
 				writeFCGIParam(ffd, "", "");
 				ff.type = FCGI_STDIN;
+				if (rs.request->body != NULL && rs.request->body->len > 0) {
+					ff.len = rs.request->body->len;
+					ff.data = rs.request->body.data;
+					writeFCGIFrame(ffd, &ff);
+				}
 				ff.len = 0;
 				writeFCGIFrame(ffd, &ff);
 				if (rs.response->body != NULL) {
