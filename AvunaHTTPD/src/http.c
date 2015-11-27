@@ -21,6 +21,8 @@
 #include <nettle/md5.h>
 #include <zlib.h>
 #include "cache.h"
+#include "fcgi.h"
+#include <netinet/in.h>
 
 const char* getMethod(int m) {
 	if (m == METHOD_GET) {
@@ -291,6 +293,7 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 		rs.response->body = xmalloc(sizeof(struct body));
 	}
 	rs.response->body->mime_type = "text/html";
+	rs.response->body->freeMime = 0;
 	char* rmsg = escapehtml(msg);
 	size_t ml = strlen(rmsg);
 	size_t cl = strlen(rs.response->code);
@@ -342,13 +345,16 @@ int generateResponse(struct reqsess rs) {
 	const char* host = header_get(rs.request->headers, "Host");
 	if (host == NULL) host = "";
 	struct vhost* vh = NULL;
+	int vhi = -1;
 	for (int i = 0; i < rs.wp->vhosts_count; i++) {
 		if (rs.wp->vhosts[i]->host_count == 0) {
 			vh = rs.wp->vhosts[i];
+			vhi = i;
 			break;
 		} else for (int x = 0; x < rs.wp->vhosts[i]->host_count; x++) {
 			if (streq_nocase(rs.wp->vhosts[i]->hosts[x], host)) {
 				vh = rs.wp->vhosts[i];
+				vhi = i;
 				break;
 			}
 		}
@@ -371,6 +377,10 @@ int generateResponse(struct reqsess rs) {
 		memcpy(tp, vh->sub.htdocs.htdocs, htdl);
 		memcpy(tp + htdl, rs.request->path + 1, pl);
 		tp[htdl + pl - 1] = 0;
+		char* ttp = strchr(tp, '#');
+		if (ttp != NULL) ttp[0] = 0;
+		ttp = strchr(tp, '?');
+		if (ttp != NULL) ttp[0] = 0;
 		char* rtp = NULL;
 		struct scache* osc = getSCache(&vh->sub.htdocs.cache, rs.request->path, contains_nocase(header_get(rs.request->headers, "Accept-Encoding"), "gzip"));
 		if (osc != NULL) {
@@ -469,6 +479,7 @@ int generateResponse(struct reqsess rs) {
 		rs.response->body->data = NULL;
 		const char* ext = strrchr(rtp, '.');
 		rs.response->body->mime_type = ext == NULL ? "application/octet-stream" : getMimeForExt(ext + 1);
+		rs.response->body->freeMime = 0;
 		if (vh->sub.htdocs.maxAge > 0) {
 			int dcc = 0;
 			for (int i = 0; i < vh->sub.htdocs.cacheType_count; i++) {
@@ -516,7 +527,219 @@ int generateResponse(struct reqsess rs) {
 			generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 			goto epage;
 		}
-		//TODO: FCGI
+		//todo if we end up doing FCGI/CGI, we should NOT read the file ourselves!
+		if (rs.response->body != NULL && rs.response->body->mime_type != NULL) for (int i = 0; i < vh->sub.htdocs.fcgi_count; i++) {
+			struct fcgi* fcgi = vh->sub.htdocs.fcgis[i];
+			int df = 0;
+			for (int m = 0; m < fcgi->mime_count; m++) {
+				char* mime = fcgi->mimes[m];
+				if (streq_nocase(mime, rs.response->body->mime_type)) {
+					df = 1;
+					break;
+				}
+			}
+			if (df) {
+				isStatic = 0;
+				int ffd = vh->sub.htdocs.fcgifds[rs.wp->i][i];
+				struct fcgiframe ff;
+				ff.type = FCGI_BEGIN_REQUEST;
+				ff.reqID = 0;
+				ff.len = 8;
+				unsigned char pkt[8];
+				pkt[0] = 0;
+				pkt[1] = 1;
+				pkt[2] = 1;
+				memset(pkt + 3, 0, 5);
+				ff.data = pkt;
+				if (writeFCGIFrame(ffd, &ff)) {
+					errlog(rs.wp->logsess, "Failed to write to FCGI Server! File: %s Error: %s", rtp, strerror(errno));
+					rs.response->code = "500 Internal Server Error";
+					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+					goto epage;
+				}
+				//TODO: SERVER_ADDR
+				char* rq = xstrdup(rs.request->path, 0);
+				{
+					char* ht = strchr(rq, '#');
+					if (ht != NULL) ht[0] = 0;
+				}
+				char* get = strchr(rq, '?');
+				if (get != NULL) {
+					get[0] = 0;
+					get++;
+				} else {
+					get = "";
+				}
+				writeFCGIParam(ffd, "REQUEST_URI", rs.request->path);
+				char cl[16];
+				if (rs.request->body != NULL) {
+					snprintf(cl, 16, "%i", rs.request->body->len);
+				} else {
+					cl[0] = '0';
+					cl[1] = 0;
+				}
+				writeFCGIParam(ffd, "CONTENT_LENGTH", cl);
+				if (rs.request->body != NULL && rs.request->body->mime_type != NULL) writeFCGIParam(ffd, "CONTENT_TYPE", rs.request->body->mime_type);
+				writeFCGIParam(ffd, "GATEWAY_INTERFACE", "CGI/1.1");
+				writeFCGIParam(ffd, "QUERY_STRING", get);
+				{
+					char tip[48];
+					char* mip = NULL;
+					if (rs.sender->addr.sa_family == AF_INET) {
+						struct sockaddr_in *sip4 = (struct sockaddr_in*) &rs.sender->addr;
+						mip = tip;
+						inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
+					} else if (rs.sender->addr.sa_family == AF_INET6) {
+						struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &rs.sender->addr;
+						mip = tip;
+						inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
+					} else if (rs.sender->addr.sa_family == AF_LOCAL) {
+						mip = "UNIX";
+					} else {
+						mip = "UNKNOWN";
+					}
+					if (mip == NULL) mip = "INVALID";
+					writeFCGIParam(ffd, "REMOTE_ADDR", mip);
+					writeFCGIParam(ffd, "REMOTE_HOST", mip);
+				}
+				if (rs.sender->addr.sa_family == AF_INET) {
+					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in*) &rs.sender->addr)->sin_port));
+				} else if (rs.sender->addr.sa_family == AF_INET6) {
+					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in6*) &rs.sender->addr)->sin6_port));
+				} else {
+					cl[0] = '0';
+					cl[1] = 0;
+				}
+				writeFCGIParam(ffd, "REMOTE_PORT", cl);
+				writeFCGIParam(ffd, "REQUEST_METHOD", getMethod(rs.request->method));
+				char rss[4];
+				rss[3] = 0;
+				memcpy(rss, rs.response->code, 3);
+				writeFCGIParam(ffd, "REDIRECT_STATUS", rss);
+				size_t htl = strlen(vh->sub.htdocs.htdocs);
+				int htes = vh->sub.htdocs.htdocs[htl - 1] == '/';
+				size_t rtpl = strlen(rtp);
+				if (rtpl < htl) errlog(rs.wp->logsess, "Setting FCGI SCRIPT_NAME requires the file to be in htdocs! @ %s", rtp);
+				else writeFCGIParam(ffd, "SCRIPT_NAME", rtp + htl + (htes ? -1 : 0));
+				if (host != NULL) writeFCGIParam(ffd, "SERVER_NAME", host);
+				snprintf(cl, 16, "%i", rs.wp->sport);
+				writeFCGIParam(ffd, "SERVER_PORT", cl);
+				writeFCGIParam(ffd, "SERVER_PROTOCOL", rs.request->version);
+				writeFCGIParam(ffd, "SERVER_SOFTWARE", "Avuna/" VERSION);
+				writeFCGIParam(ffd, "DOCUMENT_ROOT", vh->sub.htdocs.htdocs);
+				writeFCGIParam(ffd, "SCRIPT_FILENAME", rtp);
+				for (int i = 0; i < rs.request->headers->count; i++) {
+					const char* name = rs.request->headers->names[i];
+					if (streq_nocase(name, "Accept-Encoding")) continue;
+					const char* value = rs.request->headers->values[i];
+					size_t nl = strlen(name);
+					char nname[nl + 6];
+					nname[0] = 'H';
+					nname[1] = 'T';
+					nname[2] = 'T';
+					nname[3] = 'P';
+					nname[4] = '_';
+					memcpy(nname + 5, name, nl + 1);
+					nl += 5;
+					for (int x = 5; x < nl; x++) {
+						if (nname[x] >= 'a' && nname[x] <= 'z') nname[x] -= ' ';
+						else if (nname[x] == '-') nname[x] = '_';
+					}
+					writeFCGIParam(ffd, nname, value);
+				}
+				writeFCGIParam(ffd, "", "");
+				ff.type = FCGI_STDIN;
+				ff.len = 0;
+				writeFCGIFrame(ffd, &ff);
+				if (rs.response->body != NULL) {
+					xfree(rs.response->body->data);
+					xfree(rs.response->body);
+					rs.response->body = NULL;
+				}
+				xfree(rq);
+				char* ct = NULL;
+				int hd = 0;
+				char* hdd = NULL;
+				size_t hddl = 0;
+				while (ff.type != FCGI_END_REQUEST) {
+					if (readFCGIFrame(ffd, &ff)) {
+						errlog(rs.wp->logsess, "Error reading from FCGI server: %s", strerror(errno));
+					}
+					if (ff.type == FCGI_END_REQUEST) {
+						xfree(ff.data);
+						continue;
+					}
+					if (ff.type == FCGI_STDERR) {
+						errlog(rs.wp->logsess, "FCGI STDERR <%s>: %s", rtp, ff.data);
+					} else if (ff.type == FCGI_STDOUT) {
+						int hr = 0;
+						if (!hd) {
+							int ml = 0;
+							char* tm = "\r\n\r\n";
+							for (int i = 0; i < ff.len; i++) {
+								if (((char*) ff.data)[i] == tm[ml]) {
+									ml++;
+									if (ml == 4) {
+										hd = 1;
+										hr = i + 1;
+										if (hdd == NULL) {
+											hdd = xmalloc(i);
+											memcpy(hdd, ff.data, i);
+											hddl = i;
+										} else {
+											hdd = xrealloc(hdd, hddl + i);
+											memcpy(hdd + hddl, ff.data, i);
+											hddl += i;
+										}
+										break;
+									}
+								} else ml = 0;
+							}
+							if (!hd) {
+								hr = ff.len;
+								if (hdd == NULL) {
+									hdd = xmalloc(ff.len);
+									memcpy(hdd, ff.data, ff.len);
+									hddl = ff.len;
+								} else {
+									hdd = xrealloc(hdd, hddl + ff.len);
+									memcpy(hdd + hddl, ff.data, ff.len);
+									hddl += ff.len;
+								}
+							}
+						} else if (hd == 1) {
+							hd = 2;
+							struct headers hdrs;
+							parseHeaders(&hdrs, hdd);
+							for (int i = 0; i < rs.request->headers->count; i++) {
+								const char* name = rs.request->headers->names[i];
+								const char* value = rs.request->headers->values[i];
+								if (streq_nocase(name, "Content-Type")) {
+									ct = xstrdup(value, 0);
+								} else header_add(rs.response->headers, name, value);
+							}
+						}
+						if (hr < ff.len) {
+							unsigned char* ffd = ff.data + hr;
+							ff.len -= hr;
+							if (rs.response->body == NULL) {
+								rs.response->body = xmalloc(sizeof(struct body));
+								rs.response->body->data = xmalloc(ff.len);
+								memcpy(rs.response->body->data, ffd, ff.len);
+								rs.response->body->len = ff.len;
+								rs.response->body->mime_type = ct == NULL ? "text/html" : ct;
+								rs.response->body->freeMime = ct == NULL ? 0 : 1;
+							} else {
+								rs.response->body->len += ff.len;
+								rs.response->body->data = xrealloc(rs.response->body->data, rs.response->body->len);
+								memcpy(rs.response->body->data + rs.response->body->len - ff.len, ffd, ff.len);
+							}
+						}
+					}
+					xfree(ff.data);
+				}
+			}
+		}
 		//TODO: CGI
 		//TODO: SCGI
 		//TODO: SO-CGI

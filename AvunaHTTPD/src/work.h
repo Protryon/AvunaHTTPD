@@ -24,8 +24,8 @@ struct errpage {
 };
 
 struct fcgi {
-		int domain;
-		struct sockaddr addr;
+		socklen_t addrlen;
+		struct sockaddr* addr;
 		size_t mime_count;
 		char** mimes;
 };
@@ -45,6 +45,7 @@ struct vhost_htdocs {
 		struct cache cache;
 		size_t fcgi_count;
 		struct fcgi** fcgis;
+		int** fcgifds;
 };
 
 struct vhost_rproxy {
@@ -77,11 +78,13 @@ struct vhost {
 };
 
 struct work_param {
+		int i;
 		struct collection* conns;
 		int pipes[2];
 		struct logsess* logsess;
 		size_t vhosts_count;
 		struct vhost** vhosts;
+		int sport;
 };
 
 void run_work(struct work_param* param);

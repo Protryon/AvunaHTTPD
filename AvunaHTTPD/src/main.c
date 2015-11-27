@@ -452,6 +452,7 @@ int main(int argc, char* argv[]) {
 						vhb->errpages[vhb->errpage_count - 1] = ep;
 					}
 				}
+				vhb->fcgis = NULL;
 				ic = getConfigValue(vcn, "fcgis");
 				if (ic != NULL) {
 					ivh = xstrdup(ic, 0);
@@ -461,8 +462,95 @@ int main(int argc, char* argv[]) {
 							npi++;
 						}
 						ivh = trim(ivh);
-
-						ivh = npi == NULL ? ivh + strlen(ivh) : npi;
+						struct cnode* fcgin = getCatByID(cfg, ivh);
+						if (fcgin == NULL) {
+							errlog(slog, "Could not find FCGI entry %s at vhost: %s", ivh, vcn->id);
+							goto icc;
+						}
+						const char* fmode = getConfigValue(fcgin, "mode");
+						struct fcgi* fcgi = xmalloc(sizeof(struct fcgi));
+						fcgi->mimes = NULL;
+						if (streq_nocase(fmode, "tcp")) {
+							fcgi->addrlen = sizeof(struct sockaddr_in);
+							struct sockaddr_in* ina = xmalloc(sizeof(struct sockaddr_in));
+							fcgi->addr = ina;
+							ina->sin_family = AF_INET;
+							const char* fip = getConfigValue(fcgin, "ip");
+							const char* fport = getConfigValue(fcgin, "port");
+							if (fip == NULL || !inet_aton(fip, &ina->sin_addr)) {
+								errlog(slog, "Invalid IP for FCGI node %s at vhost: %s", ivh, vcn->id);
+								free(fcgi);
+								goto icc;
+							}
+							if (fport == NULL || !strisunum(fport)) {
+								errlog(slog, "Invalid Port for FCGI node %s at vhost: %s", ivh, vcn->id);
+								free(fcgi);
+								goto icc;
+							}
+							ina->sin_port = htons(atoi(fport));
+						} else if (streq_nocase(fmode, "unix")) {
+							fcgi->addrlen = sizeof(struct sockaddr_un);
+							struct sockaddr_un* ina = xmalloc(sizeof(struct sockaddr_un));
+							fcgi->addr = ina;
+							ina->sun_family = AF_LOCAL;
+							const char* ffile = getConfigValue(fcgin, "file");
+							if (ffile == NULL || strlen(ffile) >= 107) {
+								errlog(slog, "Invalid Unix Socket for FCGI node %s at vhost: %s", ivh, vcn->id);
+								free(fcgi);
+								goto icc;
+							}
+							memcpy(ina->sun_path, ffile, strlen(ffile) + 1);
+						} else {
+							errlog(slog, "Invalid mode for FCGI node %s at vhost: %s", ivh, vcn->id);
+							free(fcgi);
+							goto icc;
+						}
+						const char* ic2 = getConfigValue(fcgin, "mime-types");
+						if (ic2 != NULL) {
+							char* ivh2 = xstrdup(ic2, 0);
+							char* npi2 = NULL;
+							while ((npi2 = strchr(ivh2, ',')) != NULL || strlen(ivh2) > 0) {
+								if (npi2 != NULL) {
+									npi2[0] = 0;
+									npi2++;
+								}
+								ivh2 = trim(ivh2);
+								if (fcgi->mimes == NULL) {
+									fcgi->mimes = xmalloc(sizeof(char*));
+									fcgi->mime_count = 1;
+								} else {
+									fcgi->mimes = xrealloc(fcgi->mimes, sizeof(char*) * ++fcgi->mime_count);
+								}
+								fcgi->mimes[fcgi->mime_count - 1] = ivh2;
+								ivh2 = npi2 == NULL ? ivh2 + strlen(ivh2) : npi2;
+							}
+						}
+						if (vhb->fcgis == NULL) {
+							vhb->fcgis = xmalloc(sizeof(struct fcgi*));
+							vhb->fcgi_count = 1;
+						} else {
+							vhb->fcgis = xrealloc(vhb->fcgis, sizeof(struct fcgi*) * ++vhb->fcgi_count);
+						}
+						vhb->fcgis[vhb->fcgi_count - 1] = fcgi;
+						icc: ivh = npi == NULL ? ivh + strlen(ivh) : npi;
+					}
+				}
+				vhb->fcgifds = xmalloc(sizeof(int*) * tc);
+				for (int i = 0; i < tc; i++) {
+					vhb->fcgifds[i] = xmalloc(sizeof(int) * vhb->fcgi_count);
+					for (int f = 0; f < vhb->fcgi_count; f++) {
+						struct fcgi* fcgi = vhb->fcgis[f];
+						int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+						if (fd < 0) {
+							errlog(slog, "Error creating socket for FCGI Server! %s", strerror(errno));
+							continue;
+						}
+						if (connect(fd, fcgi->addr, fcgi->addrlen)) {
+							errlog(slog, "Error connecting socket to FCGI Server! %s", strerror(errno));
+							continue;
+						}
+						vhb->fcgifds[i][f] = fd;
+						//TODO: perhaps it is worth getting FCGI_MAX_CONNS, FCGI_MAX_REQS, most impls do not multiplex, so we won't bother
 					}
 				}
 			} else if (cv->type == VHOST_RPROXY) {
@@ -494,6 +582,8 @@ int main(int argc, char* argv[]) {
 			wp->logsess = slog;
 			wp->vhosts = vohs;
 			wp->vhosts_count = vhc;
+			wp->i = x;
+			wp->sport = port;
 			ap->works[x] = wp;
 		}
 		aps[i] = ap;

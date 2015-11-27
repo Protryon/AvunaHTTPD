@@ -192,6 +192,7 @@ void run_work(struct work_param* param) {
 							xfree(req);
 							if (!resp->atc) {
 								if (resp->body != NULL) {
+									if (resp->body->freeMime) xfree(resp->body->mime_type);
 									xfree(resp->body->data);
 									xfree(resp->body);
 								}

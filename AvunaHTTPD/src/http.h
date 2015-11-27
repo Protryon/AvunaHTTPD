@@ -48,6 +48,7 @@ void freeHeaders(struct headers* headers);
 
 struct body {
 		char* mime_type;
+		int freeMime;
 		size_t len;
 		unsigned char* data;
 };
