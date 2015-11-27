@@ -21,7 +21,6 @@ struct scache {
 		char* code;
 		struct headers* headers;
 		struct body* body;
-		int isStatic;
 };
 
 struct cache {
