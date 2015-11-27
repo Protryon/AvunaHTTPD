@@ -376,8 +376,15 @@ int generateResponse(struct reqsess rs) {
 		if (osc != NULL) {
 			rs.response->atc = 1;
 			rs.response->body = osc->body;
-			xfree(rs.response->headers);
-			rs.response->headers = osc->headers;
+			if (rs.response->headers->count > 0) for (int i = 0; i < rs.response->headers->count; i++) {
+				xfree(rs.response->headers->names[i]);
+				xfree(rs.response->headers->values[i]);
+			}
+			if (rs.response->headers->names != NULL) xfree(rs.response->headers->names);
+			if (rs.response->headers->values != NULL) xfree(rs.response->headers->values);
+			rs.response->headers->count = osc->headers->count;
+			rs.response->headers->names = xcopy(osc->headers->names, osc->headers->count * sizeof(char*), 0);
+			rs.response->headers->values = xcopy(osc->headers->values, osc->headers->count * sizeof(char*), 0);
 			rs.response->code = osc->code;
 			if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
 				if (streq(osc->etag, header_get(rs.request->headers, "If-None-Match"))) {

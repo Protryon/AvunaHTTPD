@@ -434,7 +434,6 @@ int main(int argc, char* argv[]) {
 					vhb->cacheTypes[vhb->cacheType_count - 1] = ivh;
 					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
 				}
-				npi = NULL;
 				for (int i = 0; i < vcn->entries; i++) {
 					if (startsWith_nocase(vcn->keys[i], "error-")) {
 						const char* en = vcn->keys[i] + 6;
@@ -451,6 +450,19 @@ int main(int argc, char* argv[]) {
 							vhb->errpages = xrealloc(vhb->errpages, sizeof(struct errpage*) * ++vhb->errpage_count);
 						}
 						vhb->errpages[vhb->errpage_count - 1] = ep;
+					}
+				}
+				ic = getConfigValue(vcn, "fcgis");
+				if (ic != NULL) {
+					ivh = xstrdup(ic, 0);
+					while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
+						if (npi != NULL) {
+							npi[0] = 0;
+							npi++;
+						}
+						ivh = trim(ivh);
+
+						ivh = npi == NULL ? ivh + strlen(ivh) : npi;
 					}
 				}
 			} else if (cv->type == VHOST_RPROXY) {

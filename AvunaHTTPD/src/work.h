@@ -23,6 +23,13 @@ struct errpage {
 		char* page;
 };
 
+struct fcgi {
+		int domain;
+		struct sockaddr addr;
+		size_t mime_count;
+		char** mimes;
+};
+
 struct vhost_htdocs {
 		char* htdocs;
 		int symlock;
@@ -36,6 +43,8 @@ struct vhost_htdocs {
 		size_t maxAge;
 		int enableGzip;
 		struct cache cache;
+		size_t fcgi_count;
+		struct fcgi** fcgis;
 };
 
 struct vhost_rproxy {
