@@ -29,6 +29,8 @@
 #include "work.h"
 #include <sys/types.h>
 #include "mime.h"
+#include <gnutls/gnutls.h>
+#include "tls.h"
 
 int main(int argc, char* argv[]) {
 	if (getuid() != 0 || getgid() != 0) {
@@ -163,7 +165,10 @@ int main(int argc, char* argv[]) {
 		errlog(delog, "Error writing PID file: %s.\n", strerror(errno));
 		return 1;
 	}
-
+	gnutls_global_init();
+	unsigned int bits = gnutls_sec_param_to_pk_bits(GNUTLS_PK_DH, GNUTLS_SEC_PARAM_LEGACY);
+	gnutls_dh_params_init (&dh_params);
+	gnutls_dh_params_generate2(dh_params, bits);
 	int servsl;
 	struct cnode** servs = getCatsByCat(cfg, CAT_SERVER, &servsl);
 	int sr = 0;
@@ -214,7 +219,6 @@ int main(int argc, char* argv[]) {
 			continue;
 		}
 		long int mp = atol(mpc);
-		//TODO: impl maxpost
 		int sfd = socket(namespace, SOCK_STREAM, 0);
 		if (sfd < 0) {
 			if (serv->id != NULL) errlog(delog, "Error creating socket for server: %s, %s\n", serv->id, strerror(errno));
@@ -277,10 +281,32 @@ int main(int argc, char* argv[]) {
 		slog->access_fd = lal == NULL ? NULL : fopen(lal, "a");
 		const char* lel = getConfigValue(serv, "error-log");
 		slog->error_fd = lel == NULL ? NULL : fopen(lel, "a");
+		const char* sssl = getConfigValue(serv, "ssl");
 		if (serv->id != NULL) acclog(slog, "Server %s listening for connections!", serv->id);
 		else acclog(slog, "Server listening for connections!");
 		struct accept_param* ap = xmalloc(sizeof(struct accept_param));
-		ap->port = port;
+		if (sssl != NULL) {
+			struct cnode* ssln = getCatByID(cfg, sssl);
+			if (ssln == NULL) {
+				errlog(slog, "Invalid SSL node! Node not found!");
+				goto pssl;
+			}
+			const char* cert = getConfigValue(ssln, "publicKey");
+			const char* key = getConfigValue(ssln, "privateKey");
+			const char* ca = getConfigValue(ssln, "ca");
+			if (ca != NULL && access(ca, R_OK)) {
+				errlog(slog, "CA for SSL node was not valid, loading without CA!");
+				ca = NULL;
+			}
+			if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
+				errlog(slog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
+				goto pssl;
+			}
+			ap->cert = loadCert(ca, cert, key);
+		} else {
+			ap->cert = NULL;
+		}
+		pssl: ap->port = port;
 		ap->server_fd = sfd;
 		ap->config = serv;
 		ap->works_count = tc;
@@ -357,6 +383,11 @@ int main(int argc, char* argv[]) {
 				vhb->cacheTypes = NULL;
 				vhb->cacheType_count = 0;
 				vhb->maxAge = 604800;
+				vhb->cache.scache_size = 0;
+				vhb->cache.scaches = NULL;
+				if (pthread_rwlock_init(&vhb->cache.scachelock, NULL)) {
+					errlog(slog, "Error initializing scachelock! %s", strerror(errno));
+				}
 				vhb->htdocs = getConfigValue(vcn, "htdocs");
 				if (vhb->htdocs == NULL) {
 					errlog(slog, "No htdocs at vhost: %s, assuming default", vcn->id);

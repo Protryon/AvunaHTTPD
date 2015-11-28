@@ -27,9 +27,6 @@ struct cache {
 		struct scache** scaches;
 		size_t scache_size;
 		pthread_rwlock_t scachelock;
-		struct dcache** dcaches;
-		size_t dcache_size;
-		pthread_rwlock_t dcachelock;
 };
 
 struct scache* getSCache(struct cache* cache, char* rp, int ce);

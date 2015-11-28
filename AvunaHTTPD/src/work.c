@@ -24,8 +24,15 @@
 #include "time.h"
 #include <arpa/inet.h>
 #include <sys/mman.h>
+#include <gnutls/gnutls.h>
 
 void closeConn(struct work_param* param, struct conn* conn) {
+	if (conn->tls) {
+		if (conn->handshaked) {
+			gnutls_bye(conn->session, GNUTLS_SHUT_RDWR);
+		}
+		gnutls_deinit(conn->session);
+	}
 	close(conn->fd);
 	if (rem_collection(param->conns, conn)) {
 		errlog(param->logsess, "Failed to delete connection properly! This is bad!");
@@ -70,8 +77,8 @@ void handleRequest(int wfd, struct timespec* stt, struct conn* conn, struct work
 		errlog(param->logsess, "Invalid IP Address: %s", strerror(errno));
 	}
 	acclog(param->logsess, "%s %s %s returned %s took: %f ms", mip, getMethod(req->method), req->path, resp->code, msp);
-	size_t mtr = write(wfd, rda, rl);
-	if (mtr < 0 && errno != EAGAIN) {
+	ssize_t mtr = conn->tls ? gnutls_record_send(conn->session, rda, rl) : write(wfd, rda, rl);
+	if (mtr < 0 && conn->tls ? gnutls_error_is_fatal(mtr) : errno != EAGAIN) {
 		closeConn(param, conn);
 		conn = NULL;
 	} else if (mtr >= rl) {
@@ -131,7 +138,7 @@ void run_work(struct work_param* param) {
 			if (conn != NULL) {
 				conns[fdi] = conn;
 				fds[fdi].fd = conn->fd;
-				fds[fdi].events = POLLIN | (conn->writeBuffer_size > 0 ? POLLOUT : 0);
+				fds[fdi].events = POLLIN | ((conn->writeBuffer_size > 0 || (conn->tls && gnutls_record_get_direction(conn->session))) ? POLLOUT : 0);
 				fds[fdi++].revents = 0;
 				if (fdi == cc) break;
 			}
@@ -151,6 +158,16 @@ void run_work(struct work_param* param) {
 		for (int i = 0; i < cc; i++) {
 			int re = fds[i].revents;
 			if (re == 0) continue;
+			if (conns[i]->tls && !conns[i]->handshaked) {
+				int r = gnutls_handshake(conns[i]->session);
+				if (gnutls_error_is_fatal(r)) {
+					closeConn(param, conns[i]);
+					goto cont;
+				} else if (r == GNUTLS_E_SUCCESS) {
+					conns[i]->handshaked = 1;
+				}
+				continue;
+			}
 			if ((re & POLLIN) == POLLIN) {
 				int tr = 0;
 				ioctl(fds[i].fd, FIONREAD, &tr);
@@ -164,22 +181,46 @@ void run_work(struct work_param* param) {
 					conns[i]->readBuffer = xrealloc(conns[i]->readBuffer, conns[i]->readBuffer_size);
 					loc = conns[i]->readBuffer + conns[i]->readBuffer_size - tr;
 				}
-				int r = 0;
+				ssize_t r = 0;
 				if (r == 0 && tr == 0) { // nothing to read, but wont block.
-					int x = read(fds[i].fd, loc + r, tr - r);
-					if (x <= 0) {
-						closeConn(param, conns[i]);
-						conns[i] = NULL;
-						goto cont;
+					ssize_t x = 0;
+					if (conns[i]->tls) {
+						x = gnutls_record_recv(conns[i]->session, loc + r, tr - r);
+						if (x <= 0 && gnutls_error_is_fatal(x)) {
+							closeConn(param, conns[i]);
+							conns[i] = NULL;
+							goto cont;
+						} else if (x <= 0) {
+							goto cont;
+						}
+					} else {
+						x = read(fds[i].fd, loc + r, tr - r);
+						if (x <= 0) {
+							closeConn(param, conns[i]);
+							conns[i] = NULL;
+							goto cont;
+						}
 					}
 					r += x;
 				}
 				while (r < tr) {
-					int x = read(fds[i].fd, loc + r, tr - r);
-					if (x <= 0) {
-						closeConn(param, conns[i]);
-						conns[i] = NULL;
-						goto cont;
+					ssize_t x = 0;
+					if (conns[i]->tls) {
+						x = gnutls_record_recv(conns[i]->session, loc + r, tr - r);
+						if (x <= 0 && gnutls_error_is_fatal(x)) {
+							closeConn(param, conns[i]);
+							conns[i] = NULL;
+							goto cont;
+						} else if (x <= 0) {
+							goto cont;
+						}
+					} else {
+						x = read(fds[i].fd, loc + r, tr - r);
+						if (x <= 0) {
+							closeConn(param, conns[i]);
+							conns[i] = NULL;
+							goto cont;
+						}
 					}
 					r += x;
 				}
@@ -236,10 +277,12 @@ void run_work(struct work_param* param) {
 				}
 			}
 			if ((re & POLLOUT) == POLLOUT && conns[i] != NULL) {
-				size_t mtr = write(fds[i].fd, conns[i]->writeBuffer, conns[i]->writeBuffer_size);
-				if (mtr < 0) {
+				ssize_t mtr = conns[i]->tls ? gnutls_record_send(conns[i]->session, conns[i]->writeBuffer, conns[i]->writeBuffer_size) : write(fds[i].fd, conns[i]->writeBuffer, conns[i]->writeBuffer_size);
+				if (mtr < 0 && (conns[i]->tls ? gnutls_error_is_fatal(mtr) : mtr != EAGAIN)) {
 					closeConn(param, conns[i]);
 					conns[i] = NULL;
+					goto cont;
+				} else if (mtr < 0) {
 					goto cont;
 				} else if (mtr < conns[i]->writeBuffer_size) {
 					memmove(conns[i]->writeBuffer, conns[i]->writeBuffer + mtr, conns[i]->writeBuffer_size - mtr);

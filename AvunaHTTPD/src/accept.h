@@ -13,6 +13,8 @@
 #include <sys/socket.h>
 #include "work.h"
 #include "log.h"
+#include "tls.h"
+#include <gnutls/gnutls.h>
 
 struct accept_param {
 		int server_fd;
@@ -21,6 +23,7 @@ struct accept_param {
 		int works_count;
 		struct work_param** works;
 		struct logsess* logsess;
+		struct cert* cert;
 };
 
 struct conn {
@@ -34,6 +37,9 @@ struct conn {
 		size_t writeBuffer_size;
 		size_t postLeft;
 		struct request* reqPosting;
+		int tls;
+		int handshaked;
+		gnutls_session_t session;
 };
 
 void run_accept(struct accept_param* param);
