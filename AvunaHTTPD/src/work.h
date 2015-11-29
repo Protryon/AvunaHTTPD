@@ -16,7 +16,7 @@
 #define VHOST_HTDOCS 0
 #define VHOST_RPROXY 1
 #define VHOST_REDIRECT 2
-#define VHOST_PROXY 3
+#define VHOST_MOUNT 3
 
 struct errpage {
 		char* code;
@@ -59,15 +59,21 @@ struct vhost_redirect {
 		char* redir;
 };
 
-struct vhost_proxy {
-		int xfor;
+struct vhmount {
+		char* path;
+		char* vh;
+};
+
+struct vhost_mount {
+		struct vhmount* vhms;
+		int vhm_count;
 };
 
 union vhost_sub {
 		struct vhost_htdocs htdocs;
 		struct vhost_rproxy rproxy;
 		struct vhost_redirect redirect;
-		struct vhost_proxy proxy;
+		struct vhost_mount mount;
 };
 
 struct vhost {

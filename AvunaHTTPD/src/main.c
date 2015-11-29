@@ -342,8 +342,8 @@ int main(int argc, char* argv[]) {
 				cv->type = VHOST_RPROXY;
 			} else if (streq(vht, "redirect")) {
 				cv->type = VHOST_REDIRECT;
-			} else if (streq(vht, "proxy")) {
-				cv->type = VHOST_PROXY;
+			} else if (streq(vht, "mount")) {
+				cv->type = VHOST_MOUNT;
 			} else {
 				errlog(slog, "Invalid VHost Type: %s", vht);
 				xfree(cv);
@@ -498,6 +498,7 @@ int main(int argc, char* argv[]) {
 					}
 				}
 				vhb->fcgis = NULL;
+				vhb->fcgi_count = 0;
 				ic = getConfigValue(vcn, "fcgis");
 				if (ic != NULL) {
 					ivh = xstrdup(ic, 0);
@@ -613,9 +614,15 @@ int main(int argc, char* argv[]) {
 					vhc--;
 					goto cont_vh;
 				}
-			} else if (cv->type == VHOST_PROXY) {
-				struct vhost_proxy* vhb = &cv->sub.proxy;
+			} else if (cv->type == VHOST_MOUNT) {
+				struct vhost_mount* vhb = &cv->sub.mount;
+				vhb->vhms = NULL;
+				for (int i = 0; i < vcn->entries; i++) {
+					if (startsWith(vcn->keys[i], "/")) {
+						struct vhmount* ep = xmalloc(sizeof(struct vhmount));
 
+					}
+				}
 			}
 			cont_vh: ovh = np == NULL ? ovh + strlen(ovh) : np;
 		}

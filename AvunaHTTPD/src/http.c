@@ -893,7 +893,7 @@ int generateResponse(struct reqsess rs) {
 	} else if (vh->type == VHOST_REDIRECT) {
 		rs.response->code = "302 Found";
 		header_add(rs.response->headers, "Location", vh->sub.redirect.redir);
-	} else if (vh->type == VHOST_PROXY) {
+	} else if (vh->type == VHOST_MOUNT) {
 
 	}
 	pvh:
