@@ -173,7 +173,6 @@ void run_work(struct work_param* param) {
 				size_t tr = 0;
 				if (conns[i]->tls) {
 					tr = gnutls_record_check_pending(conns[i]->session);
-					printf("%u\n", tr);
 					if (tr == 0) {
 						tr += 1024;
 					}
@@ -217,7 +216,6 @@ void run_work(struct work_param* param) {
 					if (conns[i]->tls) {
 						x = gnutls_record_recv(conns[i]->session, loc + r, tr - r);
 						if (x <= 0 && gnutls_error_is_fatal(x)) {
-							printf("%i %i\n", x, tr - r);
 							closeConn(param, conns[i]);
 							conns[i] = NULL;
 							goto cont;

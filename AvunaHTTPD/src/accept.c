@@ -68,16 +68,16 @@ void run_accept(struct accept_param* param) {
 		spfd.revents = 0;
 		int cfd = accept(param->server_fd, &c->addr, &c->addrlen);
 		if (cfd < 0) {
+			if (param->cert != NULL) gnutls_deinit(c->session);
 			if (errno == EAGAIN) continue;
 			errlog(param->logsess, "Error while accepting client: %s", strerror(errno));
-			if (param->cert != NULL) gnutls_deinit(c->session);
 			xfree(c);
 			continue;
 		}
 		c->fd = cfd;
-		if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout))) printf("Setting recv timeout failed! %s", strerror(errno));
-		if (setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout))) printf("Setting send timeout failed! %s", strerror(errno));
-		if (setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (void *) &one, sizeof(one))) printf("Setting TCP_NODELAY failed! %s", strerror(errno));
+		if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout))) errlog(param->logsess, "Setting recv timeout failed! %s", strerror(errno));
+		if (setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout))) errlog(param->logsess, "Setting send timeout failed! %s", strerror(errno));
+		if (setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (void *) &one, sizeof(one))) errlog(param->logsess, "Setting TCP_NODELAY failed! %s", strerror(errno));
 		if (fcntl(cfd, F_SETFL, fcntl(cfd, F_GETFL) | O_NONBLOCK) < 0) {
 			if (param->cert != NULL) gnutls_deinit(c->session);
 			errlog(param->logsess, "Setting O_NONBLOCK failed! %s, this error cannot be recovered, closing client.", strerror(errno));

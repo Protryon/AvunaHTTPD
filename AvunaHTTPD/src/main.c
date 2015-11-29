@@ -166,9 +166,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 	gnutls_global_init();
-	unsigned int bits = gnutls_sec_param_to_pk_bits(GNUTLS_PK_DH, GNUTLS_SEC_PARAM_LEGACY);
-	gnutls_dh_params_init (&dh_params);
-	gnutls_dh_params_generate2(dh_params, bits);
+	initdh();
 	int servsl;
 	struct cnode** servs = getCatsByCat(cfg, CAT_SERVER, &servsl);
 	int sr = 0;

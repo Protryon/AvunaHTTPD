@@ -35,8 +35,11 @@
 								<option id="gnu.c.link.option.libs.1110804325" name="Libraries (-l)" superClass="gnu.c.link.option.libs" valueType="libs">
 									<listOptionValue builtIn="false" value="z"/>
 									<listOptionValue builtIn="false" value="pthread"/>
-									<listOptionValue builtIn="false" value="nettle"/>
 									<listOptionValue builtIn="false" value="gnutls"/>
+									<listOptionValue builtIn="false" value="nettle"/>
+								</option>
+								<option id="gnu.c.link.option.paths.427586247" superClass="gnu.c.link.option.paths" valueType="libPaths">
+									<listOptionValue builtIn="false" value="/usr/local/lib"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.c.linker.input.686360872" superClass="cdt.managedbuild.tool.gnu.c.linker.input">
 									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>

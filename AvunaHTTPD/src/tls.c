@@ -11,6 +11,15 @@
 #include "util.h"
 #include "globals.h"
 
+static gnutls_dh_params_t dh_params;
+
+int initdh() {
+	unsigned int bits = gnutls_sec_param_to_pk_bits(GNUTLS_PK_DH, GNUTLS_SEC_PARAM_LEGACY);
+	gnutls_dh_params_init(&dh_params);
+	gnutls_dh_params_generate2(dh_params, bits);
+	return 0;
+}
+
 struct cert* loadCert(const char* ca, const char* cert, const char* key) {
 	struct cert* oc = xmalloc(sizeof(struct cert));
 	gnutls_certificate_allocate_credentials(&oc->cert);
@@ -19,7 +28,6 @@ struct cert* loadCert(const char* ca, const char* cert, const char* key) {
 	if (e1 < 0) {
 		return NULL;
 	}
-	//gnutls_certificate_set_ocsp_status_request_file(oc->cert, "ocsp-status.der", 0);
 	gnutls_priority_init(&oc->priority, "PERFORMANCE:%SERVER_PRECEDENCE", NULL);
 	gnutls_certificate_set_dh_params(oc->cert, dh_params);
 	return oc;

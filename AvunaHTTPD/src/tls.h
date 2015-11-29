@@ -15,7 +15,7 @@ struct cert {
 		gnutls_priority_t priority;
 };
 
-gnutls_dh_params_t dh_params;
+int initdh();
 
 struct cert* loadCert(const char* ca, const char* cert, const char* key);
 
