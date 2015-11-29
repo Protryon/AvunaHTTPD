@@ -45,7 +45,7 @@ void run_accept(struct accept_param* param) {
 		if (param->cert != NULL) {
 			gnutls_init(&c->session, GNUTLS_SERVER | GNUTLS_NONBLOCK);
 			gnutls_priority_set(c->session, param->cert->priority);
-			gnutls_credentials_set(c->session, GNUTLS_CRD_CERTIFICATE, &param->cert->cert);
+			gnutls_credentials_set(c->session, GNUTLS_CRD_CERTIFICATE, param->cert->cert);
 			gnutls_certificate_server_set_request(c->session, GNUTLS_CERT_IGNORE);
 			//gnutls_certificate_send_x509_rdn_sequence(c->session, 1);
 			c->tls = 1;

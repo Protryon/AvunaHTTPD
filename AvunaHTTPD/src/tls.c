@@ -8,6 +8,8 @@
 #include "tls.h"
 #include <gnutls/gnutls.h>
 #include <stdlib.h>
+#include "util.h"
+#include "globals.h"
 
 struct cert* loadCert(const char* ca, const char* cert, const char* key) {
 	struct cert* oc = xmalloc(sizeof(struct cert));
@@ -17,7 +19,7 @@ struct cert* loadCert(const char* ca, const char* cert, const char* key) {
 	if (e1 < 0) {
 		return NULL;
 	}
-	gnutls_certificate_set_ocsp_status_request_file(oc->cert, "ocsp-status.der", 0);
+	//gnutls_certificate_set_ocsp_status_request_file(oc->cert, "ocsp-status.der", 0);
 	gnutls_priority_init(&oc->priority, "PERFORMANCE:%SERVER_PRECEDENCE", NULL);
 	gnutls_certificate_set_dh_params(oc->cert, dh_params);
 	return oc;

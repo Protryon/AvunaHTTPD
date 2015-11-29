@@ -138,7 +138,7 @@ void run_work(struct work_param* param) {
 			if (conn != NULL) {
 				conns[fdi] = conn;
 				fds[fdi].fd = conn->fd;
-				fds[fdi].events = POLLIN | ((conn->writeBuffer_size > 0 || (conn->tls && gnutls_record_get_direction(conn->session))) ? POLLOUT : 0);
+				fds[fdi].events = POLLIN | ((conn->writeBuffer_size > 0 || (conn->tls && !conn->handshaked && gnutls_record_get_direction(conn->session))) ? POLLOUT : 0);
 				fds[fdi++].revents = 0;
 				if (fdi == cc) break;
 			}
@@ -161,16 +161,25 @@ void run_work(struct work_param* param) {
 			if (conns[i]->tls && !conns[i]->handshaked) {
 				int r = gnutls_handshake(conns[i]->session);
 				if (gnutls_error_is_fatal(r)) {
+					printf("%i\n", r);
 					closeConn(param, conns[i]);
 					goto cont;
 				} else if (r == GNUTLS_E_SUCCESS) {
 					conns[i]->handshaked = 1;
 				}
-				continue;
+				goto cont;
 			}
 			if ((re & POLLIN) == POLLIN) {
-				int tr = 0;
-				ioctl(fds[i].fd, FIONREAD, &tr);
+				size_t tr = 0;
+				if (conns[i]->tls) {
+					tr = gnutls_record_check_pending(conns[i]->session);
+					printf("%u\n", tr);
+					if (tr == 0) {
+						tr += 1024;
+					}
+				} else {
+					ioctl(fds[i].fd, FIONREAD, &tr);
+				}
 				unsigned char* loc;
 				if (conns[i]->readBuffer == NULL) {
 					conns[i]->readBuffer = xmalloc(tr); // TODO: max upload?
@@ -208,6 +217,7 @@ void run_work(struct work_param* param) {
 					if (conns[i]->tls) {
 						x = gnutls_record_recv(conns[i]->session, loc + r, tr - r);
 						if (x <= 0 && gnutls_error_is_fatal(x)) {
+							printf("%i %i\n", x, tr - r);
 							closeConn(param, conns[i]);
 							conns[i] = NULL;
 							goto cont;
