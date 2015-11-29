@@ -392,6 +392,17 @@ int main(int argc, char* argv[]) {
 					vhb->htdocs = "/var/www/html/";
 				}
 				vhb->htdocs = realpath(vhb->htdocs, NULL);
+				if (vhb->htdocs == NULL) {
+					recur_mkdir("/var/www/html/", 0750);
+					vhb->htdocs = "/var/www/html/";
+					vhb->htdocs = realpath(vhb->htdocs, NULL);
+				}
+				if (vhb->htdocs == NULL) {
+					errlog(slog, "No htdocs at vhost %s, or does not exist and cannot be created.", vcn->id);
+					xfree(cv);
+					vohs = xrealloc(vohs, sizeof(struct vhost*) * --vhc);
+					goto cont_vh;
+				}
 				size_t htl = strlen(vhb->htdocs);
 				if (vhb->htdocs[htl - 1] != '/') {
 					vhb->htdocs = xrealloc(vhb->htdocs, ++htl + 1);
