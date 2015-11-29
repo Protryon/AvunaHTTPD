@@ -420,6 +420,11 @@ int main(int argc, char* argv[]) {
 				if (nhl == NULL) {
 					errlog(slog, "No symlock at vhost: %s, assuming default", vcn->id);
 				}
+				nhl = getConfigValue(vcn, "scache");
+				vhb->scacheEnabled = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+				if (nhl == NULL) {
+					errlog(slog, "No scache at vhost: %s, assuming default", vcn->id);
+				}
 				nhl = getConfigValue(vcn, "cache-maxage");
 				if (nhl == NULL || !strisunum(nhl)) {
 					errlog(slog, "No cache-maxage at vhost: %s, assuming default", vcn->id);

@@ -851,7 +851,7 @@ int generateResponse(struct reqsess rs) {
 				wgz = 1;
 			}
 		}
-		pgzip: if (isStatic) {
+		pgzip: if (isStatic && vh->sub.htdocs.scacheEnabled) {
 			struct scache* sc = xmalloc(sizeof(struct scache));
 			sc->body = rs.response->body;
 			sc->ce = wgz;

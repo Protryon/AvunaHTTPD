@@ -46,6 +46,7 @@ struct vhost_htdocs {
 		size_t fcgi_count;
 		struct fcgi** fcgis;
 		int** fcgifds;
+		int scacheEnabled;
 };
 
 struct vhost_rproxy {
