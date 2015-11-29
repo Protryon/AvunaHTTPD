@@ -199,7 +199,12 @@ void run_work(struct work_param* param) {
 							conns[i] = NULL;
 							goto cont;
 						} else if (x <= 0) {
-							goto cont;
+							if (r < tr) {
+								conns[i]->readBuffer_size += r - tr;
+								tr = r;
+								conns[i]->readBuffer = xrealloc(conns[i]->readBuffer, conns[i]->readBuffer_size);
+							}
+							break;
 						}
 					} else {
 						x = read(fds[i].fd, loc + r, tr - r);
@@ -220,7 +225,12 @@ void run_work(struct work_param* param) {
 							conns[i] = NULL;
 							goto cont;
 						} else if (x <= 0) {
-							goto cont;
+							if (r < tr) {
+								conns[i]->readBuffer_size += r - tr;
+								tr = r;
+								conns[i]->readBuffer = xrealloc(conns[i]->readBuffer, conns[i]->readBuffer_size);
+							}
+							break;
 						}
 					} else {
 						x = read(fds[i].fd, loc + r, tr - r);
