@@ -356,21 +356,19 @@ int generateResponse(struct reqsess rs) {
 	const char* host = header_get(rs.request->headers, "Host");
 	if (host == NULL) host = "";
 	struct vhost* vh = NULL;
-	int vhi = -1;
 	for (int i = 0; i < rs.wp->vhosts_count; i++) {
 		if (rs.wp->vhosts[i]->host_count == 0) {
 			vh = rs.wp->vhosts[i];
-			vhi = i;
 			break;
 		} else for (int x = 0; x < rs.wp->vhosts[i]->host_count; x++) {
 			if (streq_nocase(rs.wp->vhosts[i]->hosts[x], host)) {
 				vh = rs.wp->vhosts[i];
-				vhi = i;
 				break;
 			}
 		}
 		if (vh != NULL) break;
 	}
+	jpvh: ;
 	char svr[16];
 	strcpy(svr, "Avuna/");
 	strcat(svr, VERSION);
@@ -894,7 +892,22 @@ int generateResponse(struct reqsess rs) {
 		rs.response->code = "302 Found";
 		header_add(rs.response->headers, "Location", vh->sub.redirect.redir);
 	} else if (vh->type == VHOST_MOUNT) {
-
+		struct vhost_mount* vhm = &vh->sub.mount;
+		char* oid = vh->id;
+		vh = NULL;
+		for (int i = 0; i < vhm->vhm_count; i++) {
+			if (startsWith(rs.request->path, vhm->vhms[i].path)) {
+				for (int x = 0; x < rs.wp->vhosts_count; x++) {
+					if (streq_nocase(vhm->vhms[i].vh, rs.wp->vhosts[x]->id) && !streq_nocase(rs.wp->vhosts[x]->id, oid)) {
+						vh = rs.wp->vhosts[x];
+						break;
+					}
+				}
+				if (vh != NULL) break;
+			}
+		}
+		xfree(oid);
+		goto jpvh;
 	}
 	pvh:
 //body stuff

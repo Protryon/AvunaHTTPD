@@ -617,10 +617,17 @@ int main(int argc, char* argv[]) {
 			} else if (cv->type == VHOST_MOUNT) {
 				struct vhost_mount* vhb = &cv->sub.mount;
 				vhb->vhms = NULL;
+				vhb->vhm_count = 0;
 				for (int i = 0; i < vcn->entries; i++) {
 					if (startsWith(vcn->keys[i], "/")) {
-						struct vhmount* ep = xmalloc(sizeof(struct vhmount));
-
+						if (vhb->vhms == NULL) {
+							vhb->vhms = xmalloc(sizeof(struct vhmount));
+							vhb->vhm_count = 1;
+						} else {
+							vhb->vhms = xrealloc(vhb->vhms, sizeof(struct vhmount) * ++vhb->vhm_count);
+						}
+						vhb->vhms[vhb->vhm_count - 1].path = vcn->keys[i];
+						vhb->vhms[vhb->vhm_count - 1].vh = vcn->values[i];
 					}
 				}
 			}
