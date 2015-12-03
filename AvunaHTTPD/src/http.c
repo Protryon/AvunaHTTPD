@@ -256,6 +256,10 @@ int parseRequest(struct request* request, char* data, size_t maxPost) {
 			request->body->data = xmalloc(cli);
 			request->body->mime_type = "application/x-www-form-urlencoded";
 			request->body->freeMime = 0;
+			request->body->readd = NULL;
+			request->body->stream_fd = -1;
+			request->body->stream_type = -1;
+			request->body->stream_len = 0;
 		}
 	}
 	return 0;
@@ -303,7 +307,6 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 	if (rs.response->body == NULL) {
 		rs.response->body = xmalloc(sizeof(struct body));
 	}
-	rs.response->body->mime_type = "text/html";
 	rs.response->body->freeMime = 0;
 	char* rmsg = escapehtml(msg);
 	size_t ml = strlen(rmsg);
@@ -311,6 +314,10 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 	size_t len = 120 + ml + (2 * cl);
 	rs.response->body->len = len;
 	rs.response->body->mime_type = "text/html";
+	rs.response->body->readd = NULL;
+	rs.response->body->stream_fd = -1;
+	rs.response->body->stream_type = -1;
+	rs.response->body->stream_len = 0;
 	rs.response->body->data = xmalloc(len);
 	static char* d1 = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\"><html><head><title>";
 	size_t d1s = strlen(d1);
@@ -378,12 +385,13 @@ int generateResponse(struct reqsess rs) {
 	if (vh == NULL) {
 		rs.response->code = "500 Internal Server Error";
 		generateDefaultErrorPage(rs, NULL, "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
-	} else if (vh->type == VHOST_HTDOCS) {
+	} else if (vh->type == VHOST_HTDOCS || vh->type == VHOST_RPROXY) {
+		int rp = vh->type == VHOST_RPROXY;
 		int isStatic = 1;
-		size_t htdl = strlen(vh->sub.htdocs.htdocs);
+		size_t htdl = rp ? 0 : strlen(vh->sub.htdocs.htdocs);
 		size_t pl = strlen(rs.request->path);
 		char* tp = xmalloc(htdl + pl);
-		memcpy(tp, vh->sub.htdocs.htdocs, htdl);
+		if (!rp) memcpy(tp, vh->sub.htdocs.htdocs, htdl);
 		memcpy(tp + htdl, rs.request->path + 1, pl);
 		tp[htdl + pl - 1] = 0;
 		char* ttp = strchr(tp, '#');
@@ -418,7 +426,7 @@ int generateResponse(struct reqsess rs) {
 			generateDefaultErrorPage(rs, vh, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
 			goto epage;
 		}
-		if (tp[htdl + pl - 2] == '/' && !access(tp, R_OK)) { // TODO: extra paths!
+		if (!rp && tp[htdl + pl - 2] == '/' && !access(tp, R_OK)) { // TODO: extra paths!
 			for (int ii = 0; ii < vh->sub.htdocs.index_count; ii++) {
 				size_t cl = strlen(vh->sub.htdocs.index[ii]);
 				char* tp2 = xmalloc(htdl + pl + cl);
@@ -433,62 +441,85 @@ int generateResponse(struct reqsess rs) {
 				}
 			}
 		}
-		rtp = realpath(tp, NULL);
-		xfree(tp);
-		if (rtp == NULL) {
-			if (errno == ENOENT || errno == ENOTDIR) {
-				rs.response->code = "404 Not Found";
-				generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
-			} else if (errno == EACCES) {
-				rs.response->code = "403 Forbidden";
-				generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
-			} else {
+		struct stat st;
+		if (rp) {
+			rtp = tp;
+			tp = NULL;
+		} else {
+			rtp = realpath(tp, NULL);
+			xfree(tp);
+			tp = NULL;
+			if (rtp == NULL) {
+				if (errno == ENOENT || errno == ENOTDIR) {
+					rs.response->code = "404 Not Found";
+					generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
+				} else if (errno == EACCES) {
+					rs.response->code = "403 Forbidden";
+					generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
+				} else {
+					rs.response->code = "500 Internal Server Error";
+					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+				}
+				goto epage;
+			}
+			if (stat(rtp, &st) != 0) {
+				errlog(rs.wp->logsess, "Failed stat on <%s>: %s", rtp, strerror(errno));
 				rs.response->code = "500 Internal Server Error";
 				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+				goto epage;
 			}
-			goto epage;
-		}
-		struct stat st;
-		if (stat(rtp, &st) != 0) {
-			errlog(rs.wp->logsess, "Failed stat on <%s>: %s", rtp, strerror(errno));
-			rs.response->code = "500 Internal Server Error";
-			generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
-			goto epage;
-		}
-		if ((st.st_mode & S_IFDIR) && rs.request->path[pl - 1] != '/') {
-			rs.response->code = "302 Found";
-			size_t pl = strlen(rs.request->path);
-			char np[pl + 2];
-			memcpy(np, rs.request->path, pl);
-			np[pl] = '/';
-			np[pl + 1] = 0;
-			header_add(rs.response->headers, "Location", np);
-			xfree(rtp);
-			goto pvh;
-		}
-		size_t rtpl = strlen(rtp);
-		if ((st.st_mode & S_IFDIR) && rtp[rtpl - 1] != '/') {
-			rtp = xrealloc(rtp, ++rtpl + 1);
-			rtp[rtpl - 1] = '/';
-			rtp[rtpl] = 0;
-		}
-		if (vh->sub.htdocs.symlock && !startsWith(rtp, vh->sub.htdocs.htdocs)) {
-			rs.response->code = "403 Forbidden";
-			generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
-			goto epage;
-		}
-		if (vh->sub.htdocs.nohardlinks && st.st_nlink != 1 && !(st.st_mode & S_IFDIR)) {
-			rs.response->code = "403 Forbidden";
-			generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
-			goto epage;
+			if ((st.st_mode & S_IFDIR) && rs.request->path[pl - 1] != '/') {
+				rs.response->code = "302 Found";
+				size_t pl = strlen(rs.request->path);
+				char np[pl + 2];
+				memcpy(np, rs.request->path, pl);
+				np[pl] = '/';
+				np[pl + 1] = 0;
+				header_add(rs.response->headers, "Location", np);
+				xfree(rtp);
+				goto pvh;
+			}
+			size_t rtpl = strlen(rtp);
+			if ((st.st_mode & S_IFDIR) && rtp[rtpl - 1] != '/') {
+				rtp = xrealloc(rtp, ++rtpl + 1);
+				rtp[rtpl - 1] = '/';
+				rtp[rtpl] = 0;
+			}
+			if (vh->sub.htdocs.symlock && !startsWith(rtp, vh->sub.htdocs.htdocs)) {
+				rs.response->code = "403 Forbidden";
+				generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
+				goto epage;
+			}
+			if (vh->sub.htdocs.nohardlinks && st.st_nlink != 1 && !(st.st_mode & S_IFDIR)) {
+				rs.response->code = "403 Forbidden";
+				generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
+				goto epage;
+			}
 		}
 		//TODO: overrides
-		rs.response->body = xmalloc(sizeof(struct body));
-		rs.response->body->len = 0;
-		rs.response->body->data = NULL;
-		const char* ext = strrchr(rtp, '.');
-		rs.response->body->mime_type = ext == NULL ? "application/octet-stream" : getMimeForExt(ext + 1);
-		rs.response->body->freeMime = 0;
+		if (rp) {
+			if (rs.sender->fw_fd < 0) {
+				rs.sender->fw_fd = socket(vh->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+				if (rs.sender->fw_fd < 0 || connect(rs.sender->fw_fd, vh->sub.rproxy.fwaddr, vh->sub.rproxy.fwaddrlen) < 0) {
+					errlog(rs.wp->logsess, "Failed to create/connect to forwarding socket: %s", strerror(errno));
+					rs.response->code = "500 Internal Server Error";
+					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+					goto epage;
+				}
+
+			}
+		} else {
+			rs.response->body = xmalloc(sizeof(struct body));
+			rs.response->body->len = 0;
+			rs.response->body->data = NULL;
+			const char* ext = strrchr(rtp, '.');
+			rs.response->body->mime_type = ext == NULL ? "application/octet-stream" : getMimeForExt(ext + 1);
+			rs.response->body->freeMime = 0;
+			rs.response->body->readd = NULL;
+			rs.response->body->stream_fd = -1;
+			rs.response->body->stream_type = -1;
+			rs.response->body->stream_len = 0;
+		}
 		if (vh->sub.htdocs.maxAge > 0) {
 			int dcc = 0;
 			for (int i = 0; i < vh->sub.htdocs.cacheType_count; i++) {
@@ -517,7 +548,10 @@ int generateResponse(struct reqsess rs) {
 			}
 			header_add(rs.response->headers, "Cache-Control", ccbuf);
 		}
-		if (rs.response->body != NULL && rs.response->body->mime_type != NULL) for (int i = 0; i < vh->sub.htdocs.fcgi_count; i++) {
+		if (rp) { // TODO: check if static
+
+		}
+		if (!rp && rs.response->body != NULL && rs.response->body->mime_type != NULL) for (int i = 0; i < vh->sub.htdocs.fcgi_count; i++) {
 			struct fcgi* fcgi = vh->sub.htdocs.fcgis[i];
 			int df = 0;
 			for (int m = 0; m < fcgi->mime_count; m++) {
@@ -741,6 +775,10 @@ int generateResponse(struct reqsess rs) {
 								rs.response->body->len = ff.len;
 								rs.response->body->mime_type = ct == NULL ? "text/html" : ct;
 								rs.response->body->freeMime = ct == NULL ? 0 : 1;
+								rs.response->body->readd = NULL;
+								rs.response->body->stream_fd = -1;
+								rs.response->body->stream_type = -1;
+								rs.response->body->stream_len = 0;
 							} else {
 								rs.response->body->len += ff.len;
 								rs.response->body->data = xrealloc(rs.response->body->data, rs.response->body->len);
@@ -752,7 +790,7 @@ int generateResponse(struct reqsess rs) {
 				}
 			}
 		}
-		if (isStatic) {
+		if (!rp && isStatic) {
 			int ffd = open(rtp, O_RDONLY);
 			if (ffd < 0) {
 				errlog(rs.wp->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
@@ -886,8 +924,6 @@ int generateResponse(struct reqsess rs) {
 		pcacheadd:
 		//TODO: Chunked
 		if (rtp != NULL) xfree(rtp);
-	} else if (vh->type == VHOST_RPROXY) {
-
 	} else if (vh->type == VHOST_REDIRECT) {
 		rs.response->code = "302 Found";
 		header_add(rs.response->headers, "Location", vh->sub.redirect.redir);

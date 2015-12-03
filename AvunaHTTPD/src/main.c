@@ -31,6 +31,7 @@
 #include "mime.h"
 #include <gnutls/gnutls.h>
 #include "tls.h"
+#include "http.h"
 
 int main(int argc, char* argv[]) {
 	if (getuid() != 0 || getgid() != 0) {
@@ -484,6 +485,7 @@ int main(int argc, char* argv[]) {
 						const char* en = vcn->keys[i] + 6;
 						if (!strisunum(en)) {
 							errlog(slog, "Invalid error page specifier at vhost: %s", vcn->id);
+							continue;
 						}
 						struct errpage* ep = xmalloc(sizeof(struct errpage));
 						ep->code = en;
@@ -525,12 +527,14 @@ int main(int argc, char* argv[]) {
 							const char* fport = getConfigValue(fcgin, "port");
 							if (fip == NULL || !inet_aton(fip, &ina->sin_addr)) {
 								errlog(slog, "Invalid IP for FCGI node %s at vhost: %s", ivh, vcn->id);
-								free(fcgi);
+								xfree(fcgi);
+								xfree(ina);
 								goto icc;
 							}
 							if (fport == NULL || !strisunum(fport)) {
 								errlog(slog, "Invalid Port for FCGI node %s at vhost: %s", ivh, vcn->id);
-								free(fcgi);
+								xfree(fcgi);
+								xfree(ina);
 								goto icc;
 							}
 							ina->sin_port = htons(atoi(fport));
@@ -542,13 +546,14 @@ int main(int argc, char* argv[]) {
 							const char* ffile = getConfigValue(fcgin, "file");
 							if (ffile == NULL || strlen(ffile) >= 107) {
 								errlog(slog, "Invalid Unix Socket for FCGI node %s at vhost: %s", ivh, vcn->id);
-								free(fcgi);
+								xfree(fcgi);
+								xfree(ina);
 								goto icc;
 							}
 							memcpy(ina->sun_path, ffile, strlen(ffile) + 1);
 						} else {
 							errlog(slog, "Invalid mode for FCGI node %s at vhost: %s", ivh, vcn->id);
-							free(fcgi);
+							xfree(fcgi);
 							goto icc;
 						}
 						const char* ic2 = getConfigValue(fcgin, "mime-types");
@@ -601,7 +606,116 @@ int main(int argc, char* argv[]) {
 				}
 			} else if (cv->type == VHOST_RPROXY) {
 				struct vhost_rproxy* vhb = &cv->sub.rproxy;
-
+				const char* fmode = getConfigValue(vcn, "forward-mode");
+				if (streq_nocase(fmode, "tcp")) {
+					vhb->fwaddrlen = sizeof(struct sockaddr_in);
+					struct sockaddr_in* ina = xmalloc(sizeof(struct sockaddr_in));
+					vhb->fwaddr = ina;
+					ina->sin_family = AF_INET;
+					const char* fip = getConfigValue(vcn, "forward-ip");
+					const char* fport = getConfigValue(vcn, "forward-port");
+					if (fip == NULL || !inet_aton(fip, &ina->sin_addr)) {
+						errlog(slog, "Invalid IP for Reverse Proxy vhost: %s", vcn->id);
+						xfree(ina);
+						goto cont_vh;
+					}
+					if (fport == NULL || !strisunum(fport)) {
+						errlog(slog, "Invalid Port for Reverse Proxy vhost: %s", vcn->id);
+						xfree(ina);
+						goto cont_vh;
+					}
+					ina->sin_port = htons(atoi(fport));
+				} else if (streq_nocase(fmode, "unix")) {
+					vhb->fwaddrlen = sizeof(struct sockaddr_un);
+					struct sockaddr_un* ina = xmalloc(sizeof(struct sockaddr_un));
+					vhb->fwaddr = ina;
+					ina->sun_family = AF_LOCAL;
+					const char* ffile = getConfigValue(vcn, "file");
+					if (ffile == NULL || strlen(ffile) >= 107) {
+						errlog(slog, "Invalid Unix Socket for Reverse Proxy vhost: %s", vcn->id);
+						xfree(ina);
+						goto cont_vh;
+					}
+					memcpy(ina->sun_path, ffile, strlen(ffile) + 1);
+				} else {
+					errlog(slog, "Invalid mode for Reverse Proxy vhost: %s", vcn->id);
+					goto cont_vh;
+				}
+				vhb->headers = NULL;
+				for (int i = 0; i < vcn->entries; i++) {
+					if (startsWith_nocase(vcn->keys[i], "header-")) {
+						const char* en = vcn->keys[i] + 7;
+						if (vhb->headers == NULL) {
+							vhb->headers = xmalloc(sizeof(struct headers));
+							vhb->headers->count = 0;
+							vhb->headers->names = NULL;
+							vhb->headers->values = NULL;
+						}
+						header_add(vhb->headers, en, vcn->values[i]);
+					}
+				}
+				const char* ic = getConfigValue(vcn, "cache-types");
+				if (ic == NULL) {
+					errlog(slog, "No cache-types at vhost: %s, assuming default", vcn->id);
+					ic = "text/css,application/javascript,image/*";
+				}
+				char* ivh = xstrdup(ic, 0);
+				char* npi = NULL;
+				vhb->cacheTypes = NULL;
+				while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
+					if (npi != NULL) {
+						npi[0] = 0;
+						npi++;
+					}
+					ivh = trim(ivh);
+					if (vhb->cacheTypes == NULL) {
+						vhb->cacheTypes = xmalloc(sizeof(char*));
+						vhb->cacheType_count = 1;
+					} else {
+						vhb->cacheTypes = xrealloc(vhb->cacheTypes, sizeof(char*) * ++vhb->cacheType_count);
+					}
+					vhb->cacheTypes[vhb->cacheType_count - 1] = ivh;
+					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
+				}
+				const char* nhl = getConfigValue(vcn, "scache");
+				vhb->scacheEnabled = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+				if (nhl == NULL) {
+					errlog(slog, "No scache at vhost: %s, assuming default", vcn->id);
+				}
+				nhl = getConfigValue(vcn, "cache-maxage");
+				if (nhl == NULL || !strisunum(nhl)) {
+					errlog(slog, "No cache-maxage at vhost: %s, assuming default", vcn->id);
+					nhl = "604800";
+				}
+				vhb->maxAge = atol(nhl);
+				nhl = getConfigValue(vcn, "enable-gzip");
+				vhb->enableGzip = nhl == NULL ? 1 : streq_nocase(nhl, "true");
+				if (nhl == NULL) {
+					errlog(slog, "No enable-gzip at vhost: %s, assuming default", vcn->id);
+				}
+				ic = getConfigValue(vcn, "dynamic-types");
+				if (ic == NULL) {
+					errlog(slog, "No dynamic-types at vhost: %s, assuming default", vcn->id);
+					ic = "application/x-php";
+				}
+				ivh = xstrdup(ic, 0);
+				npi = NULL;
+				vhb->dmimes = NULL;
+				while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
+					if (npi != NULL) {
+						npi[0] = 0;
+						npi++;
+					}
+					ivh = trim(ivh);
+					if (vhb->dmimes == NULL) {
+						vhb->dmimes = xmalloc(sizeof(char*));
+						vhb->dmime_count = 1;
+					} else {
+						vhb->dmimes = xrealloc(vhb->dmimes, sizeof(char*) * ++vhb->dmime_count);
+					}
+					vhb->dmimes[vhb->dmime_count - 1] = ivh;
+					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
+				}
 			} else if (cv->type == VHOST_REDIRECT) {
 				struct vhost_redirect* vhb = &cv->sub.redirect;
 				vhb->redir = getConfigValue(vcn, "redirect");

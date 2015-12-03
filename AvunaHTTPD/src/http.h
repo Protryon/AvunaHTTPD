@@ -51,6 +51,10 @@ struct body {
 		int freeMime;
 		size_t len;
 		unsigned char* data;
+		int stream_fd;
+		int stream_type;
+		size_t stream_len;
+		struct work_param* readd;
 };
 
 struct request {

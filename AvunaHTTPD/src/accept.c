@@ -42,6 +42,8 @@ void run_accept(struct accept_param* param) {
 		c->postLeft = 0;
 		c->reqPosting = NULL;
 		c->handshaked = 0;
+		c->fw_fd = -1;
+		c->fwc = 1;
 		if (param->cert != NULL) {
 			gnutls_init(&c->session, GNUTLS_SERVER | GNUTLS_NONBLOCK);
 			gnutls_priority_set(c->session, param->cert->priority);

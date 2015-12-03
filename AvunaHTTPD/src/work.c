@@ -34,6 +34,7 @@ void closeConn(struct work_param* param, struct conn* conn) {
 		gnutls_deinit(conn->session);
 	}
 	close(conn->fd);
+	if (conn->fw_fd >= 0 && !conn->fwc) close(conn->fw_fd);
 	if (rem_collection(param->conns, conn)) {
 		errlog(param->logsess, "Failed to delete connection properly! This is bad!");
 	}

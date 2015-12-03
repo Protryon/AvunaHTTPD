@@ -31,6 +31,12 @@ struct fcgi {
 };
 
 struct vhost_htdocs {
+		struct cache cache;
+		size_t cacheType_count;
+		char** cacheTypes;
+		int enableGzip;
+		int scacheEnabled;
+		size_t maxAge;
 		char* htdocs;
 		int symlock;
 		int nohardlinks;
@@ -38,20 +44,24 @@ struct vhost_htdocs {
 		char** index;
 		size_t errpage_count;
 		struct errpage** errpages;
-		size_t cacheType_count;
-		char** cacheTypes;
-		size_t maxAge;
-		int enableGzip;
-		struct cache cache;
 		size_t fcgi_count;
 		struct fcgi** fcgis;
 		int** fcgifds;
-		int scacheEnabled;
 };
 
 struct vhost_rproxy {
-		char* forward;
+		struct cache cache;
+		size_t cacheType_count;
+		char** cacheTypes;
+		int enableGzip;
+		int scacheEnabled;
+		size_t maxAge;
+		struct sockaddr* fwaddr;
+		socklen_t fwaddrlen;
+		char* fwpath;
 		struct headers* headers;
+		size_t dmime_count;
+		char** dmimes;
 		int xfor;
 };
 
