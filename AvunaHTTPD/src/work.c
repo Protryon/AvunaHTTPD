@@ -25,6 +25,11 @@
 #include <arpa/inet.h>
 #include <sys/mman.h>
 #include <gnutls/gnutls.h>
+#include <nettle/md5.h>
+
+#include "oqueue.h"
+
+void freeReqsess(struct reqsess rs);
 
 void closeConn(struct work_param* param, struct conn* conn) {
 	if (conn->tls) {
@@ -33,73 +38,90 @@ void closeConn(struct work_param* param, struct conn* conn) {
 		}
 		gnutls_deinit(conn->session);
 	}
+	if (conn->fw_tls) {
+		if (conn->fw_handshaked) {
+			gnutls_bye(conn->fw_session, GNUTLS_SHUT_RDWR);
+		}
+		gnutls_deinit(conn->fw_session);
+	}
 	close(conn->fd);
-	if (conn->fw_fd >= 0 && !conn->fwc) close(conn->fw_fd);
+	if (conn->fw_fd >= 0) close(conn->fw_fd);
+	if (conn->stream_type >= 0) {
+		if (conn->fw_fd != conn->stream_fd) close(conn->stream_fd);
+		struct reqsess rs;
+		for (int i = 0; i < conn->fwqueue->size; i++) {
+			pop_queue(conn->fwqueue, &rs);
+			freeReqsess(rs);
+		}
+	}
+	if (conn->fwqueue != NULL) del_queue(conn->fwqueue);
 	if (rem_collection(param->conns, conn)) {
 		errlog(param->logsess, "Failed to delete connection properly! This is bad!");
 	}
 	if (conn->readBuffer != NULL) xfree(conn->readBuffer);
+	if (conn->fw_readBuffer != NULL) xfree(conn->fw_readBuffer);
 	if (conn->writeBuffer != NULL) xfree(conn->writeBuffer);
 	xfree(conn);
 }
 
-void handleRequest(int wfd, struct timespec* stt, struct conn* conn, struct work_param* param, struct request* req) {
-	struct response* resp = xmalloc(sizeof(struct response));
-	resp->body = NULL;
-	resp->atc = 0;
-	resp->code = "500 Internal Server Error";
-	resp->version = "HTTP/1.1";
-	resp->headers = xmalloc(sizeof(struct headers));
-	struct reqsess rs;
-	rs.wp = param;
-	rs.sender = conn;
-	rs.response = resp;
-	rs.request = req;
-	generateResponse(rs);
-	size_t rl = 0;
-	unsigned char* rda = serializeResponse(rs, &rl);
-	struct timespec stt2;
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt2);
-	double msp = (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt->tv_nsec / 1000000.0 + stt->tv_sec * 1000.0);
-	const char* mip = NULL;
-	char tip[48];
-	if (conn->addr.sa_family == AF_INET) {
-		struct sockaddr_in *sip4 = (struct sockaddr_in*) &conn->addr;
-		mip = inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
-	} else if (conn->addr.sa_family == AF_INET6) {
-		struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &conn->addr;
-		mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
-	} else if (conn->addr.sa_family == AF_LOCAL) {
-		mip = "UNIX";
-	} else {
-		mip = "UNKNOWN";
-	}
-	if (mip == NULL) {
-		errlog(param->logsess, "Invalid IP Address: %s", strerror(errno));
-	}
-	acclog(param->logsess, "%s %s %s returned %s took: %f ms", mip, getMethod(req->method), req->path, resp->code, msp);
-	ssize_t mtr = conn->tls ? gnutls_record_send(conn->session, rda, rl) : write(wfd, rda, rl);
-	if (mtr < 0 && conn->tls ? gnutls_error_is_fatal(mtr) : errno != EAGAIN) {
-		closeConn(param, conn);
-		conn = NULL;
-	} else if (mtr >= rl) {
-		//done writing!
-	} else {
-		unsigned char* stw = rda + mtr;
-		rl -= mtr;
-		unsigned char* loc = NULL;
-		if (conn->writeBuffer == NULL) {
-			conn->writeBuffer = xmalloc(rl); // TODO: max upload?
-			conn->writeBuffer_size = rl;
-			loc = conn->writeBuffer;
+void sendReqsess(struct reqsess rs, int wfd, struct timespec* stt) {
+	struct conn* conn = rs.sender;
+	struct work_param* param = rs.wp;
+	struct response* resp = rs.response;
+	struct request* req = rs.request;
+	if (!conn->fwed) {
+		size_t rl = 0;
+		unsigned char* rda = serializeResponse(rs, &rl);
+		struct timespec stt2;
+		clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt2);
+		double msp = (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt->tv_nsec / 1000000.0 + stt->tv_sec * 1000.0);
+		const char* mip = NULL;
+		char tip[48];
+		if (conn->addr.sa_family == AF_INET) {
+			struct sockaddr_in *sip4 = (struct sockaddr_in*) &conn->addr;
+			mip = inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
+		} else if (conn->addr.sa_family == AF_INET6) {
+			struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &conn->addr;
+			mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
+		} else if (conn->addr.sa_family == AF_LOCAL) {
+			mip = "UNIX";
 		} else {
-			conn->writeBuffer_size += rl;
-			conn->writeBuffer = xrealloc(conn->writeBuffer, conn->writeBuffer_size);
-			loc = conn->writeBuffer + conn->writeBuffer_size - rl;
+			mip = "UNKNOWN";
 		}
-		memcpy(loc, stw, rl);
+		if (mip == NULL) {
+			errlog(param->logsess, "Invalid IP Address: %s", strerror(errno));
+		}
+		acclog(param->logsess, "%s %s %s returned %s took: %f ms", mip, getMethod(req->method), req->path, resp->code, msp);
+		ssize_t mtr = conn->tls ? gnutls_record_send(conn->session, rda, rl) : write(wfd, rda, rl);
+		if (mtr < 0 && (conn->tls ? gnutls_error_is_fatal(mtr) : errno != EAGAIN)) {
+			closeConn(param, conn);
+			conn = NULL;
+		} else if (mtr >= rl) {
+			//done writing!
+		} else {
+			unsigned char* stw = rda + mtr;
+			rl -= mtr;
+			unsigned char* loc = NULL;
+			if (conn->writeBuffer == NULL) {
+				conn->writeBuffer = xmalloc(rl); // TODO: max upload?
+				conn->writeBuffer_size = rl;
+				loc = conn->writeBuffer;
+			} else {
+				conn->writeBuffer_size += rl;
+				conn->writeBuffer = xrealloc(conn->writeBuffer, conn->writeBuffer_size);
+				loc = conn->writeBuffer + conn->writeBuffer_size - rl;
+			}
+			memcpy(loc, stw, rl);
+		}
+		xfree(rda);
+	} else {
+		conn->fwed = 0;
 	}
-	xfree(rda);
+}
+
+void freeReqsess(struct reqsess rs) {
+	struct response* resp = rs.response;
+	struct request* req = rs.request;
 	if (!req->atc) xfree(req->path);
 	xfree(req->version);
 	freeHeaders(req->headers);
@@ -108,8 +130,7 @@ void handleRequest(int wfd, struct timespec* stt, struct conn* conn, struct work
 		xfree(req->body->data);
 		xfree(req->body);
 	}
-	xfree(req);
-	if (!resp->atc) {
+	if (!req->atc) {
 		if (resp->body != NULL) {
 			if (resp->body->freeMime) xfree(resp->body->mime_type);
 			xfree(resp->body->data);
@@ -117,8 +138,37 @@ void handleRequest(int wfd, struct timespec* stt, struct conn* conn, struct work
 		}
 		freeHeaders(resp->headers);
 	}
+	if (!req->atc && resp->parsed) {
+		xfree(resp->version);
+		xfree(resp->code);
+	}
+	xfree(req);
 	xfree(resp);
 }
+
+void handleRequest(int wfd, struct timespec* stt, struct conn* conn, struct work_param* param, struct request* req) {
+	struct response* resp = xmalloc(sizeof(struct response));
+	resp->body = NULL;
+	resp->parsed = 0;
+	resp->code = "500 Internal Server Error";
+	resp->version = "HTTP/1.1";
+	resp->fromCache = NULL;
+	resp->headers = xmalloc(sizeof(struct headers));
+	struct reqsess rs;
+	rs.wp = param;
+	rs.sender = conn;
+	rs.response = resp;
+	rs.request = req;
+	generateResponse(rs);
+	int fwed = conn->fwed;
+	sendReqsess(rs, wfd, stt);
+	if (!fwed) freeReqsess(rs);
+}
+
+struct uconn {
+		int type;
+		struct conn* conn;
+};
 
 void run_work(struct work_param* param) {
 	if (pipe(param->pipes) != 0) {
@@ -127,53 +177,102 @@ void run_work(struct work_param* param) {
 	}
 	unsigned char wb;
 	unsigned char* mbuf = xmalloc(1024);
-	char tip[48];
 	while (1) {
 		pthread_rwlock_rdlock(&param->conns->data_mutex);
 		size_t cc = param->conns->count;
-		struct pollfd fds[cc + 1];
-		struct conn* conns[cc];
-		int fdi = 0;
+		size_t mfds = cc + 1;
+		struct pollfd* fds = xmalloc(sizeof(struct pollfd) * mfds);
+		struct uconn* conns = xmalloc(sizeof(struct uconn) * (mfds - 1));
+		size_t fdi = 0;
+		size_t fdxi = 0;
 		for (int i = 0; i < param->conns->size; i++) {
 			struct conn* conn = param->conns->data[i];
 			if (conn != NULL) {
-				conns[fdi] = conn;
-				fds[fdi].fd = conn->fd;
-				fds[fdi].events = POLLIN | ((conn->writeBuffer_size > 0 || (conn->tls && !conn->handshaked && gnutls_record_get_direction(conn->session))) ? POLLOUT : 0);
-				fds[fdi++].revents = 0;
+				if (conn->fwqueue != NULL) {
+					pthread_mutex_lock(&conn->fwqueue->data_mutex);
+					if (conn->fwqueue->size > 0) {
+						mfds += 1;
+						fds = xrealloc(fds, sizeof(struct pollfd) * mfds);
+						conns = xrealloc(conns, sizeof(struct uconn) * (mfds - 1));
+						conns[fdxi].conn = conn;
+						conns[fdxi].type = 1;
+						fds[fdxi].fd = conn->fw_fd;
+						fds[fdxi].events = POLLIN;
+						fds[fdxi++].revents = 0;
+					}
+					pthread_mutex_unlock(&conn->fwqueue->data_mutex);
+				}
+				if (conn->stream_type >= 0 && conn->stream_fd != conn->fw_fd) { // TODO: finish impl
+					mfds += 1;
+					fds = xrealloc(fds, sizeof(struct pollfd) * mfds);
+					conns = xrealloc(conns, sizeof(struct uconn) * (mfds - 1));
+					conns[fdxi].conn = conn;
+					conns[fdxi].type = 2;
+					fds[fdxi].fd = conn->stream_fd;
+					fds[fdxi].events = POLLIN;
+					fds[fdxi++].revents = 0;
+				}
+				conns[fdxi].conn = conn;
+				conns[fdxi].type = 0;
+				fds[fdxi].fd = conn->fd;
+				fds[fdxi].events = POLLIN | ((conn->writeBuffer_size > 0 || (conn->tls && !conn->handshaked && gnutls_record_get_direction(conn->session))) ? POLLOUT : 0);
+				fds[fdxi++].revents = 0;
+				fdi++;
 				if (fdi == cc) break;
 			}
 		}
 		pthread_rwlock_unlock(&param->conns->data_mutex);
-		fds[cc].fd = param->pipes[0];
-		fds[cc].events = POLLIN;
-		fds[cc].revents = 0;
-		int cp = poll(fds, cc + 1, -1);
+		fds[mfds - 1].fd = param->pipes[0];
+		fds[mfds - 1].events = POLLIN;
+		fds[mfds - 1].revents = 0;
+		int cp = poll(fds, mfds, -1);
 		if (cp < 0) {
 			errlog(param->logsess, "Poll error in worker thread! %s", strerror(errno));
-		} else if (cp == 0) continue;
-		else if ((fds[cc].revents & POLLIN) == POLLIN) {
+		} else if (cp == 0) {
+			xfree(fds);
+			xfree(conns);
+			continue;
+		} else if ((fds[mfds - 1].revents & POLLIN) == POLLIN) {
 			if (read(param->pipes[0], &wb, 1) < 1) errlog(param->logsess, "Error reading from pipe, infinite loop COULD happen here.");
-			if (cp-- == 1) continue;
+			if (cp-- == 1) {
+				xfree(fds);
+				xfree(conns);
+				continue;
+			}
 		}
-		for (int i = 0; i < cc; i++) {
+		for (int i = 0; i < mfds - 1; i++) {
 			int re = fds[i].revents;
 			if (re == 0) continue;
-			if (conns[i]->tls && !conns[i]->handshaked) {
-				int r = gnutls_handshake(conns[i]->session);
+			struct conn* conn = conns[i].conn;
+			int ct = conns[i].type;
+			if (ct != 0 && ct != 1) {
+				errlog(param->logsess, "Invalid connection type! %i", conns[i].type);
+				continue;
+			}
+			if (ct == 0 && conn->tls && !conn->handshaked) {
+				int r = gnutls_handshake(conn->session);
 				if (gnutls_error_is_fatal(r)) {
-					printf("%i\n", r);
-					closeConn(param, conns[i]);
+					closeConn(param, conn);
 					goto cont;
 				} else if (r == GNUTLS_E_SUCCESS) {
-					conns[i]->handshaked = 1;
+					conn->handshaked = 1;
+				}
+				goto cont;
+			} else if (ct == 1 && conn->fw_tls && !conn->fw_handshaked) {
+				int r = gnutls_handshake(conn->fw_session);
+				if (gnutls_error_is_fatal(r)) {
+					closeConn(param, conn);
+					goto cont;
+				} else if (r == GNUTLS_E_SUCCESS) {
+					conn->fw_handshaked = 1;
 				}
 				goto cont;
 			}
 			if ((re & POLLIN) == POLLIN) {
 				size_t tr = 0;
-				if (conns[i]->tls) {
-					tr = gnutls_record_check_pending(conns[i]->session);
+				if (ct == 1 ? conn->fw_tls : (ct == 0 ? conn->tls : 0)) {
+					if (ct == 0) tr = gnutls_record_check_pending(conn->session);
+					else if (ct == 1) tr = gnutls_record_check_pending(conn->fw_session);
 					if (tr == 0) {
 						tr += 1024;
 					}
@@ -181,37 +280,58 @@ void run_work(struct work_param* param) {
 					ioctl(fds[i].fd, FIONREAD, &tr);
 				}
 				unsigned char* loc;
-				if (conns[i]->readBuffer == NULL) {
-					conns[i]->readBuffer = xmalloc(tr); // TODO: max upload?
-					conns[i]->readBuffer_size = tr;
-					loc = conns[i]->readBuffer;
-				} else {
-					conns[i]->readBuffer_size += tr;
-					conns[i]->readBuffer = xrealloc(conns[i]->readBuffer, conns[i]->readBuffer_size);
-					loc = conns[i]->readBuffer + conns[i]->readBuffer_size - tr;
+				if (ct == 0) {
+					if (conn->readBuffer == NULL) {
+						conn->readBuffer = xmalloc(tr); // TODO: max upload?
+						conn->readBuffer_size = tr;
+						loc = conn->readBuffer;
+					} else {
+						conn->readBuffer_size += tr;
+						conn->readBuffer = xrealloc(conn->readBuffer, conn->readBuffer_size);
+						loc = conn->readBuffer + conn->readBuffer_size - tr;
+					}
+				} else if (ct == 1) {
+					if (conn->fw_readBuffer == NULL) {
+						conn->fw_readBuffer = xmalloc(tr); // TODO: max upload?
+						conn->fw_readBuffer_size = tr;
+						loc = conn->fw_readBuffer;
+					} else {
+						conn->fw_readBuffer_size += tr;
+						conn->fw_readBuffer = xrealloc(conn->fw_readBuffer, conn->fw_readBuffer_size);
+						loc = conn->fw_readBuffer + conn->fw_readBuffer_size - tr;
+					}
 				}
 				ssize_t r = 0;
 				if (r == 0 && tr == 0) { // nothing to read, but wont block.
 					ssize_t x = 0;
-					if (conns[i]->tls) {
-						x = gnutls_record_recv(conns[i]->session, loc + r, tr - r);
+					if (conn->tls) {
+						if (ct == 0) x = gnutls_record_recv(conn->session, loc + r, tr - r);
+						else if (ct == 1) x = gnutls_record_recv(conn->fw_session, loc + r, tr - r);
 						if (x <= 0 && gnutls_error_is_fatal(x)) {
-							closeConn(param, conns[i]);
-							conns[i] = NULL;
+							if (ct == 1) {
+								errlog(param->logsess, "TLS Error receiving from backend server! %s", gnutls_strerror(x));
+							}
+							closeConn(param, conn);
+							conn = NULL;
 							goto cont;
 						} else if (x <= 0) {
 							if (r < tr) {
-								conns[i]->readBuffer_size += r - tr;
+								if (ct == 0) {
+									conn->readBuffer_size += r - tr;
+									conn->readBuffer = xrealloc(conn->readBuffer, conn->readBuffer_size);
+								} else if (ct == 1) {
+									conn->fw_readBuffer_size += r - tr;
+									conn->fw_readBuffer = xrealloc(conn->fw_readBuffer, conn->fw_readBuffer_size);
+								}
 								tr = r;
-								conns[i]->readBuffer = xrealloc(conns[i]->readBuffer, conns[i]->readBuffer_size);
 							}
 							break;
 						}
 					} else {
 						x = read(fds[i].fd, loc + r, tr - r);
 						if (x <= 0) {
-							closeConn(param, conns[i]);
-							conns[i] = NULL;
+							closeConn(param, conn);
+							conn = NULL;
 							goto cont;
 						}
 					}
@@ -219,112 +339,285 @@ void run_work(struct work_param* param) {
 				}
 				while (r < tr) {
 					ssize_t x = 0;
-					if (conns[i]->tls) {
-						x = gnutls_record_recv(conns[i]->session, loc + r, tr - r);
+					if (conn->tls) {
+						if (ct == 0) x = gnutls_record_recv(conn->session, loc + r, tr - r);
+						else if (ct == 1) x = gnutls_record_recv(conn->fw_session, loc + r, tr - r);
 						if (x <= 0 && gnutls_error_is_fatal(x)) {
-							closeConn(param, conns[i]);
-							conns[i] = NULL;
+							if (ct == 1) {
+								errlog(param->logsess, "TLS Error receiving from backend server! %s", gnutls_strerror(x));
+							}
+							closeConn(param, conn);
+							conn = NULL;
 							goto cont;
 						} else if (x <= 0) {
 							if (r < tr) {
-								conns[i]->readBuffer_size += r - tr;
+								if (ct == 0) {
+									conn->readBuffer_size += r - tr;
+									conn->readBuffer = xrealloc(conn->readBuffer, conn->readBuffer_size);
+								} else if (ct == 1) {
+									conn->fw_readBuffer_size += r - tr;
+									conn->fw_readBuffer = xrealloc(conn->fw_readBuffer, conn->fw_readBuffer_size);
+								}
 								tr = r;
-								conns[i]->readBuffer = xrealloc(conns[i]->readBuffer, conns[i]->readBuffer_size);
 							}
 							break;
 						}
 					} else {
 						x = read(fds[i].fd, loc + r, tr - r);
 						if (x <= 0) {
-							closeConn(param, conns[i]);
-							conns[i] = NULL;
+							closeConn(param, conn);
+							conn = NULL;
 							goto cont;
 						}
 					}
 					r += x;
 				}
-				reqp: if (conns[i]->reqPosting != NULL && conns[i]->postLeft > 0) {
-					if (conns[i]->readBuffer_size >= conns[i]->postLeft) {
+				reqp: if (ct == 0 && conn->reqPosting != NULL && conn->postLeft > 0) {
+					if (conn->readBuffer_size >= conn->postLeft) {
 						struct timespec stt;
 						clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
-						memcpy(conns[i]->reqPosting->body->data + conns[i]->reqPosting->body->len - conns[i]->postLeft, conns[i]->readBuffer, conns[i]->postLeft);
-						size_t os = conns[i]->readBuffer_size;
-						conns[i]->readBuffer_size -= conns[i]->postLeft;
-						conns[i]->readBuffer_checked = 0;
-						memmove(conns[i]->readBuffer, conns[i]->readBuffer + conns[i]->postLeft, conns[i]->readBuffer_size);
-						conns[i]->postLeft -= os;
-						if (conns[i]->postLeft == 0) {
-							handleRequest(fds[i].fd, &stt, conns[i], param, conns[i]->reqPosting);
-							conns[i]->reqPosting = NULL;
+						memcpy(conn->reqPosting->body->data + conn->reqPosting->body->len - conn->postLeft, conn->readBuffer, conn->postLeft);
+						size_t os = conn->readBuffer_size;
+						conn->readBuffer_size -= conn->postLeft;
+						conn->readBuffer_checked = 0;
+						memmove(conn->readBuffer, conn->readBuffer + conn->postLeft, conn->readBuffer_size);
+						conn->postLeft -= os;
+						if (conn->postLeft == 0) {
+							handleRequest(fds[i].fd, &stt, conn, param, conn->reqPosting);
+							conn->reqPosting = NULL;
 						}
 					} else goto pc;
 				}
 				static unsigned char tm[4] = { 0x0D, 0x0A, 0x0D, 0x0A };
 				int ml = 0;
-				for (int x = conns[i]->readBuffer_checked; x < conns[i]->readBuffer_size; x++) {
-					if (conns[i]->readBuffer[x] == tm[ml]) {
+				unsigned char* readBuffer = (ct == 0 ? conn->readBuffer : (ct == 1 ? conn->fw_readBuffer : 0));
+				sin: ;
+				if (ct == 1 && conn->stream_type >= 0) { //todo ct==2
+					int se = 0;
+					if (conn->stream_type == 0) {
+						size_t rbs = conn->fw_readBuffer_size;
+						if (conn->frs.response->fromCache != NULL) {
+							if (conn->stream_md5 == NULL) {
+								conn->stream_md5 = xmalloc(sizeof(struct md5_ctx));
+								md5_init(conn->stream_md5);
+							}
+							md5_update(conn->stream_md5, rbs, readBuffer);
+						}
+						if (conn->writeBuffer == NULL) {
+							conn->writeBuffer = xmalloc(rbs);
+						} else {
+							conn->writeBuffer = xrealloc(conn->writeBuffer, conn->writeBuffer_size + rbs);
+						}
+						if (conn->frs.request->atc) {
+							if (conn->staticStreamCacheBuffer == NULL) {
+								conn->staticStreamCacheBuffer = xmalloc(rbs);
+								conn->sscbl = 0;
+							} else {
+								conn->staticStreamCacheBuffer = xrealloc(conn->staticStreamCacheBuffer, conn->sscbl + rbs);
+							}
+							memcpy(conn->staticStreamCacheBuffer + conn->sscbl, readBuffer, rbs);
+							conn->sscbl += rbs;
+						}
+						memcpy(conn->writeBuffer + conn->writeBuffer_size, readBuffer, rbs);
+						conn->writeBuffer_size += rbs;
+						size_t ns = conn->fw_readBuffer_size - rbs;
+						if (ns > 0) {
+							memmove(conn->fw_readBuffer, conn->fw_readBuffer + rbs, conn->fw_readBuffer_size - rbs);
+							conn->fw_readBuffer = xrealloc(conn->fw_readBuffer, conn->fw_readBuffer_size - rbs);
+						} else {
+							xfree(conn->fw_readBuffer);
+							conn->fw_readBuffer = NULL;
+						}
+						conn->fw_readBuffer_size -= rbs;
+						conn->streamed += rbs;
+						conn->fw_readBuffer_checked = 0;
+						if (conn->streamed >= conn->stream_len) {
+							if (conn->frs.request->atc) {
+								int patc = 0;
+								int ib = 0;
+								const char* ct = header_get(conn->frs.response->headers, "Content-Type");
+								for (int i = 0; i < conn->frs.request->vhost->sub.rproxy.dmime_count; i++) {
+									if (streq_nocase(conn->frs.request->vhost->sub.rproxy.dmimes[i], ct)) {
+										ib = 1;
+										break;
+									}
+								}
+								if (!ib) {
+									conn->frs.request->atc = 1;
+									struct scache* sc = xmalloc(sizeof(struct scache));
+									if (conn->frs.response->body == NULL) {
+										conn->frs.response->body = xmalloc(sizeof(struct body));
+									}
+									conn->frs.response->body->data = conn->staticStreamCacheBuffer;
+									conn->staticStreamCacheBuffer = NULL;
+									conn->frs.response->body->len = conn->sscbl;
+									conn->frs.response->body->stream_type = -1;
+									conn->frs.response->body->stream_fd = -1;
+									conn->frs.response->body->mime_type = ct;
+									conn->frs.response->body->freeMime = 0;
+									sc->body = conn->frs.response->body;
+									sc->ce = header_get(conn->frs.response->headers, "Content-Encoding") != NULL;
+									sc->code = conn->frs.response->code;
+									sc->headers = conn->frs.response->headers;
+									sc->rp = conn->frs.request->path;
+									if (conn->frs.response->body == NULL) {
+										sc->etag[0] = '\"';
+										memset(sc->etag + 1, '0', 32);
+										sc->etag[33] = '\"';
+										sc->etag[34] = 0;
+									} else {
+										struct md5_ctx md5ctx;
+										md5_init(&md5ctx);
+										md5_update(&md5ctx, conn->frs.response->body->len, conn->frs.response->body->data);
+										unsigned char rawmd5[16];
+										md5_digest(&md5ctx, 16, rawmd5);
+										sc->etag[34] = 0;
+										sc->etag[0] = '\"';
+										for (int i = 0; i < 16; i++) {
+											snprintf(sc->etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
+										}
+										sc->etag[33] = '\"';
+									}
+									header_setoradd(conn->frs.response->headers, "ETag", sc->etag);
+									addSCache(&conn->frs.request->vhost->sub.rproxy.cache, sc);
+									patc = 1;
+									conn->frs.response->fromCache = sc;
+								} else {
+									conn->frs.request->atc = 0;
+								}
+								if (!ib && !patc) {
+									struct body* body = xmalloc(sizeof(struct body));
+									conn->frs.response->fromCache->body = body;
+									body->data = conn->staticStreamCacheBuffer;
+									conn->staticStreamCacheBuffer = NULL;
+									body->len = conn->sscbl;
+									body->stream_type = -1;
+									body->stream_fd = -1;
+									body->mime_type = ct;
+									body->freeMime = 0;
+								}
+							}
+							if (conn->stream_md5 != NULL) {
+								unsigned char rawmd5[16];
+								md5_digest(conn->stream_md5, 16, rawmd5);
+								xfree(conn->stream_md5);
+								conn->stream_md5 = NULL;
+								for (int i = 0; i < 16; i++) {
+									snprintf(conn->frs.response->fromCache->etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
+								}
+								header_setoradd(conn->frs.response->fromCache->headers, "ETag", conn->frs.response->fromCache->etag);
+							}
+							conn->stream_type = -1;
+							conn->streamed = 0;
+							freeReqsess(conn->frs);
+							pop_queue(conn->fwqueue, NULL);
+							se = 1;
+						}
+					} else if (conn->stream_type == 1) { // chunked already
+
+					}
+					if (!se) goto pc;
+				}
+				for (int x = (ct == 0 ? conn->readBuffer_checked : (ct == 1 ? conn->fw_readBuffer_checked : 0)); x < (ct == 0 ? conn->readBuffer_size : (ct == 1 ? conn->fw_readBuffer_size : 0)); x++) {
+					if (readBuffer[x] == tm[ml]) {
 						ml++;
 						if (ml == 4) {
 							unsigned char* reqd = xmalloc(x + 2);
-							memcpy(reqd, conns[i]->readBuffer, x + 1);
+							memcpy(reqd, readBuffer, x + 1);
 							reqd[x + 1] = 0;
-							conns[i]->readBuffer_size -= x + 1;
-							conns[i]->readBuffer_checked = 0;
-							memmove(conns[i]->readBuffer, conns[i]->readBuffer + x + 1, conns[i]->readBuffer_size);
+							if (ct == 0) {
+								conn->readBuffer_size -= x + 1;
+								conn->readBuffer_checked = 0;
+							} else if (ct == 1) {
+								conn->fw_readBuffer_size -= x + 1;
+								conn->fw_readBuffer_checked = 0;
+							}
+							memmove(readBuffer, readBuffer + x + 1, ct == 0 ? conn->readBuffer_size : (ct == 1 ? conn->fw_readBuffer_size : 0));
 							struct timespec stt;
 							clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
-							struct request* req = xmalloc(sizeof(struct request));
-							if (parseRequest(req, (char*) reqd, param->maxPost) < 0) {
-								errlog(param->logsess, "Malformed Request!");
-								xfree(req);
-								xfree(reqd);
-								closeConn(param, conns[i]);
-								goto cont;
+
+							if (ct == 0) {
+								struct request* req = xmalloc(sizeof(struct request));
+								if (parseRequest(req, (char*) reqd, param->maxPost) < 0) {
+									errlog(param->logsess, "Malformed Request!");
+									xfree(req);
+									xfree(reqd);
+									closeConn(param, conn);
+									goto cont;
+								}
+								if (req->body != NULL) {
+									conn->reqPosting = req;
+									conn->postLeft = req->body->len;
+									goto reqp;
+								}
+								handleRequest(fds[i].fd, &stt, conn, param, req);
+							} else if (ct == 1) {
+								struct reqsess rs;
+								peek_queue(conn->fwqueue, &rs);
+								if (parseResponse(rs, (char*) reqd) < 0) {
+									errlog(param->logsess, "Malformed Response!");
+									xfree(rs.response);
+									xfree(reqd);
+									closeConn(param, conn);
+									goto cont;
+								}
+								if (rs.response->body != NULL) {
+									rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
+									rs.response->body->freeMime = 0;
+								}
+								sendReqsess(rs, rs.sender->fd, &stt);
+								if (rs.response->body != NULL && rs.response->body->stream_type >= 0) {
+									conn->stream_fd = rs.response->body->stream_fd;
+									conn->stream_type = rs.response->body->stream_type;
+									conn->stream_len = rs.response->body->len;
+									conn->frs = rs;
+									goto sin;
+								} else {
+									conn->stream_type = -1;
+									pop_queue(conn->fwqueue, NULL);
+									freeReqsess(rs);
+								}
 							}
-							if (req->body != NULL) {
-								conns[i]->reqPosting = req;
-								conns[i]->postLeft = req->body->len;
-								goto reqp;
-							}
-							handleRequest(fds[i].fd, &stt, conns[i], param, req);
 						}
 					} else ml = 0;
 				}
-				pc: if (conns[i] != NULL) {
-					if (conns[i]->readBuffer_size >= 10) conns[i]->readBuffer_checked = conns[i]->readBuffer_size - 10;
-					else conns[i]->readBuffer_checked = 0;
+				pc: if (conn != NULL) {
+					if (conn->readBuffer_size >= 10) conn->readBuffer_checked = conn->readBuffer_size - 10;
+					else conn->readBuffer_checked = 0;
 				}
 			}
-			if ((re & POLLOUT) == POLLOUT && conns[i] != NULL) {
-				ssize_t mtr = conns[i]->tls ? gnutls_record_send(conns[i]->session, conns[i]->writeBuffer, conns[i]->writeBuffer_size) : write(fds[i].fd, conns[i]->writeBuffer, conns[i]->writeBuffer_size);
-				if (mtr < 0 && (conns[i]->tls ? gnutls_error_is_fatal(mtr) : mtr != EAGAIN)) {
-					closeConn(param, conns[i]);
-					conns[i] = NULL;
+			if ((re & POLLOUT) == POLLOUT && conn != NULL) {
+				ssize_t mtr = conn->tls ? gnutls_record_send(conn->session, conn->writeBuffer, conn->writeBuffer_size) : write(fds[i].fd, conn->writeBuffer, conn->writeBuffer_size);
+				if (mtr < 0 && (conn->tls ? gnutls_error_is_fatal(mtr) : mtr != EAGAIN)) {
+					closeConn(param, conn);
+					conn = NULL;
 					goto cont;
 				} else if (mtr < 0) {
 					goto cont;
-				} else if (mtr < conns[i]->writeBuffer_size) {
-					memmove(conns[i]->writeBuffer, conns[i]->writeBuffer + mtr, conns[i]->writeBuffer_size - mtr);
-					conns[i]->writeBuffer_size -= mtr;
-					conns[i]->writeBuffer = xrealloc(conns[i]->writeBuffer, conns[i]->writeBuffer_size);
+				} else if (mtr < conn->writeBuffer_size) {
+					memmove(conn->writeBuffer, conn->writeBuffer + mtr, conn->writeBuffer_size - mtr);
+					conn->writeBuffer_size -= mtr;
+					conn->writeBuffer = xrealloc(conn->writeBuffer, conn->writeBuffer_size);
 				} else {
-					conns[i]->writeBuffer_size = 0;
-					xfree(conns[i]->writeBuffer);
-					conns[i]->writeBuffer = NULL;
+					conn->writeBuffer_size = 0;
+					xfree(conn->writeBuffer);
+					conn->writeBuffer = NULL;
 				}
 			}
 			if ((re & POLLERR) == POLLERR) { //TODO: probably a HUP
 				//printf("POLLERR in worker poll! This is bad!\n");
 			}
-			if ((re & POLLHUP) == POLLHUP && conns[i] != NULL) {
-				closeConn(param, conns[i]);
-				conns[i] = NULL;
+			if ((re & POLLHUP) == POLLHUP && conn != NULL) {
+				closeConn(param, conn);
+				conn = NULL;
 			}
 			if ((re & POLLNVAL) == POLLNVAL) {
 				errlog(param->logsess, "Invalid FD in worker poll! This is bad!");
 			}
 			cont: if (--cp == 0) break;
 		}
+		xfree(conns);
+		xfree(fds);
 	}
 	xfree(mbuf);
 }

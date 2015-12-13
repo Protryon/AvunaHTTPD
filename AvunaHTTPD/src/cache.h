@@ -33,4 +33,6 @@ struct scache* getSCache(struct cache* cache, char* rp, int ce);
 
 int addSCache(struct cache* cache, struct scache* scache);
 
+void delSCache(struct cache* cache, struct scache* scache);
+
 #endif /* CACHE_H_ */

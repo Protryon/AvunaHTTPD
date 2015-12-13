@@ -24,6 +24,8 @@
 #include "fcgi.h"
 #include <netinet/in.h>
 
+#include "oqueue.h"
+
 const char* getMethod(int m) {
 	if (m == METHOD_GET) {
 		return "GET";
@@ -119,16 +121,21 @@ int header_add(struct headers* headers, const char* name, const char* value) {
 		headers->names = xmalloc(sizeof(char*));
 		headers->values = xmalloc(sizeof(char*));
 	} else {
-		headers->names = xrealloc(headers->names, sizeof(char*) * headers->count);
 		headers->values = xrealloc(headers->values, sizeof(char*) * headers->count);
+		headers->names = xrealloc(headers->names, sizeof(char*) * headers->count);
 	}
 	int cdl = strlen(name) + 1;
 	int vl = strlen(value) + 1;
 	headers->names[headers->count - 1] = xmalloc(cdl);
 	headers->values[headers->count - 1] = xmalloc(vl);
 	memcpy(headers->names[headers->count - 1], name, cdl);
-	memcpy(headers->values[headers->count - 1], value, vl); // TODO: after a req or two, something here is causing corruption.
+	memcpy(headers->values[headers->count - 1], value, vl);
 	return 0;
+}
+
+int header_tryadd(struct headers* headers, const char* name, const char* value) {
+	if (header_get(headers, name) != NULL) return 1;
+	return header_add(headers, name, value);
 }
 
 int header_setoradd(struct headers* headers, const char* name, const char* value) {
@@ -137,10 +144,13 @@ int header_setoradd(struct headers* headers, const char* name, const char* value
 	return r;
 }
 
-int parseHeaders(struct headers* headers, char* data) {
-	headers->names = NULL;
-	headers->values = NULL;
-	headers->count = 0;
+//modes are 0 for clear, 1 for append, 2 for weak, 3 for append/weak
+int parseHeaders(struct headers* headers, char* data, int mode) {
+	if ((mode & 1) == 0) {
+		headers->names = NULL;
+		headers->values = NULL;
+		headers->count = 0;
+	}
 	char* cd = data;
 	while (cd != NULL) {
 		char* eol = strchr(cd, '\n');
@@ -156,7 +166,11 @@ int parseHeaders(struct headers* headers, char* data) {
 		value++;
 		cd = trim(cd);
 		value = trim(value);
-		header_add(headers, cd, value);
+		if (mode & 2 == 0) {
+			header_add(headers, cd, value);
+		} else {
+			header_tryadd(headers, cd, value);
+		}
 		cd = eol + 1;
 	}
 	return 0;
@@ -165,7 +179,7 @@ int parseHeaders(struct headers* headers, char* data) {
 char* serializeHeaders(struct headers* headers, size_t* len) {
 	*len = 0;
 	if (headers->count == 0) {
-		return "";
+		return NULL;
 	}
 	for (int i = 0; i < headers->count; i++) {
 		*len += strlen(headers->names[i]) + strlen(headers->values[i]) + 4;
@@ -244,10 +258,10 @@ int parseRequest(struct request* request, char* data, size_t maxPost) {
 	request->headers->count = 0;
 	request->headers->names = NULL;
 	request->headers->values = NULL;
-	parseHeaders(request->headers, cd);
+	parseHeaders(request->headers, cd, 0);
 	request->body = NULL;
 	xfree(data);
-	char* cl = header_get(request->headers, "Content-Length");
+	const char* cl = header_get(request->headers, "Content-Length");
 	if (request->method == METHOD_POST && cl != NULL && strisunum(cl)) {
 		long int cli = atol(cl);
 		if (maxPost == 0 || cli < maxPost) {
@@ -256,22 +270,93 @@ int parseRequest(struct request* request, char* data, size_t maxPost) {
 			request->body->data = xmalloc(cli);
 			request->body->mime_type = "application/x-www-form-urlencoded";
 			request->body->freeMime = 0;
-			request->body->readd = NULL;
 			request->body->stream_fd = -1;
 			request->body->stream_type = -1;
-			request->body->stream_len = 0;
 		}
 	}
 	return 0;
 }
 
-unsigned char* serializeRequest(struct request* request, size_t* len) {
-
+unsigned char* serializeRequest(struct reqsess rs, size_t* len) {
+	*len = 0;
+	const char* ms = getMethod(rs.request->method);
+	size_t vl = strlen(ms);
+	size_t cl = strlen(rs.request->path);
+	size_t rvl = strlen(rs.request->version);
+	*len = vl + 1 + cl + 1 + rvl + 2;
+	size_t hl = 0;
+	char* headers = serializeHeaders(rs.request->headers, &hl);
+	*len += hl;
+	if (rs.response->body != NULL) *len += rs.response->body->len;
+	unsigned char* ret = xmalloc(*len);
+	size_t wr = 0;
+	memcpy(ret, ms, vl);
+	wr += vl;
+	ret[wr++] = ' ';
+	memcpy(ret + wr, rs.request->path, cl);
+	wr += cl;
+	ret[wr++] = ' ';
+	memcpy(ret + wr, rs.request->version, rvl);
+	wr += rvl;
+	ret[wr++] = '\r';
+	ret[wr++] = '\n';
+	memcpy(ret + wr, headers, hl);
+	wr += hl;
+	xfree(headers);
+	if (rs.request->method == METHOD_POST && rs.request->body != NULL) {
+		memcpy(ret + wr, rs.response->body->data, rs.response->body->len);
+		wr += rs.response->body->len;
+	}
+	return ret;
 }
 
-int parseResponse(struct response* response, char* data) {
-
+int parseResponse(struct reqsess rs, char* data) {
+	rs.response->parsed = 1;
+	char* cd = data;
+	char* eol1 = strchr(cd, '\n');
+	if (eol1 == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	eol1[0] = 0;
+	char* hdrs = eol1 + 1;
+	eol1 = strchr(cd, ' ');
+	if (eol1 == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	eol1[0] = 0;
+	eol1++;
+	rs.response->version = xstrdup(cd, 0);
+	size_t eols = strlen(eol1);
+	if (eol1[eols - 1] == '\r') eol1[eols - 1] = 0;
+	rs.response->code = xstrdup(eol1, 0);
+	parseHeaders(rs.response->headers, hdrs, 3);
 	xfree(data);
+	const char* cl = header_get(rs.response->headers, "Content-Length");
+	if (cl != NULL && strisunum(cl)) {
+		size_t cli = atol(cl);
+		rs.response->body = xmalloc(sizeof(struct body));
+		rs.response->body->len = cli;
+		rs.response->body->data = NULL;
+		rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
+		if (rs.response->body->mime_type == NULL) rs.response->body->mime_type = "text/html";
+		rs.response->body->freeMime = 0;
+		rs.response->body->stream_fd = rs.sender->fw_fd;
+		rs.response->body->stream_type = 0;
+	}
+	const char* te = header_get(rs.response->headers, "Transfer-Encoding");
+	if (te != NULL) {
+		if (rs.response->body != NULL) xfree(rs.response->body);
+		rs.response->body = xmalloc(sizeof(struct body));
+		rs.response->body->len = 0;
+		rs.response->body->data = NULL;
+		rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
+		if (rs.response->body->mime_type == NULL) rs.response->body->mime_type = "text/html";
+		rs.response->body->freeMime = 0;
+		rs.response->body->stream_fd = rs.sender->fw_fd;
+		rs.response->body->stream_type = 1;
+	}
 	return 0;
 }
 
@@ -283,7 +368,7 @@ unsigned char* serializeResponse(struct reqsess rs, size_t* len) {
 	size_t hl = 0;
 	char* headers = serializeHeaders(rs.response->headers, &hl);
 	*len += hl;
-	if (rs.response->body != NULL) *len += rs.response->body->len;
+	if (rs.response->body != NULL && rs.response->body->stream_type < 0) *len += rs.response->body->len;
 	unsigned char* ret = xmalloc(*len);
 	size_t wr = 0;
 	memcpy(ret, rs.response->version, vl);
@@ -296,7 +381,7 @@ unsigned char* serializeResponse(struct reqsess rs, size_t* len) {
 	memcpy(ret + wr, headers, hl);
 	wr += hl;
 	xfree(headers);
-	if (rs.request->method != METHOD_HEAD && rs.response->body != NULL) {
+	if (rs.request->method != METHOD_HEAD && rs.response->body != NULL && rs.response->body->stream_type < 0) {
 		memcpy(ret + wr, rs.response->body->data, rs.response->body->len);
 		wr += rs.response->body->len;
 	}
@@ -314,10 +399,8 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 	size_t len = 120 + ml + (2 * cl);
 	rs.response->body->len = len;
 	rs.response->body->mime_type = "text/html";
-	rs.response->body->readd = NULL;
 	rs.response->body->stream_fd = -1;
 	rs.response->body->stream_type = -1;
-	rs.response->body->stream_len = 0;
 	rs.response->body->data = xmalloc(len);
 	static char* d1 = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\"><html><head><title>";
 	size_t d1s = strlen(d1);
@@ -355,6 +438,7 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 }
 
 int generateResponse(struct reqsess rs) {
+	int eh = 1;
 	rs.response->version = "HTTP/1.1";
 	rs.response->code = "200 OK";
 	rs.response->headers->count = 0;
@@ -375,6 +459,7 @@ int generateResponse(struct reqsess rs) {
 		}
 		if (vh != NULL) break;
 	}
+	rs.request->vhost = vh;
 	jpvh: ;
 	char svr[16];
 	strcpy(svr, "Avuna/");
@@ -382,11 +467,12 @@ int generateResponse(struct reqsess rs) {
 	header_add(rs.response->headers, "Server", svr);
 	rs.response->body = NULL;
 	header_add(rs.response->headers, "Connection", "keep-alive");
+	int rp = 0;
 	if (vh == NULL) {
 		rs.response->code = "500 Internal Server Error";
 		generateDefaultErrorPage(rs, NULL, "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
 	} else if (vh->type == VHOST_HTDOCS || vh->type == VHOST_RPROXY) {
-		int rp = vh->type == VHOST_RPROXY;
+		rp = vh->type == VHOST_RPROXY;
 		int isStatic = 1;
 		size_t htdl = rp ? 0 : strlen(vh->sub.htdocs.htdocs);
 		size_t pl = strlen(rs.request->path);
@@ -401,12 +487,12 @@ int generateResponse(struct reqsess rs) {
 		char* rtp = NULL;
 		struct scache* osc = getSCache(&vh->sub.htdocs.cache, rs.request->path, contains_nocase(header_get(rs.request->headers, "Accept-Encoding"), "gzip"));
 		if (osc != NULL) {
-			rs.response->atc = 1;
 			rs.response->body = osc->body;
 			if (rs.response->headers->count > 0) for (int i = 0; i < rs.response->headers->count; i++) {
 				xfree(rs.response->headers->names[i]);
 				xfree(rs.response->headers->values[i]);
 			}
+			rs.request->atc = 1;
 			if (rs.response->headers->names != NULL) xfree(rs.response->headers->names);
 			if (rs.response->headers->values != NULL) xfree(rs.response->headers->values);
 			rs.response->headers->count = osc->headers->count;
@@ -498,7 +584,7 @@ int generateResponse(struct reqsess rs) {
 		}
 		//TODO: overrides
 		if (rp) {
-			if (rs.sender->fw_fd < 0) {
+			resrp: if (rs.sender->fw_fd < 0) {
 				rs.sender->fw_fd = socket(vh->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
 				if (rs.sender->fw_fd < 0 || connect(rs.sender->fw_fd, vh->sub.rproxy.fwaddr, vh->sub.rproxy.fwaddrlen) < 0) {
 					errlog(rs.wp->logsess, "Failed to create/connect to forwarding socket: %s", strerror(errno));
@@ -506,8 +592,26 @@ int generateResponse(struct reqsess rs) {
 					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 					goto epage;
 				}
-
 			}
+			size_t sreql = 0;
+			unsigned char* sreq = serializeRequest(rs, &sreql);
+			size_t wr = 0;
+			while (wr < sreql) {
+				int x = write(rs.sender->fw_fd, sreq + wr, sreql - wr);
+				if (x < 1) {
+					close(rs.sender->fw_fd);
+					rs.sender->fw_fd = -1;
+					goto resrp;
+				}
+				wr += x;
+			}
+			xfree(sreq);
+			if (rs.sender->fwqueue == NULL) {
+				rs.sender->fwqueue = new_queue(0, sizeof(struct reqsess));
+			}
+			rs.sender->fwed = 1;
+			eh = 0;
+			add_queue(rs.sender->fwqueue, &rs);
 		} else {
 			rs.response->body = xmalloc(sizeof(struct body));
 			rs.response->body->len = 0;
@@ -515,12 +619,10 @@ int generateResponse(struct reqsess rs) {
 			const char* ext = strrchr(rtp, '.');
 			rs.response->body->mime_type = ext == NULL ? "application/octet-stream" : getMimeForExt(ext + 1);
 			rs.response->body->freeMime = 0;
-			rs.response->body->readd = NULL;
 			rs.response->body->stream_fd = -1;
 			rs.response->body->stream_type = -1;
-			rs.response->body->stream_len = 0;
 		}
-		if (vh->sub.htdocs.maxAge > 0) {
+		if (vh->sub.htdocs.maxAge > 0 && rs.response->body != NULL) {
 			int dcc = 0;
 			for (int i = 0; i < vh->sub.htdocs.cacheType_count; i++) {
 				if (streq_nocase(vh->sub.htdocs.cacheTypes[i], rs.response->body->mime_type)) {
@@ -547,9 +649,6 @@ int generateResponse(struct reqsess rs) {
 				ccbuf[8 + snr] = 0;
 			}
 			header_add(rs.response->headers, "Cache-Control", ccbuf);
-		}
-		if (rp) { // TODO: check if static
-
 		}
 		if (!rp && rs.response->body != NULL && rs.response->body->mime_type != NULL) for (int i = 0; i < vh->sub.htdocs.fcgi_count; i++) {
 			struct fcgi* fcgi = vh->sub.htdocs.fcgis[i];
@@ -756,7 +855,7 @@ int generateResponse(struct reqsess rs) {
 						} else if (hd == 1) {
 							hd = 2;
 							struct headers hdrs;
-							parseHeaders(&hdrs, hdd);
+							parseHeaders(&hdrs, hdd, 0);
 							for (int i = 0; i < rs.request->headers->count; i++) {
 								const char* name = rs.request->headers->names[i];
 								const char* value = rs.request->headers->values[i];
@@ -775,10 +874,8 @@ int generateResponse(struct reqsess rs) {
 								rs.response->body->len = ff.len;
 								rs.response->body->mime_type = ct == NULL ? "text/html" : ct;
 								rs.response->body->freeMime = ct == NULL ? 0 : 1;
-								rs.response->body->readd = NULL;
 								rs.response->body->stream_fd = -1;
 								rs.response->body->stream_type = -1;
-								rs.response->body->stream_len = 0;
 							} else {
 								rs.response->body->len += ff.len;
 								rs.response->body->data = xrealloc(rs.response->body->data, rs.response->body->len);
@@ -818,7 +915,7 @@ int generateResponse(struct reqsess rs) {
 		char etag[35];
 		int hetag = 0;
 		int nm = 0;
-		if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
+		if (!rp && rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
 			struct md5_ctx md5ctx;
 			md5_init(&md5ctx);
 			md5_update(&md5ctx, rs.response->body->len, rs.response->body->data);
@@ -842,8 +939,9 @@ int generateResponse(struct reqsess rs) {
 				}
 			}
 		}
-		int wgz = 0;
-		if (rs.response->body != NULL && rs.response->body->len > 1024 && header_get(rs.response->headers, "Content-Encoding") == NULL) {
+		const char* cce = header_get(rs.response->headers, "Content-Encoding");
+		int wgz = streq(cce, "gzip");
+		if (rs.response->body != NULL && rs.response->body->len > 1024 && cce == NULL) {
 			const char* accenc = header_get(rs.request->headers, "Accept-Encoding");
 			if (contains_nocase(accenc, "gzip")) {
 				z_stream strm;
@@ -888,37 +986,51 @@ int generateResponse(struct reqsess rs) {
 			}
 		}
 		pgzip: if (isStatic && vh->sub.htdocs.scacheEnabled) {
-			struct scache* sc = xmalloc(sizeof(struct scache));
-			sc->body = rs.response->body;
-			sc->ce = wgz;
-			sc->code = rs.response->code;
-			if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
-			char l[16];
-			if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
-			header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
-			sc->headers = rs.response->headers;
-			sc->rp = rs.request->path;
-			if (!hetag) {
-				struct md5_ctx md5ctx;
-				md5_init(&md5ctx);
-				md5_update(&md5ctx, rs.response->body->len, rs.response->body->data);
-				unsigned char rawmd5[16];
-				md5_digest(&md5ctx, 16, rawmd5);
-				hetag = 1;
-				etag[34] = 0;
-				etag[0] = '\"';
-				for (int i = 0; i < 16; i++) {
-					snprintf(etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
+			if (rp) {
+				rs.request->atc = 1;
+			} else {
+				struct scache* sc = xmalloc(sizeof(struct scache));
+				sc->body = rs.response->body;
+				sc->ce = wgz;
+				sc->code = rs.response->code;
+				if (eh) {
+					if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
+					char l[16];
+					if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
+					header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
 				}
-				etag[33] = '\"';
-			}
-			memcpy(sc->etag, etag, 35);
-			addSCache(&vh->sub.htdocs.cache, sc);
-			rs.response->atc = 1;
-			rs.request->atc = 1;
-			if (nm) {
-				rs.response->body = NULL;
-				rs.response->code = "304 Not Modified";
+				sc->headers = rs.response->headers;
+				sc->rp = rs.request->path;
+				if (!hetag) {
+					if (rs.response->body == NULL) {
+						hetag = 1;
+						etag[0] = '\"';
+						memset(etag + 1, '0', 32);
+						etag[33] = '\"';
+						etag[34] = 0;
+					} else {
+						struct md5_ctx md5ctx;
+						md5_init(&md5ctx);
+						md5_update(&md5ctx, rs.response->body->len, rs.response->body->data);
+						unsigned char rawmd5[16];
+						md5_digest(&md5ctx, 16, rawmd5);
+						hetag = 1;
+						etag[34] = 0;
+						etag[0] = '\"';
+						for (int i = 0; i < 16; i++) {
+							snprintf(etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
+						}
+						etag[33] = '\"';
+					}
+				}
+				memcpy(sc->etag, etag, 35);
+				addSCache(&vh->sub.htdocs.cache, sc);
+				rs.response->fromCache = sc;
+				rs.request->atc = 1;
+				if (nm) {
+					rs.response->body = NULL;
+					rs.response->code = "304 Not Modified";
+				}
 			}
 		}
 		pcacheadd:
@@ -957,9 +1069,11 @@ int generateResponse(struct reqsess rs) {
 	}
 	pvh:
 //body stuff
-	if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
-	char l[16];
-	if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
-	header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
+	if (eh && !rp && rs.response->body != NULL) {
+		if (rs.response->body->mime_type != NULL) if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
+		char l[16];
+		if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
+		header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
+	}
 	return 0;
 }

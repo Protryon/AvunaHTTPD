@@ -5,8 +5,8 @@
  *      Author: root
  */
 
-#ifndef QUEUE_H_
-#define QUEUE_H_
+#ifndef OQUEUE_H_
+#define OQUEUE_H_
 
 #include <pthread.h>
 
@@ -33,4 +33,6 @@ int add_queue(struct queue* queue, void* data);
 
 int pop_queue(struct queue* queue, void* data);
 
-#endif /* QUEUE_H_ */
+int peek_queue(struct queue* queue, void* data);
+
+#endif /* OQUEUE_H_ */

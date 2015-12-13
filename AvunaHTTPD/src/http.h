@@ -39,9 +39,11 @@ int header_set(struct headers* headers, const char* name, const char* value);
 
 int header_add(struct headers* headers, const char* name, const char* value);
 
+int header_tryadd(struct headers* headers, const char* name, const char* value);
+
 int header_setoradd(struct headers* headers, const char* name, const char* value);
 
-int parseHeaders(struct headers* headers, char* data);
+int parseHeaders(struct headers* headers, char* data, int mode);
 char* serializeHeaders(struct headers* headers, size_t* len);
 
 void freeHeaders(struct headers* headers);
@@ -53,8 +55,6 @@ struct body {
 		unsigned char* data;
 		int stream_fd;
 		int stream_type;
-		size_t stream_len;
-		struct work_param* readd;
 };
 
 struct request {
@@ -64,20 +64,22 @@ struct request {
 		struct headers* headers;
 		struct body* body; // may be NULL
 		int atc;
+		struct vhost* vhost;
 };
 
 int parseRequest(struct request* request, char* data, size_t maxPost);
-unsigned char* serializeRequest(struct request* request, size_t* len);
+unsigned char* serializeRequest(struct reqsess rs, size_t* len);
 
 struct response {
 		char* version;
 		char* code;
 		struct headers* headers;
 		struct body* body; // may be NULL
-		int atc;
+		int parsed;
+		struct scache* fromCache;
 };
 
-int parseResponse(struct response* response, char* data);
+int parseResponse(struct reqsess rs, char* data);
 unsigned char* serializeResponse(struct reqsess rs, size_t* len);
 
 int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* msg);

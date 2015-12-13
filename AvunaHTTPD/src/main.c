@@ -606,6 +606,15 @@ int main(int argc, char* argv[]) {
 				}
 			} else if (cv->type == VHOST_RPROXY) {
 				struct vhost_rproxy* vhb = &cv->sub.rproxy;
+				vhb->cache.scache_size = 0;
+				vhb->cache.scaches = NULL;
+				vhb->enableGzip = 1;
+				vhb->cacheTypes = NULL;
+				vhb->cacheType_count = 0;
+				vhb->maxAge = 604800;
+				if (pthread_rwlock_init(&vhb->cache.scachelock, NULL)) {
+					errlog(slog, "Error initializing scachelock! %s", strerror(errno));
+				}
 				const char* fmode = getConfigValue(vcn, "forward-mode");
 				if (streq_nocase(fmode, "tcp")) {
 					vhb->fwaddrlen = sizeof(struct sockaddr_in);

@@ -5,7 +5,8 @@
  *      Author: root
  */
 
-#include "queue.h"
+#include "oqueue.h"
+
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
@@ -82,23 +83,23 @@ int add_queue(struct queue* queue, void* data) {
 	if (queue->size == queue->rc && queue->capacity == 0) {
 		queue->rc++;
 		queue->data = xrealloc(queue->data, queue->rc * queue->dsize);
-		pthread_mutex_unlock(&queue->data_mutex);
-	} else {
+	} else if (queue->capacity > 0) {
 		pthread_mutex_unlock(&queue->data_mutex);
 		pthread_mutex_lock(&queue->in_mutex);
 		while (queue->size == queue->capacity) {
 			pthread_cond_wait(&queue->in_cond, &queue->in_mutex);
 		}
 		pthread_mutex_unlock(&queue->in_mutex);
+		pthread_mutex_lock(&queue->data_mutex);
 	}
-	pthread_mutex_lock(&queue->data_mutex);
 	void* nl = queue->data;
 	int ix = queue->end;
 	nl += ix * queue->dsize;
 	memcpy(nl, data, queue->dsize);
 	queue->end++;
-	if (queue->end >= queue->capacity) {
-		queue->end -= queue->capacity;
+	size_t lrc = queue->capacity == 0 ? queue->rc : queue->capacity;
+	if (queue->end >= lrc) {
+		queue->end -= lrc;
 	}
 	queue->size++;
 	pthread_mutex_unlock(&queue->data_mutex);
@@ -115,13 +116,26 @@ int pop_queue(struct queue* queue, void* data) {
 	pthread_mutex_lock(&queue->data_mutex);
 	void* nl = queue->data;
 	nl += queue->start * queue->dsize;
-	memcpy(data, nl, queue->dsize);
+	if (data != NULL) memcpy(data, nl, queue->dsize);
 	queue->start++;
-	if (queue->start >= queue->capacity) {
-		queue->start -= queue->capacity;
+	size_t lrc = queue->capacity == 0 ? queue->rc : queue->capacity;
+	if (queue->start >= lrc) {
+		queue->start -= lrc;
 	}
 	queue->size--;
 	pthread_mutex_unlock(&queue->data_mutex);
 	pthread_cond_signal(&queue->in_cond);
+	return 0;
+}
+
+int peek_queue(struct queue* queue, void* data) {
+	if (queue->size == 0) {
+		return -1;
+	}
+	pthread_mutex_lock(&queue->data_mutex);
+	void* nl = queue->data;
+	nl += queue->start * queue->dsize;
+	memcpy(data, nl, queue->dsize);
+	pthread_mutex_unlock(&queue->data_mutex);
 	return 0;
 }

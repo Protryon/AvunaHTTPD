@@ -43,7 +43,20 @@ void run_accept(struct accept_param* param) {
 		c->reqPosting = NULL;
 		c->handshaked = 0;
 		c->fw_fd = -1;
-		c->fwc = 1;
+		c->fwqueue = NULL;
+		c->fwed = 0;
+		c->fw_readBuffer = NULL;
+		c->fw_readBuffer_size = 0;
+		c->fw_readBuffer_checked = 0;
+		c->fw_tls = 0;
+		c->fw_handshaked = 0;
+		c->stream_type = -1;
+		c->stream_fd = -1;
+		c->stream_len = 0;
+		c->streamed = 0;
+		c->stream_md5 = NULL;
+		c->sscbl = 0;
+		c->staticStreamCacheBuffer = NULL;
 		if (param->cert != NULL) {
 			gnutls_init(&c->session, GNUTLS_SERVER | GNUTLS_NONBLOCK);
 			gnutls_priority_set(c->session, param->cert->priority);
