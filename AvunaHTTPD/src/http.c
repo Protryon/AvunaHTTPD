@@ -23,6 +23,7 @@
 #include "cache.h"
 #include "fcgi.h"
 #include <netinet/in.h>
+#include "vhost.h"
 
 #include "oqueue.h"
 
@@ -439,7 +440,7 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 
 int generateResponse(struct reqsess rs) {
 	int eh = 1;
-	rs.response->version = "HTTP/1.1";
+	rs.response->version = rs.request->version;
 	rs.response->code = "200 OK";
 	rs.response->headers->count = 0;
 	rs.response->headers->names = NULL;
@@ -461,10 +462,14 @@ int generateResponse(struct reqsess rs) {
 	}
 	rs.request->vhost = vh;
 	jpvh: ;
-	char svr[16];
-	strcpy(svr, "Avuna/");
-	strcat(svr, VERSION);
-	header_add(rs.response->headers, "Server", svr);
+	const char* upg = header_get(rs.request->headers, "Upgrade");
+	if (!streq(rs.response->version, "HTTP/2.0")) {
+		if (upg != NULL && streq(upg, "h2")) {
+			//header_set(rs.response->headers, "Upgrade", "h2");
+			//printf("upgrade: %s\n", header_get(rs.response->headers, "HTTP2-Settings"));
+		}
+	}
+	header_add(rs.response->headers, "Server", "Avuna/" VERSION);
 	rs.response->body = NULL;
 	header_add(rs.response->headers, "Connection", "keep-alive");
 	int rp = 0;

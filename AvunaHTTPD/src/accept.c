@@ -57,6 +57,10 @@ void run_accept(struct accept_param* param) {
 		c->stream_md5 = NULL;
 		c->sscbl = 0;
 		c->staticStreamCacheBuffer = NULL;
+		c->proto = PROTO_HTTP1;
+		c->http2_stream = NULL;
+		c->http2_stream_size = 0;
+		c->nextStream = 2;
 		if (param->cert != NULL) {
 			gnutls_init(&c->session, GNUTLS_SERVER | GNUTLS_NONBLOCK);
 			gnutls_priority_set(c->session, param->cert->priority);

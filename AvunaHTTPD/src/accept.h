@@ -17,15 +17,24 @@
 #include <gnutls/gnutls.h>
 #include "oqueue.h"
 #include "http.h"
+#include <stdint.h>
 
 struct accept_param {
 		int server_fd;
 		int port;
 		struct cnode* config;
-		int works_count;
+		size_t works_count;
 		struct work_param** works;
 		struct logsess* logsess;
 		struct cert* cert;
+};
+
+struct http2_stream {
+		uint32_t id;
+		unsigned char* http2_dataBuffer;
+		size_t http2_dataBuffer_size;
+		unsigned char* http2_headerBuffer;
+		size_t http2_headerBuffer_size;
 };
 
 struct conn {
@@ -59,6 +68,10 @@ struct conn {
 		struct md5_ctx* stream_md5;
 		size_t sscbl;
 		unsigned char* staticStreamCacheBuffer;
+		int proto;
+		struct http2_stream** http2_stream;
+		size_t http2_stream_size;
+		size_t nextStream;
 };
 
 void run_accept(struct accept_param* param);

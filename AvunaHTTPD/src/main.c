@@ -32,6 +32,7 @@
 #include <gnutls/gnutls.h>
 #include "tls.h"
 #include "http.h"
+#include "vhost.h"
 
 int main(int argc, char* argv[]) {
 	if (getuid() != 0 || getgid() != 0) {
@@ -204,6 +205,11 @@ int main(int argc, char* argv[]) {
 			continue;
 		}
 		int tc = atoi(tcc);
+		if (tc < 1) {
+			if (serv->id != NULL) errlog(delog, "Invalid threads for server: %s, must be greater than 1.\n", serv->id);
+			else errlog(delog, "Invalid threads for server, must be greater than 1.\n");
+			continue;
+		}
 		const char* mcc = getConfigValue(serv, "max-conn");
 		if (!strisunum(mcc)) {
 			if (serv->id != NULL) errlog(delog, "Invalid max-conn for server: %s\n", serv->id);
@@ -800,6 +806,7 @@ int main(int argc, char* argv[]) {
 		if (c != 0) {
 			if (servs[i]->id != NULL) errlog(delog, "Error creating thread: pthread errno = %i, server %s is shutting down.", c, servs[i]->id);
 			else errlog(delog, "Error creating thread: pthread errno = %i, server is shutting down.", c);
+			close(aps[i]->server_fd);
 		}
 	}
 	while (sr > 0)
