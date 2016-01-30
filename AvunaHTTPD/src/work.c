@@ -644,6 +644,19 @@ void run_work(struct work_param* param) {
 				errlog(param->logsess, "Invalid connection type! %i", conns[i].type);
 				continue;
 			}
+			if ((re & POLLERR) == POLLERR) { //TODO: probably a HUP
+				//printf("POLLERR in worker poll! This is bad!\n");
+				goto cont;
+			}
+			if ((re & POLLHUP) == POLLHUP && conn != NULL) {
+				closeConn(param, conn);
+				conn = NULL;
+				goto cont;
+			}
+			if ((re & POLLNVAL) == POLLNVAL) {
+				errlog(param->logsess, "Invalid FD in worker poll! This is bad!");
+				goto cont;
+			}
 			if (ct == 0 && conn->tls && !conn->handshaked) {
 				int r = gnutls_handshake(conn->session);
 				if (gnutls_error_is_fatal(r)) {
@@ -791,16 +804,6 @@ void run_work(struct work_param* param) {
 					xfree(conn->writeBuffer);
 					conn->writeBuffer = NULL;
 				}
-			}
-			if ((re & POLLERR) == POLLERR) { //TODO: probably a HUP
-				//printf("POLLERR in worker poll! This is bad!\n");
-			}
-			if ((re & POLLHUP) == POLLHUP && conn != NULL) {
-				closeConn(param, conn);
-				conn = NULL;
-			}
-			if ((re & POLLNVAL) == POLLNVAL) {
-				errlog(param->logsess, "Invalid FD in worker poll! This is bad!");
 			}
 			cont: if (--cp == 0) break;
 		}
