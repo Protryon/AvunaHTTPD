@@ -789,7 +789,7 @@ void run_work(struct work_param* param) {
 			}
 			if ((re & POLLOUT) == POLLOUT && conn != NULL) {
 				ssize_t mtr = conn->tls ? gnutls_record_send(conn->session, conn->writeBuffer, conn->writeBuffer_size) : write(fds[i].fd, conn->writeBuffer, conn->writeBuffer_size);
-				if (mtr < 0 && (conn->tls ? gnutls_error_is_fatal(mtr) : mtr != EAGAIN)) {
+				if (mtr < 0 && (conn->tls ? gnutls_error_is_fatal(mtr) : errno != EAGAIN)) {
 					closeConn(param, conn);
 					conn = NULL;
 					goto cont;
