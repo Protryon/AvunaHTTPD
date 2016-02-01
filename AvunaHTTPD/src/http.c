@@ -730,15 +730,17 @@ int generateResponse(struct reqsess rs) {
 				{
 					char tip[48];
 					char* mip = NULL;
-					if (rs.sender->addr.sa_family == AF_INET) {
+					if (rs.sender->addr.sin6_family == AF_INET) {
 						struct sockaddr_in *sip4 = (struct sockaddr_in*) &rs.sender->addr;
 						mip = tip;
 						inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
-					} else if (rs.sender->addr.sa_family == AF_INET6) {
+					} else if (rs.sender->addr.sin6_family == AF_INET6) {
 						struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &rs.sender->addr;
 						mip = tip;
-						inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
-					} else if (rs.sender->addr.sa_family == AF_LOCAL) {
+						if (memseq((unsigned char*) &sip6->sin6_addr, 10, 0) && memseq((unsigned char*) &sip6->sin6_addr + 10, 2, 0xff)) {
+							mip = inet_ntop(AF_INET, ((unsigned char*) &sip6->sin6_addr) + 12, tip, 48);
+						} else mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
+					} else if (rs.sender->addr.sin6_family == AF_LOCAL) {
 						mip = "UNIX";
 					} else {
 						mip = "UNKNOWN";
@@ -747,9 +749,9 @@ int generateResponse(struct reqsess rs) {
 					writeFCGIParam(ffd, "REMOTE_ADDR", mip);
 					writeFCGIParam(ffd, "REMOTE_HOST", mip);
 				}
-				if (rs.sender->addr.sa_family == AF_INET) {
+				if (rs.sender->addr.sin6_family == AF_INET) {
 					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in*) &rs.sender->addr)->sin_port));
-				} else if (rs.sender->addr.sa_family == AF_INET6) {
+				} else if (rs.sender->addr.sin6_family == AF_INET6) {
 					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in6*) &rs.sender->addr)->sin6_port));
 				} else {
 					cl[0] = '0';

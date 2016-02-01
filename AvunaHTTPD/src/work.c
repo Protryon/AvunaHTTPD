@@ -78,13 +78,15 @@ void sendReqsess(struct reqsess rs, int wfd, struct timespec* stt) {
 		double msp = (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt->tv_nsec / 1000000.0 + stt->tv_sec * 1000.0);
 		const char* mip = NULL;
 		char tip[48];
-		if (conn->addr.sa_family == AF_INET) {
+		if (conn->addr.sin6_family == AF_INET) {
 			struct sockaddr_in *sip4 = (struct sockaddr_in*) &conn->addr;
 			mip = inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
-		} else if (conn->addr.sa_family == AF_INET6) {
+		} else if (conn->addr.sin6_family == AF_INET6) {
 			struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &conn->addr;
-			mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
-		} else if (conn->addr.sa_family == AF_LOCAL) {
+			if (memseq((unsigned char*) &sip6->sin6_addr, 10, 0) && memseq((unsigned char*) &sip6->sin6_addr + 10, 2, 0xff)) {
+				mip = inet_ntop(AF_INET, ((unsigned char*) &sip6->sin6_addr) + 12, tip, 48);
+			} else mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
+		} else if (conn->addr.sin6_family == AF_LOCAL) {
 			mip = "UNIX";
 		} else {
 			mip = "UNKNOWN";

@@ -180,8 +180,14 @@ int main(int argc, char* argv[]) {
 		int port = -1;
 		const char* bind_file = NULL;
 		int namespace = -1;
+		int ba = 0;
+		int ip6 = 0;
 		if (streq(bind_mode, "tcp")) {
 			bind_ip = getConfigValue(serv, "bind-ip");
+			if (streq(bind_ip, "0.0.0.0")) {
+				ba = 1;
+			}
+			ip6 = ba || contains(bind_ip, ":");
 			const char* bind_port = getConfigValue(serv, "bind-port");
 			if (!strisunum(bind_port)) {
 				if (serv->id != NULL) errlog(delog, "Invalid bind-port for server: %s", serv->id);
@@ -189,7 +195,7 @@ int main(int argc, char* argv[]) {
 				continue;
 			}
 			port = atoi(bind_port);
-			namespace = PF_INET;
+			namespace = ip6 ? PF_INET6 : PF_INET;;
 		} else if (streq(bind_mode, "unix")) {
 			bind_file = getConfigValue(serv, "bind-file");
 			namespace = PF_LOCAL;
@@ -224,6 +230,7 @@ int main(int argc, char* argv[]) {
 			continue;
 		}
 		long int mp = atol(mpc);
+		sock: ;
 		int sfd = socket(namespace, SOCK_STREAM, 0);
 		if (sfd < 0) {
 			if (serv->id != NULL) errlog(delog, "Error creating socket for server: %s, %s", serv->id, strerror(errno));
@@ -231,27 +238,60 @@ int main(int argc, char* argv[]) {
 			continue;
 		}
 		int one = 1;
+		int zero = zero;
 		if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one)) == -1) {
 			if (serv->id != NULL) errlog(delog, "Error setting SO_REUSEADDR for server: %s, %s", serv->id, strerror(errno));
 			else errlog(delog, "Error setting SO_REUSEADDR for server, %s", strerror(errno));
 			close (sfd);
 			continue;
 		}
-		if (namespace == PF_INET) {
-			struct sockaddr_in bip;
-			bip.sin_family = AF_INET;
-			if (!inet_aton(bind_ip, &(bip.sin_addr))) {
-				close (sfd);
-				if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, invalid bind-ip", serv->id);
-				else errlog(delog, "Error binding socket for server, invalid bind-ip");
-				continue;
-			}
-			bip.sin_port = htons(port);
-			if (bind(sfd, (struct sockaddr*) &bip, sizeof(bip))) {
-				if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, %s", serv->id, strerror(errno));
-				else errlog(delog, "Error binding socket for server, %s", strerror(errno));
-				close (sfd);
-				continue;
+		if (namespace == PF_INET || namespace == PF_INET6) {
+			if (ip6) {
+				if (setsockopt(sfd, IPPROTO_IPV6, IPV6_V6ONLY, (void*) &zero, sizeof(zero)) == -1) {
+					if (serv->id != NULL) errlog(delog, "Error unsetting IPV6_V6ONLY for server: %s, %s", serv->id, strerror(errno));
+					else errlog(delog, "Error unsetting IPV6_V6ONLY for server, %s", strerror(errno));
+					close (sfd);
+					continue;
+				}
+				struct sockaddr_in6 bip;
+				bip.sin6_flowinfo = 0;
+				bip.sin6_scope_id = 0;
+				bip.sin6_family = AF_INET6;
+				if (ba) bip.sin6_addr = in6addr_any;
+				else if (!inet_pton(AF_INET6, bind_ip, &(bip.sin6_addr))) {
+					close (sfd);
+					if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, invalid bind-ip", serv->id);
+					else errlog(delog, "Error binding socket for server, invalid bind-ip");
+					continue;
+				}
+				bip.sin6_port = htons(port);
+				if (bind(sfd, (struct sockaddr*) &bip, sizeof(bip))) {
+					close (sfd);
+					if (ba) {
+						namespace = PF_INET;
+						ip6 = 0;
+						goto sock;
+					}
+					if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, %s", serv->id, strerror(errno));
+					else errlog(delog, "Error binding socket for server, %s\n", strerror(errno));
+					continue;
+				}
+			} else {
+				struct sockaddr_in bip;
+				bip.sin_family = AF_INET;
+				if (!inet_aton(bind_ip, &(bip.sin_addr))) {
+					close (sfd);
+					if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, invalid bind-ip", serv->id);
+					else errlog(delog, "Error binding socket for server, invalid bind-ip");
+					continue;
+				}
+				bip.sin_port = htons(port);
+				if (bind(sfd, (struct sockaddr*) &bip, sizeof(bip))) {
+					if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, %s", serv->id, strerror(errno));
+					else errlog(delog, "Error binding socket for server, %s\n", strerror(errno));
+					close (sfd);
+					continue;
+				}
 			}
 		} else if (namespace == PF_LOCAL) {
 			struct sockaddr_un uip;
@@ -524,6 +564,7 @@ int main(int argc, char* argv[]) {
 						const char* fmode = getConfigValue(fcgin, "mode");
 						struct fcgi* fcgi = xmalloc(sizeof(struct fcgi));
 						fcgi->mimes = NULL;
+
 						if (streq_nocase(fmode, "tcp")) {
 							fcgi->addrlen = sizeof(struct sockaddr_in);
 							struct sockaddr_in* ina = xmalloc(sizeof(struct sockaddr_in));

@@ -32,8 +32,8 @@ void run_accept(struct accept_param* param) {
 	spfd.fd = param->server_fd;
 	while (1) {
 		struct conn* c = xmalloc(sizeof(struct conn));
-		memset(&c->addr, 0, sizeof(struct sockaddr));
-		c->addrlen = sizeof(struct sockaddr);
+		memset(&c->addr, 0, sizeof(struct sockaddr_in6));
+		c->addrlen = sizeof(struct sockaddr_in6);
 		c->readBuffer = NULL;
 		c->readBuffer_size = 0;
 		c->readBuffer_checked = 0;

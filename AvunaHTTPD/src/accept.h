@@ -15,6 +15,7 @@
 #include "log.h"
 #include "tls.h"
 #include <gnutls/gnutls.h>
+#include <netinet/ip6.h>
 #include "oqueue.h"
 #include "http.h"
 #include <stdint.h>
@@ -39,7 +40,7 @@ struct http2_stream {
 
 struct conn {
 		int fd;
-		struct sockaddr addr;
+		struct sockaddr_in6 addr; //may not be ipv6, but we need to allocate the space.
 		socklen_t addrlen;
 		unsigned char* readBuffer;
 		size_t readBuffer_size;
