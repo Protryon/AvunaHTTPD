@@ -646,17 +646,22 @@ void run_work(struct work_param* param) {
 				errlog(param->logsess, "Invalid connection type! %i", conns[i].type);
 				continue;
 			}
-			if ((re & POLLERR) == POLLERR) { //TODO: probably a HUP
-				//printf("POLLERR in worker poll! This is bad!\n");
+
+			if ((re & POLLHUP) == POLLHUP && conn != NULL) {
+				closeConn(param, conn);
+				conn = NULL;
 				goto cont;
 			}
-			if ((re & POLLHUP) == POLLHUP && conn != NULL) {
+			if ((re & POLLERR) == POLLERR) { //TODO: probably a HUP
+				//printf("POLLERR in worker poll! This is bad!\n");
 				closeConn(param, conn);
 				conn = NULL;
 				goto cont;
 			}
 			if ((re & POLLNVAL) == POLLNVAL) {
 				errlog(param->logsess, "Invalid FD in worker poll! This is bad!");
+				closeConn(param, conn);
+				conn = NULL;
 				goto cont;
 			}
 			if (ct == 0 && conn->tls && !conn->handshaked) {

@@ -238,7 +238,7 @@ int main(int argc, char* argv[]) {
 			continue;
 		}
 		int one = 1;
-		int zero = zero;
+		int zero = 0;
 		if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one)) == -1) {
 			if (serv->id != NULL) errlog(delog, "Error setting SO_REUSEADDR for server: %s, %s", serv->id, strerror(errno));
 			else errlog(delog, "Error setting SO_REUSEADDR for server, %s", strerror(errno));

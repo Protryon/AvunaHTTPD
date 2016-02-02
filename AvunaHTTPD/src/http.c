@@ -477,6 +477,7 @@ int generateResponse(struct reqsess rs) {
 		rs.response->code = "500 Internal Server Error";
 		generateDefaultErrorPage(rs, NULL, "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
 	} else if (vh->type == VHOST_HTDOCS || vh->type == VHOST_RPROXY) {
+		char* extraPath = NULL;
 		rp = vh->type == VHOST_RPROXY;
 		int isStatic = 1;
 		size_t htdl = rp ? 0 : strlen(vh->sub.htdocs.htdocs);
@@ -517,7 +518,67 @@ int generateResponse(struct reqsess rs) {
 			generateDefaultErrorPage(rs, vh, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
 			goto epage;
 		}
-		if (!rp && tp[htdl + pl - 2] == '/' && !access(tp, R_OK)) { // TODO: extra paths!
+		int ff = !rp ? 0 : tp[htdl + pl - 2] != '/';
+		if (!rp) {
+			char* nxtp = xstrdup(tp + 1, 1);
+			char* onx = nxtp;
+			nxtp[strlen(nxtp) + 1] = 0;
+			size_t nxtpl = strlen(nxtp);
+			for (size_t x = 0; x < nxtpl; x++) {
+				if (nxtp[x] == '/') {
+					nxtp[x] = 0;
+				}
+			}
+			char* rstp = xmalloc(1);
+			rstp[0] = 0;
+			size_t cstp = 0;
+			size_t extp = 0;
+			size_t clt = 0;
+			while ((clt = strlen(nxtp)) > 0) {
+				if (ff) {
+					if (extraPath == NULL) extraPath = xmalloc(extp + clt + 2);
+					else extraPath = xrealloc(extraPath, extp + clt + 2);
+					extraPath[extp++] = '/';
+					memcpy(extraPath + extp, nxtp, clt + 1);
+					extp += clt;
+					nxtp += clt + 1;
+				} else {
+					rstp = xrealloc(rstp, cstp + clt + 2);
+					rstp[cstp++] = '/';
+					memcpy(rstp + cstp, nxtp, clt + 1);
+					cstp += clt;
+					nxtp += clt + 1;
+					struct stat cs;
+					if (stat(rstp, &cs) < 0) {
+						if (errno == ENOENT || errno == ENOTDIR) {
+							rs.response->code = "404 Not Found";
+							generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
+						} else if (errno == EACCES) {
+							rs.response->code = "403 Forbidden";
+							generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
+						} else {
+							errlog(rs.wp->logsess, "Error while stating file: %s", strerror(errno));
+							rs.response->code = "500 Internal Server Error";
+							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+						}
+						goto epage;
+					}
+					if ((cs.st_mode & S_IFDIR) != S_IFDIR) {
+						ff = 1;
+					}
+				}
+			}
+			if (!ff) {
+				rstp = xrealloc(rstp, cstp + 2);
+				rstp[cstp] = '/';
+				rstp[cstp + 1] = 0;
+			}
+			xfree(onx);
+			xfree(tp);
+			tp = rstp;
+		}
+		int indf = 0;
+		if (!rp && !ff && !access(tp, R_OK)) { // TODO: extra paths!
 			for (int ii = 0; ii < vh->sub.htdocs.index_count; ii++) {
 				size_t cl = strlen(vh->sub.htdocs.index[ii]);
 				char* tp2 = xmalloc(htdl + pl + cl);
@@ -526,10 +587,39 @@ int generateResponse(struct reqsess rs) {
 				if (!access(tp2, R_OK)) {
 					xfree(tp);
 					tp = tp2;
+					indf = 1;
 					break;
 				} else {
 					xfree(tp2);
 				}
+			}
+		}
+		if (!ff) {
+			char* tt = xstrdup(rs.request->path, 2);
+			char* ppl = strrchr(tt, '/'); // no extra path because extra paths dont work on directories
+			size_t ppll = strlen(ppl);
+			if (ppl != NULL && (ppll > 1 && ppl[1] != '?' && ppl[1] != '#')) {
+				rs.response->code = "302 Found";
+				char* el = strpbrk(ppl, "?#");
+				if (el != NULL) {
+					memmove(el, el + 1, strlen(el) + 1);
+					el[0] = '/';
+				} else {
+					size_t ttl = strlen(tt);
+					tt[ttl] = '/';
+					tt[ttl + 1] = 0;
+				}
+				header_add(rs.response->headers, "Location", tt);
+				xfree(tp);
+				xfree(tt);
+				xfree(extraPath);
+				goto pvh;
+			}
+			xfree(tt);
+			if (!indf) {
+				rs.response->code = "404 Not Found";
+				generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
+				goto epage;
 			}
 		}
 		struct stat st;
@@ -548,6 +638,7 @@ int generateResponse(struct reqsess rs) {
 					rs.response->code = "403 Forbidden";
 					generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
 				} else {
+					errlog(rs.wp->logsess, "Error while getting the realpath of a file: %s", strerror(errno));
 					rs.response->code = "500 Internal Server Error";
 					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 				}
@@ -558,17 +649,6 @@ int generateResponse(struct reqsess rs) {
 				rs.response->code = "500 Internal Server Error";
 				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 				goto epage;
-			}
-			if ((st.st_mode & S_IFDIR) && rs.request->path[pl - 1] != '/') {
-				rs.response->code = "302 Found";
-				size_t pl = strlen(rs.request->path);
-				char np[pl + 2];
-				memcpy(np, rs.request->path, pl);
-				np[pl] = '/';
-				np[pl + 1] = 0;
-				header_add(rs.response->headers, "Location", np);
-				xfree(rtp);
-				goto pvh;
 			}
 			size_t rtpl = strlen(rtp);
 			if ((st.st_mode & S_IFDIR) && rtp[rtpl - 1] != '/') {
@@ -729,17 +809,15 @@ int generateResponse(struct reqsess rs) {
 				writeFCGIParam(ffd, "QUERY_STRING", get);
 				{
 					char tip[48];
-					char* mip = NULL;
+					char* mip = tip;
 					if (rs.sender->addr.sin6_family == AF_INET) {
 						struct sockaddr_in *sip4 = (struct sockaddr_in*) &rs.sender->addr;
-						mip = tip;
 						inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
 					} else if (rs.sender->addr.sin6_family == AF_INET6) {
 						struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &rs.sender->addr;
-						mip = tip;
 						if (memseq((unsigned char*) &sip6->sin6_addr, 10, 0) && memseq((unsigned char*) &sip6->sin6_addr + 10, 2, 0xff)) {
-							mip = inet_ntop(AF_INET, ((unsigned char*) &sip6->sin6_addr) + 12, tip, 48);
-						} else mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
+							inet_ntop(AF_INET, ((unsigned char*) &sip6->sin6_addr) + 12, tip, 48);
+						} else inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
 					} else if (rs.sender->addr.sin6_family == AF_LOCAL) {
 						mip = "UNIX";
 					} else {
@@ -758,6 +836,19 @@ int generateResponse(struct reqsess rs) {
 					cl[1] = 0;
 				}
 				writeFCGIParam(ffd, "REMOTE_PORT", cl);
+				if (extraPath != NULL) {
+					writeFCGIParam(ffd, "PATH_INFO", extraPath);
+					size_t epl = strlen(extraPath);
+					char* trns = xmalloc(htdl + epl);
+					memcpy(trns, vh->sub.htdocs.htdocs, htdl);
+					memcpy(trns + htdl, extraPath + 1, epl);
+					trns[htdl + epl - 1] = 0;
+					writeFCGIParam(ffd, "PATH_TRANSLATED", trns);
+					xfree(trns);
+				} else {
+					writeFCGIParam(ffd, "PATH_INFO", "");
+					writeFCGIParam(ffd, "PATH_TRANSLATED", "");
+				}
 				writeFCGIParam(ffd, "REQUEST_METHOD", getMethod(rs.request->method));
 				char rss[4];
 				rss[3] = 0;
@@ -1042,6 +1133,7 @@ int generateResponse(struct reqsess rs) {
 		}
 		pcacheadd:
 		//TODO: Chunked
+		if (extraPath != NULL) xfree(extraPath);
 		if (rtp != NULL) xfree(rtp);
 	} else if (vh->type == VHOST_REDIRECT) {
 		rs.response->code = "302 Found";
@@ -1077,7 +1169,7 @@ int generateResponse(struct reqsess rs) {
 	pvh:
 //body stuff
 	if (eh && !rp && rs.response->body != NULL) {
-		if (rs.response->body->mime_type != NULL) if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
+		if (rs.response->body != NULL && rs.response->body->mime_type != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
 		char l[16];
 		if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
 		header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
