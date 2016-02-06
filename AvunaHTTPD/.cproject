@@ -38,7 +38,7 @@
 									<listOptionValue builtIn="false" value="gnutls"/>
 									<listOptionValue builtIn="false" value="nettle"/>
 								</option>
-								<option id="gnu.c.link.option.paths.427586247" superClass="gnu.c.link.option.paths" valueType="libPaths">
+								<option id="gnu.c.link.option.paths.427586247" name="Library search path (-L)" superClass="gnu.c.link.option.paths" valueType="libPaths">
 									<listOptionValue builtIn="false" value="/usr/local/lib"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.c.linker.input.686360872" superClass="cdt.managedbuild.tool.gnu.c.linker.input">

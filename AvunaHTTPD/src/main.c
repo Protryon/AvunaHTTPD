@@ -526,6 +526,8 @@ int main(int argc, char* argv[]) {
 					vhb->cacheTypes[vhb->cacheType_count - 1] = ivh;
 					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
 				}
+				vhb->errpage_count = 0;
+				vhb->errpages = NULL;
 				for (int i = 0; i < vcn->entries; i++) {
 					if (startsWith_nocase(vcn->keys[i], "error-")) {
 						const char* en = vcn->keys[i] + 6;

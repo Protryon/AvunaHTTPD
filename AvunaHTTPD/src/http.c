@@ -269,8 +269,8 @@ int parseRequest(struct request* request, char* data, size_t maxPost) {
 			request->body = xmalloc(sizeof(struct body));
 			request->body->len = cli;
 			request->body->data = xmalloc(cli);
-			request->body->mime_type = "application/x-www-form-urlencoded";
-			request->body->freeMime = 0;
+			request->body->mime_type = xstrdup("application/x-www-form-urlencoded", 0);
+			request->body->freeMime = 1;
 			request->body->stream_fd = -1;
 			request->body->stream_type = -1;
 		}
@@ -341,8 +341,10 @@ int parseResponse(struct reqsess rs, char* data) {
 		rs.response->body->len = cli;
 		rs.response->body->data = NULL;
 		rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
-		if (rs.response->body->mime_type == NULL) rs.response->body->mime_type = "text/html";
-		rs.response->body->freeMime = 0;
+		if (rs.response->body->mime_type == NULL) {
+			rs.response->body->mime_type = xstrdup("text/html", 0);
+			rs.response->body->freeMime = 1;
+		} else rs.response->body->freeMime = 0;
 		rs.response->body->stream_fd = rs.sender->fw_fd;
 		rs.response->body->stream_type = 0;
 	}
@@ -353,7 +355,10 @@ int parseResponse(struct reqsess rs, char* data) {
 		rs.response->body->len = 0;
 		rs.response->body->data = NULL;
 		rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
-		if (rs.response->body->mime_type == NULL) rs.response->body->mime_type = "text/html";
+		if (rs.response->body->mime_type == NULL) {
+			rs.response->body->mime_type = xstrdup("text/html", 0);
+			rs.response->body->freeMime = 1;
+		} else rs.response->body->freeMime = 0;
 		rs.response->body->freeMime = 0;
 		rs.response->body->stream_fd = rs.sender->fw_fd;
 		rs.response->body->stream_type = 1;
@@ -399,7 +404,8 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 	size_t cl = strlen(rs.response->code);
 	size_t len = 120 + ml + (2 * cl);
 	rs.response->body->len = len;
-	rs.response->body->mime_type = "text/html";
+	rs.response->body->mime_type = xstrdup("text/html", 0);
+	rs.response->body->freeMime = 1;
 	rs.response->body->stream_fd = -1;
 	rs.response->body->stream_type = -1;
 	rs.response->body->data = xmalloc(len);
@@ -702,7 +708,13 @@ int generateResponse(struct reqsess rs) {
 			rs.response->body->len = 0;
 			rs.response->body->data = NULL;
 			const char* ext = strrchr(rtp, '.');
-			rs.response->body->mime_type = ext == NULL ? "application/octet-stream" : getMimeForExt(ext + 1);
+			if (ext == NULL) {
+				rs.response->body->mime_type = xstrdup("application/octet-stream", 0);
+				rs.response->body->freeMime = 1;
+			} else {
+				rs.response->body->mime_type = xstrdup(getMimeForExt(ext + 1), 0);
+				rs.response->body->freeMime = 1;
+			}
 			rs.response->body->freeMime = 0;
 			rs.response->body->stream_fd = -1;
 			rs.response->body->stream_type = -1;
@@ -970,8 +982,8 @@ int generateResponse(struct reqsess rs) {
 								rs.response->body->data = xmalloc(ff.len);
 								memcpy(rs.response->body->data, ffd, ff.len);
 								rs.response->body->len = ff.len;
-								rs.response->body->mime_type = ct == NULL ? "text/html" : ct;
-								rs.response->body->freeMime = ct == NULL ? 0 : 1;
+								rs.response->body->mime_type = ct == NULL ? xstrdup("text/html", 0) : ct;
+								rs.response->body->freeMime = 1;
 								rs.response->body->stream_fd = -1;
 								rs.response->body->stream_type = -1;
 							} else {
