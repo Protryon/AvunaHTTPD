@@ -1,2 +1,2 @@
-# Avuna-HTTPD-2
+# AvunaHTTPD
 Avuna HTTPD recoded in C.
