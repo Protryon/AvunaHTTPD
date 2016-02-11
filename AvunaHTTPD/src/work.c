@@ -320,7 +320,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 		}
 		if (!se) goto pc;
 	}
-	for (int x = (ct == 0 ? conn->readBuffer_checked : (ct == 1 ? conn->fw_readBuffer_checked : 0)); x < (ct == 0 ? conn->readBuffer_size : (ct == 1 ? conn->fw_readBuffer_size : 0)); x++) {
+	for (size_t x = (ct == 0 ? conn->readBuffer_checked : (ct == 1 ? conn->fw_readBuffer_checked : 0)); x < (ct == 0 ? conn->readBuffer_size : (ct == 1 ? conn->fw_readBuffer_size : 0)); x++) {
 		if (readBuffer[x] == tm[ml]) {
 			ml++;
 			if (ml == 4) {

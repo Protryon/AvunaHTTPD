@@ -107,7 +107,7 @@ int header_set(struct headers* headers, const char* name, const char* value) {
 	if (headers->count == 0) return -1;
 	for (int i = 0; i < headers->count; i++) {
 		if (streq_nocase(headers->names[i], name)) {
-			int vl = strlen(value) + 1;
+			size_t vl = strlen(value) + 1;
 			headers->values[i] = xrealloc(headers->values[i], vl);
 			memcpy(headers->values[i], value, vl);
 			return 1;
@@ -663,8 +663,8 @@ int generateResponse(struct reqsess rs) {
 				rtp[rtpl] = 0;
 			}
 			if (vh->sub.htdocs.symlock && !startsWith(rtp, vh->sub.htdocs.htdocs)) {
-				rs.response->code = "403 Forbidden";
-				generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
+				rs.response->code = "404 Not Found";
+				generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
 				goto epage;
 			}
 			if (vh->sub.htdocs.nohardlinks && st.st_nlink != 1 && !(st.st_mode & S_IFDIR)) {
@@ -919,6 +919,34 @@ int generateResponse(struct reqsess rs) {
 				while (ff.type != FCGI_END_REQUEST) {
 					if (readFCGIFrame(ffd, &ff)) {
 						errlog(rs.wp->logsess, "Error reading from FCGI server: %s", strerror(errno));
+						close(ffd);
+						if (fc > 0) {
+							errlog(rs.wp->logsess, "Connection failed restart, perhaps FCGI server is down?");
+							rs.response->code = "500 Internal Server Error";
+							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+							//if (ff.data != NULL) xfree(ff.data);
+							goto epage;
+						}
+						int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+						if (fd < 0) {
+							errlog(rs.wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
+							rs.response->code = "500 Internal Server Error";
+							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+							//if (ff.data != NULL) xfree(ff.data);
+							goto epage;
+						}
+						if (connect(fd, fcgi->addr, fcgi->addrlen)) {
+							errlog(rs.wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
+							rs.response->code = "500 Internal Server Error";
+							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+							//if (ff.data != NULL) xfree(ff.data);
+							close(fd);
+							goto epage;
+						}
+						vh->sub.htdocs.fcgifds[rs.wp->i][i] = fd;
+						fc++;
+						goto sofcgi;
+
 					}
 					if (ff.type == FCGI_END_REQUEST) {
 						xfree(ff.data);
@@ -970,6 +998,7 @@ int generateResponse(struct reqsess rs) {
 								const char* name = rs.request->headers->names[i];
 								const char* value = rs.request->headers->values[i];
 								if (streq_nocase(name, "Content-Type")) {
+									if (ct != NULL) xfree(ct);
 									ct = xstrdup(value, 0);
 								} else header_add(rs.response->headers, name, value);
 							}

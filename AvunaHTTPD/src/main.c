@@ -643,10 +643,13 @@ int main(int argc, char* argv[]) {
 						int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
 						if (fd < 0) {
 							errlog(slog, "Error creating socket for FCGI Server! %s", strerror(errno));
+							vhb->fcgifds[i][f] = -1;
 							continue;
 						}
 						if (connect(fd, fcgi->addr, fcgi->addrlen)) {
 							errlog(slog, "Error connecting socket to FCGI Server! %s", strerror(errno));
+							vhb->fcgifds[i][f] = -1;
+							close(fd);
 							continue;
 						}
 						vhb->fcgifds[i][f] = fd;
