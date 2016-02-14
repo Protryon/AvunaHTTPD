@@ -897,7 +897,11 @@ int generateResponse(struct reqsess rs) {
 					}
 					writeFCGIParam(ffd, nname, value);
 				}
-				writeFCGIParam(ffd, "", "");
+				ff.type = FCGI_PARAMS;
+				ff.reqID = 0;
+				ff.len = 0;
+				ff.data = NULL;
+				writeFCGIFrame(ffd, &ff);
 				ff.type = FCGI_STDIN;
 				if (rs.request->body != NULL && rs.request->body->len > 0) {
 					ff.len = rs.request->body->len;
