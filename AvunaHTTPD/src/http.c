@@ -108,6 +108,9 @@ int header_set(struct headers* headers, const char* name, const char* value) {
 	for (int i = 0; i < headers->count; i++) {
 		if (streq_nocase(headers->names[i], name)) {
 			size_t vl = strlen(value) + 1;
+			//if (streq_nocase(name, "Content-Type")) {
+			//	printf("ct cur = %s, new = %s, racto = %i\n", headers->values[i], value, vl);
+			//}
 			headers->values[i] = xrealloc(headers->values[i], vl);
 			memcpy(headers->values[i], value, vl);
 			return 1;
@@ -398,7 +401,6 @@ int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* ms
 	if (rs.response->body == NULL) {
 		rs.response->body = xmalloc(sizeof(struct body));
 	}
-	rs.response->body->freeMime = 0;
 	char* rmsg = escapehtml(msg);
 	size_t ml = strlen(rmsg);
 	size_t cl = strlen(rs.response->code);
@@ -998,9 +1000,9 @@ int generateResponse(struct reqsess rs) {
 							hd = 2;
 							struct headers hdrs;
 							parseHeaders(&hdrs, hdd, 0);
-							for (int i = 0; i < rs.request->headers->count; i++) {
-								const char* name = rs.request->headers->names[i];
-								const char* value = rs.request->headers->values[i];
+							for (int i = 0; i < hdrs.count; i++) {
+								const char* name = hdrs.names[i];
+								const char* value = hdrs.values[i];
 								if (streq_nocase(name, "Content-Type")) {
 									if (ct != NULL) xfree(ct);
 									ct = xstrdup(value, 0);
@@ -1169,6 +1171,7 @@ int generateResponse(struct reqsess rs) {
 				memcpy(sc->etag, etag, 35);
 				addSCache(&vh->sub.htdocs.cache, sc);
 				rs.response->fromCache = sc;
+				rs.response->body->freeMime = 0;
 				rs.request->atc = 1;
 				if (nm) {
 					rs.response->body = NULL;
