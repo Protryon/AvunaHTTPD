@@ -996,7 +996,8 @@ int generateResponse(struct reqsess rs) {
 									hddl += ff.len;
 								}
 							}
-						} else if (hd == 1) {
+						}
+						if (hd == 1) {
 							hd = 2;
 							struct headers hdrs;
 							parseHeaders(&hdrs, hdd, 0);
@@ -1006,6 +1007,13 @@ int generateResponse(struct reqsess rs) {
 								if (streq_nocase(name, "Content-Type")) {
 									if (ct != NULL) xfree(ct);
 									ct = xstrdup(value, 0);
+								} else if (streq_nocase(name, "Status")) {
+									if (!rs.response->parsed) {
+										rs.response->parsed = 2;
+									} else {
+										xfree(rs.response->code);
+									}
+									rs.response->code = xstrdup(value, 0);
 								} else header_add(rs.response->headers, name, value);
 							}
 						}
@@ -1216,8 +1224,10 @@ int generateResponse(struct reqsess rs) {
 	}
 	pvh:
 //body stuff
-	if (eh && !rp && rs.response->body != NULL) {
-		if (rs.response->body != NULL && rs.response->body->mime_type != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
+	if (eh && !rp && rs.response->body != NULL && rs.response->body->mime_type != NULL) {
+		header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
+	}
+	if (eh && !rp) {
 		char l[16];
 		if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
 		header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);

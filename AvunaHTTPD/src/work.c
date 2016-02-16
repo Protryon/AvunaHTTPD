@@ -141,8 +141,10 @@ void freeReqsess(struct reqsess rs) {
 		}
 		freeHeaders(resp->headers);
 	}
-	if (!req->atc && resp->parsed) {
+	if (!req->atc && resp->parsed == 1) {
 		xfree(resp->version);
+		xfree(resp->code);
+	} else if (!req->atc && resp->parsed) {
 		xfree(resp->code);
 	}
 	xfree(req);
