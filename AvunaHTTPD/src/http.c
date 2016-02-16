@@ -972,11 +972,13 @@ int generateResponse(struct reqsess rs) {
 										hd = 1;
 										hr = i + 1;
 										if (hdd == NULL) {
-											hdd = xmalloc(i);
+											hdd = xmalloc(i + 1);
+											hdd[i] = 0;
 											memcpy(hdd, ff.data, i);
 											hddl = i;
 										} else {
-											hdd = xrealloc(hdd, hddl + i);
+											hdd = xrealloc(hdd, hddl + i + 1);
+											hdd[hddl + i] = 0;
 											memcpy(hdd + hddl, ff.data, i);
 											hddl += i;
 										}
@@ -988,10 +990,12 @@ int generateResponse(struct reqsess rs) {
 								hr = ff.len;
 								if (hdd == NULL) {
 									hdd = xmalloc(ff.len);
+									hdd[ff.len] = 0;
 									memcpy(hdd, ff.data, ff.len);
 									hddl = ff.len;
 								} else {
 									hdd = xrealloc(hdd, hddl + ff.len);
+									hdd[hddl + ff.len] = 0;
 									memcpy(hdd + hddl, ff.data, ff.len);
 									hddl += ff.len;
 								}
