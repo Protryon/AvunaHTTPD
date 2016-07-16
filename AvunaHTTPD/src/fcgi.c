@@ -101,7 +101,7 @@ int readFCGIFrame(int fd, struct fcgiframe* fcgif) {
 	unsigned char padding = header[6];
 	//7 = reserved
 	fcgif->data = xmalloc(fcgif->len + 1);
-	fcgif->data[fcgif->len] = 0;
+	((char*) fcgif->data)[fcgif->len] = 0;
 	r = 0;
 	while (r < fcgif->len) {
 		int x = read(fd, fcgif->data + r, fcgif->len - r);
