@@ -167,7 +167,7 @@ int parseHeaders(struct headers* headers, char* data, int mode) {
 		value++;
 		cd = trim(cd);
 		value = trim(value);
-		if (mode & 2 == 0) {
+		if ((mode & 2) == 0) {
 			header_add(headers, cd, value);
 		} else {
 			header_tryadd(headers, cd, value);
@@ -496,31 +496,33 @@ int generateResponse(struct reqsess rs) {
 		ttp = strchr(tp, '?');
 		if (ttp != NULL) ttp[0] = 0;
 		char* rtp = NULL;
-		struct scache* osc = getSCache(&vh->sub.htdocs.cache, rs.request->path, contains_nocase(header_get(rs.request->headers, "Accept-Encoding"), "gzip"));
-		if (osc != NULL) {
-			rs.response->body = osc->body;
-			if (rs.response->headers->count > 0) for (int i = 0; i < rs.response->headers->count; i++) {
-				xfree(rs.response->headers->names[i]);
-				xfree(rs.response->headers->values[i]);
-			}
-			rs.request->atc = 1;
-			if (rs.response->headers->names != NULL) xfree(rs.response->headers->names);
-			if (rs.response->headers->values != NULL) xfree(rs.response->headers->values);
-			rs.response->headers->count = osc->headers->count;
-			rs.response->headers->names = xcopy(osc->headers->names, osc->headers->count * sizeof(char*), 0);
-			rs.response->headers->values = xcopy(osc->headers->values, osc->headers->count * sizeof(char*), 0);
-			for (int i = 0; i < rs.response->headers->count; i++) {
-				rs.response->headers->names[i] = xstrdup(rs.response->headers->names[i], 0);
-				rs.response->headers->values[i] = xstrdup(rs.response->headers->values[i], 0);
-			}
-			rs.response->code = osc->code;
-			if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
-				if (streq(osc->etag, header_get(rs.request->headers, "If-None-Match"))) {
-					rs.response->code = "304 Not Modified";
-					rs.response->body = NULL;
+		if (vh->sub.htdocs.scacheEnabled) {
+			struct scache* osc = getSCache(&vh->sub.htdocs.cache, rs.request->path, contains_nocase(header_get(rs.request->headers, "Accept-Encoding"), "gzip"));
+			if (osc != NULL) {
+				rs.response->body = osc->body;
+				if (rs.response->headers->count > 0) for (int i = 0; i < rs.response->headers->count; i++) {
+					xfree(rs.response->headers->names[i]);
+					xfree(rs.response->headers->values[i]);
 				}
+				rs.request->atc = 1;
+				if (rs.response->headers->names != NULL) xfree(rs.response->headers->names);
+				if (rs.response->headers->values != NULL) xfree(rs.response->headers->values);
+				rs.response->headers->count = osc->headers->count;
+				rs.response->headers->names = xcopy(osc->headers->names, osc->headers->count * sizeof(char*), 0);
+				rs.response->headers->values = xcopy(osc->headers->values, osc->headers->count * sizeof(char*), 0);
+				for (int i = 0; i < rs.response->headers->count; i++) {
+					rs.response->headers->names[i] = xstrdup(rs.response->headers->names[i], 0);
+					rs.response->headers->values[i] = xstrdup(rs.response->headers->values[i], 0);
+				}
+				rs.response->code = osc->code;
+				if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
+					if (streq(osc->etag, header_get(rs.request->headers, "If-None-Match"))) {
+						rs.response->code = "304 Not Modified";
+						rs.response->body = NULL;
+					}
+				}
+				goto pcacheadd;
 			}
-			goto pcacheadd;
 		}
 		if (pl < 1 || rs.request->path[0] != '/') {
 			rs.response->code = "500 Internal Server Error";
@@ -1124,9 +1126,11 @@ int generateResponse(struct reqsess rs) {
 				strm.avail_out = cc - ts;
 				strm.next_out = cdata + ts;
 				do {
+					strm.avail_out = cc - ts;
+					strm.next_out = cdata + ts;
 					dr = deflate(&strm, Z_FINISH);
 					ts = strm.total_out;
-					if (ts >= cc) {
+					if (ts >= cc - 8192) {
 						cc = ts + 16384;
 						cdata = xrealloc(cdata, cc);
 					}
@@ -1135,8 +1139,6 @@ int generateResponse(struct reqsess rs) {
 						errlog(rs.wp->logsess, "Stream error with zlib deflate");
 						goto pgzip;
 					}
-					strm.avail_out = cc - ts;
-					strm.next_out = cdata + ts;
 				} while (strm.avail_out == 0);
 				deflateEnd(&strm);
 				xfree(rs.response->body->data);
