@@ -35,6 +35,7 @@
 #include "vhost.h"
 
 int main(int argc, char* argv[]) {
+	signal(SIGPIPE, SIG_IGN);
 	if (getuid() != 0 || getgid() != 0) {
 		printf("Must run as root!\n");
 		return 1;

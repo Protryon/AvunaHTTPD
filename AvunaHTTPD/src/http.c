@@ -931,7 +931,6 @@ int generateResponse(struct reqsess rs) {
 				while (ff.type != FCGI_END_REQUEST) {
 					if (readFCGIFrame(ffd, &ff)) {
 						errlog(rs.wp->logsess, "Error reading from FCGI server: %s", strerror(errno));
-						close(ffd);
 						if (fc > 0) {
 							errlog(rs.wp->logsess, "Connection failed restart, perhaps FCGI server is down?");
 							rs.response->code = "500 Internal Server Error";
@@ -955,6 +954,7 @@ int generateResponse(struct reqsess rs) {
 							close(fd);
 							goto epage;
 						}
+						close(ffd);
 						vh->sub.htdocs.fcgifds[rs.wp->i][i] = fd;
 						fc++;
 						goto sofcgi;
