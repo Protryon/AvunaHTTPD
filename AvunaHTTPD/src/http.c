@@ -108,10 +108,7 @@ int header_set(struct headers* headers, const char* name, const char* value) {
 	for (int i = 0; i < headers->count; i++) {
 		if (streq_nocase(headers->names[i], name)) {
 			size_t vl = strlen(value) + 1;
-			//if (streq_nocase(name, "Content-Type")) {
-			//	printf("ct cur = %s, new = %s, racto = %i\n", headers->values[i], value, vl);
-			//}
-			headers->values[i] = xrealloc(headers->values[i], vl);
+			headers->values[i] = headers->values[i] == NULL ? xmalloc(vl) : xrealloc(headers->values[i], vl);
 			memcpy(headers->values[i], value, vl);
 			return 1;
 		}
@@ -1142,7 +1139,7 @@ int generateResponse(struct reqsess rs) {
 				wgz = 1;
 			}
 		}
-		pgzip: if (isStatic && vh->sub.htdocs.scacheEnabled) {
+		pgzip: if (isStatic && vh->sub.htdocs.scacheEnabled && (vh->sub.htdocs.maxCache <= 0 || vh->sub.htdocs.maxCache < getCacheSize(&vh->sub.htdocs.cache))) {
 			if (rp) {
 				rs.request->atc = 1;
 			} else {
@@ -1153,7 +1150,7 @@ int generateResponse(struct reqsess rs) {
 				if (eh) {
 					if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
 					char l[16];
-					if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
+					if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);
 					header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
 				}
 				sc->headers = rs.response->headers;
@@ -1183,7 +1180,6 @@ int generateResponse(struct reqsess rs) {
 				memcpy(sc->etag, etag, 35);
 				addSCache(&vh->sub.htdocs.cache, sc);
 				rs.response->fromCache = sc;
-				rs.response->body->freeMime = 0;
 				rs.request->atc = 1;
 				if (nm) {
 					rs.response->body = NULL;

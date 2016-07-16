@@ -35,4 +35,6 @@ int addSCache(struct cache* cache, struct scache* scache);
 
 void delSCache(struct cache* cache, struct scache* scache);
 
+size_t getCacheSize(struct cache* cache);
+
 #endif /* CACHE_H_ */

@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include "util.h"
 #include <pthread.h>
-
+#include "http.h"
 struct scache* getSCache(struct cache* cache, char* rp, int ce) {
 	pthread_rwlock_rdlock(&cache->scachelock);
 	for (int i = 0; i < cache->scache_size; i++) {
@@ -46,4 +46,12 @@ void delSCache(struct cache* cache, struct scache* scache) {
 		}
 	}
 	pthread_rwlock_unlock(&cache->scachelock);
+}
+
+size_t getCacheSize(struct cache* cache) {
+	size_t cs = 64 + (sizeof(struct scache) * (cache->scache_size + 256));
+	for (int i = 0; i < cache->scache_size; i++) {
+		if (cache->scaches[i]->body != NULL) cs += cache->scaches[i]->body->len;
+	}
+	return cs;
 }

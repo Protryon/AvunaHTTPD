@@ -32,6 +32,7 @@ struct vhost_htdocs {
 		int enableGzip;
 		int scacheEnabled;
 		size_t maxAge;
+		size_t maxCache;
 		char* htdocs;
 		int symlock;
 		int nohardlinks;
@@ -51,6 +52,7 @@ struct vhost_rproxy {
 		int enableGzip;
 		int scacheEnabled;
 		size_t maxAge;
+		size_t maxCache;
 		struct sockaddr* fwaddr;
 		socklen_t fwaddrlen;
 		char* fwpath;
