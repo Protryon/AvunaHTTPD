@@ -13,6 +13,9 @@
 #define VHOST_REDIRECT 2
 #define VHOST_MOUNT 3
 
+#include "cache.h"
+#include <sys/socket.h>
+
 struct errpage {
 		char* code;
 		char* page;
@@ -90,5 +93,7 @@ struct vhost {
 		char* id;
 		union vhost_sub sub;
 };
+
+int domeq(const char* dom1, const char* dom2);
 
 #endif /* VHOST_H_ */

@@ -458,7 +458,7 @@ int generateResponse(struct reqsess rs) {
 			vh = rs.wp->vhosts[i];
 			break;
 		} else for (int x = 0; x < rs.wp->vhosts[i]->host_count; x++) {
-			if (streq_nocase(rs.wp->vhosts[i]->hosts[x], host)) {
+			if (domeq(rs.wp->vhosts[i]->hosts[x], host)) {
 				vh = rs.wp->vhosts[i];
 				break;
 			}
@@ -509,6 +509,10 @@ int generateResponse(struct reqsess rs) {
 			rs.response->headers->count = osc->headers->count;
 			rs.response->headers->names = xcopy(osc->headers->names, osc->headers->count * sizeof(char*), 0);
 			rs.response->headers->values = xcopy(osc->headers->values, osc->headers->count * sizeof(char*), 0);
+			for (int i = 0; i < rs.response->headers->count; i++) {
+				rs.response->headers->names[i] = xstrdup(rs.response->headers->names[i], 0);
+				rs.response->headers->values[i] = xstrdup(rs.response->headers->values[i], 0);
+			}
 			rs.response->code = osc->code;
 			if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
 				if (streq(osc->etag, header_get(rs.request->headers, "If-None-Match"))) {
@@ -711,10 +715,15 @@ int generateResponse(struct reqsess rs) {
 				rs.response->body->mime_type = xstrdup("application/octet-stream", 0);
 				rs.response->body->freeMime = 1;
 			} else {
-				rs.response->body->mime_type = xstrdup(getMimeForExt(ext + 1), 0);
-				rs.response->body->freeMime = 1;
+				const char* mime = getMimeForExt(ext + 1);
+				if (mime == NULL) {
+					rs.response->body->mime_type = xstrdup("application/octet-stream", 0);
+					rs.response->body->freeMime = 1;
+				} else {
+					rs.response->body->mime_type = xstrdup(mime, 0);
+					rs.response->body->freeMime = 1;
+				}
 			}
-			rs.response->body->freeMime = 0;
 			rs.response->body->stream_fd = -1;
 			rs.response->body->stream_type = -1;
 		}
@@ -738,7 +747,7 @@ int generateResponse(struct reqsess rs) {
 
 			char ccbuf[64];
 			memcpy(ccbuf, "max-age=", 8);
-			int snr = snprintf(ccbuf + 8, 18, "%u", vh->sub.htdocs.maxAge);
+			int snr = snprintf(ccbuf + 8, 18, "%lu", vh->sub.htdocs.maxAge);
 			if (dcc) {
 				memcpy(ccbuf + 8 + snr, ", no-cache", 11);
 			} else {
