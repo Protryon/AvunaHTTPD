@@ -43,10 +43,12 @@ int writeFCGIFrame(int fd, struct fcgiframe* fcgif) {
 		}
 		w += x;
 	}
+	//printf("write %i: %i <%i>\n", fd, fcgif->type, fcgif->len);
 	return 0;
 }
 
 int writeFCGIParam(int fd, const char* name, const char* value) {
+	//printf("fcgi param     %s=%s\n", name, value);
 	struct fcgiframe fcgif;
 	fcgif.type = FCGI_PARAMS;
 	fcgif.reqID = 0;
@@ -123,5 +125,6 @@ int readFCGIFrame(int fd, struct fcgiframe* fcgif) {
 		}
 		r += x;
 	}
+	//printf("read %i: %i <%i>\n", fd, fcgif->type, fcgif->len);
 	return 0;
 }

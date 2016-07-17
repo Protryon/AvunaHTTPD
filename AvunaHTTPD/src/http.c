@@ -729,34 +729,6 @@ int generateResponse(struct reqsess rs) {
 			rs.response->body->stream_fd = -1;
 			rs.response->body->stream_type = -1;
 		}
-		if (vh->sub.htdocs.maxAge > 0 && rs.response->body != NULL) {
-			int dcc = 0;
-			for (int i = 0; i < vh->sub.htdocs.cacheType_count; i++) {
-				if (streq_nocase(vh->sub.htdocs.cacheTypes[i], rs.response->body->mime_type)) {
-					dcc = 1;
-					break;
-				} else if (endsWith(vh->sub.htdocs.cacheTypes[i], "/*")) {
-					char* nct = xstrdup(vh->sub.htdocs.cacheTypes[i], 0);
-					nct[strlen(nct) - 1] = 0;
-					if (startsWith(rs.response->body->mime_type, nct)) {
-						dcc = 1;
-						xfree(nct);
-						break;
-					}
-					xfree(nct);
-				}
-			}
-
-			char ccbuf[64];
-			memcpy(ccbuf, "max-age=", 8);
-			int snr = snprintf(ccbuf + 8, 18, "%lu", vh->sub.htdocs.maxAge);
-			if (dcc) {
-				memcpy(ccbuf + 8 + snr, ", no-cache", 11);
-			} else {
-				ccbuf[8 + snr] = 0;
-			}
-			header_add(rs.response->headers, "Cache-Control", ccbuf);
-		}
 		if (!rp && rs.response->body != NULL && rs.response->body->mime_type != NULL) for (int i = 0; i < vh->sub.htdocs.fcgi_count; i++) {
 			struct fcgi* fcgi = vh->sub.htdocs.fcgis[i];
 			int df = 0;
@@ -771,7 +743,25 @@ int generateResponse(struct reqsess rs) {
 				isStatic = 0;
 				int fc = 0;
 				sofcgi: ;
-				int ffd = vh->sub.htdocs.fcgifds[rs.wp->i][i];
+				//printf("%i, %i\n", rs.wp->i, i);
+				//int ffd = vh->sub.htdocs.fcgifds[rs.wp->i][i];
+				int ffd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+				if (ffd < 0) {
+					errlog(rs.wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
+					rs.response->code = "500 Internal Server Error";
+					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+					//if (ff.data != NULL) xfree(ff.data);
+					goto epage;
+				}
+				if (connect(ffd, fcgi->addr, fcgi->addrlen)) {
+					errlog(rs.wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
+					rs.response->code = "500 Internal Server Error";
+					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+					//if (ff.data != NULL) xfree(ff.data);
+					close(ffd);
+					goto epage;
+				}
+				//printf("begin fcgi on %i\n", ffd);
 				struct fcgiframe ff;
 				ff.type = FCGI_BEGIN_REQUEST;
 				ff.reqID = 0;
@@ -930,6 +920,7 @@ int generateResponse(struct reqsess rs) {
 				int hd = 0;
 				char* hdd = NULL;
 				size_t hddl = 0;
+				//printf("read fcgi on %i\n", ffd);
 				while (ff.type != FCGI_END_REQUEST) {
 					if (readFCGIFrame(ffd, &ff)) {
 						errlog(rs.wp->logsess, "Error reading from FCGI server: %s", strerror(errno));
@@ -963,14 +954,16 @@ int generateResponse(struct reqsess rs) {
 
 					}
 					if (ff.type == FCGI_END_REQUEST) {
+						//printf("er!\n");
 						xfree(ff.data);
 						continue;
 					}
 					if (ff.type == FCGI_STDERR) {
 						errlog(rs.wp->logsess, "FCGI STDERR <%s>: %s", rtp, ff.data);
-					} else if (ff.type == FCGI_STDOUT) {
+					}
+					if (ff.type == FCGI_STDOUT || ff.type == FCGI_STDERR) {
 						int hr = 0;
-						if (!hd) {
+						if (!hd && ff.type == FCGI_STDOUT) {
 							int ml = 0;
 							char* tm = "\r\n\r\n";
 							for (int i = 0; i < ff.len; i++) {
@@ -1009,13 +1002,15 @@ int generateResponse(struct reqsess rs) {
 								}
 							}
 						}
-						if (hd == 1) {
+						//printf("%lu\n", ff.len);
+						if (hd == 1 && ff.type == FCGI_STDOUT) {
 							hd = 2;
 							struct headers hdrs;
 							parseHeaders(&hdrs, hdd, 0);
 							for (int i = 0; i < hdrs.count; i++) {
 								const char* name = hdrs.names[i];
 								const char* value = hdrs.values[i];
+								//printf("hdr %s: %s\n", name, value);
 								if (streq_nocase(name, "Content-Type")) {
 									if (ct != NULL) xfree(ct);
 									ct = xstrdup(value, 0);
@@ -1026,10 +1021,13 @@ int generateResponse(struct reqsess rs) {
 										xfree(rs.response->code);
 									}
 									rs.response->code = xstrdup(value, 0);
+								} else if (streq_nocase(name, "ETag")) {
+
 								} else header_add(rs.response->headers, name, value);
 							}
 						}
-						if (hr < ff.len) {
+						//printf("hr %i, fflem %i\n", hr, ff.len);
+						if (hr <= ff.len) {
 							unsigned char* ffd = ff.data + hr;
 							ff.len -= hr;
 							if (rs.response->body == NULL) {
@@ -1050,6 +1048,38 @@ int generateResponse(struct reqsess rs) {
 					}
 					xfree(ff.data);
 				}
+				//printf("end fcgi on %i\n", ffd);
+				close(ffd);
+			}
+		}
+		if (isStatic) {
+			if (vh->sub.htdocs.maxAge > 0 && rs.response->body != NULL) {
+				int dcc = 0;
+				for (int i = 0; i < vh->sub.htdocs.cacheType_count; i++) {
+					if (streq_nocase(vh->sub.htdocs.cacheTypes[i], rs.response->body->mime_type)) {
+						dcc = 1;
+						break;
+					} else if (endsWith(vh->sub.htdocs.cacheTypes[i], "/*")) {
+						char* nct = xstrdup(vh->sub.htdocs.cacheTypes[i], 0);
+						nct[strlen(nct) - 1] = 0;
+						if (startsWith(rs.response->body->mime_type, nct)) {
+							dcc = 1;
+							xfree(nct);
+							break;
+						}
+						xfree(nct);
+					}
+				}
+
+				char ccbuf[64];
+				memcpy(ccbuf, "max-age=", 8);
+				int snr = snprintf(ccbuf + 8, 18, "%lu", vh->sub.htdocs.maxAge);
+				if (dcc) {
+					memcpy(ccbuf + 8 + snr, ", no-cache", 11);
+				} else {
+					ccbuf[8 + snr] = 0;
+				}
+				header_add(rs.response->headers, "Cache-Control", ccbuf);
 			}
 		}
 		if (!rp && isStatic) {
