@@ -31,6 +31,8 @@ int add_queue(struct queue* queue, void* data);
 
 void* pop_queue(struct queue* queue);
 
+void* peek_queue(struct queue* queue);
+
 void* timedpop_queue(struct queue* queue, struct timespec* abstime);
 
 #endif /* OQUEUE_H_ */

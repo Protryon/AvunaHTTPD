@@ -278,41 +278,41 @@ int parseRequest(struct request* request, char* data, size_t maxPost) {
 	return 0;
 }
 
-unsigned char* serializeRequest(struct reqsess rs, size_t* len) {
+unsigned char* serializeRequest(struct reqsess* rs, size_t* len) {
 	*len = 0;
-	const char* ms = getMethod(rs.request->method);
+	const char* ms = getMethod(rs->request->method);
 	size_t vl = strlen(ms);
-	size_t cl = strlen(rs.request->path);
-	size_t rvl = strlen(rs.request->version);
+	size_t cl = strlen(rs->request->path);
+	size_t rvl = strlen(rs->request->version);
 	*len = vl + 1 + cl + 1 + rvl + 2;
 	size_t hl = 0;
-	char* headers = serializeHeaders(rs.request->headers, &hl);
+	char* headers = serializeHeaders(rs->request->headers, &hl);
 	*len += hl;
-	if (rs.response->body != NULL) *len += rs.response->body->len;
+	if (rs->response->body != NULL) *len += rs->response->body->len;
 	unsigned char* ret = xmalloc(*len);
 	size_t wr = 0;
 	memcpy(ret, ms, vl);
 	wr += vl;
 	ret[wr++] = ' ';
-	memcpy(ret + wr, rs.request->path, cl);
+	memcpy(ret + wr, rs->request->path, cl);
 	wr += cl;
 	ret[wr++] = ' ';
-	memcpy(ret + wr, rs.request->version, rvl);
+	memcpy(ret + wr, rs->request->version, rvl);
 	wr += rvl;
 	ret[wr++] = '\r';
 	ret[wr++] = '\n';
 	memcpy(ret + wr, headers, hl);
 	wr += hl;
 	xfree(headers);
-	if (rs.request->method == METHOD_POST && rs.request->body != NULL) {
-		memcpy(ret + wr, rs.response->body->data, rs.response->body->len);
-		wr += rs.response->body->len;
+	if (rs->request->method == METHOD_POST && rs->request->body != NULL) {
+		memcpy(ret + wr, rs->response->body->data, rs->response->body->len);
+		wr += rs->response->body->len;
 	}
 	return ret;
 }
 
-int parseResponse(struct reqsess rs, char* data) {
-	rs.response->parsed = 1;
+int parseResponse(struct reqsess* rs, char* data) {
+	rs->response->parsed = 1;
 	char* cd = data;
 	char* eol1 = strchr(cd, '\n');
 	if (eol1 == NULL) {
@@ -328,168 +328,168 @@ int parseResponse(struct reqsess rs, char* data) {
 	}
 	eol1[0] = 0;
 	eol1++;
-	rs.response->version = xstrdup(cd, 0);
+	rs->response->version = xstrdup(cd, 0);
 	size_t eols = strlen(eol1);
 	if (eol1[eols - 1] == '\r') eol1[eols - 1] = 0;
-	rs.response->code = xstrdup(eol1, 0);
-	parseHeaders(rs.response->headers, hdrs, 3);
+	rs->response->code = xstrdup(eol1, 0);
+	parseHeaders(rs->response->headers, hdrs, 3);
 	xfree(data);
-	const char* cl = header_get(rs.response->headers, "Content-Length");
+	const char* cl = header_get(rs->response->headers, "Content-Length");
 	if (cl != NULL && strisunum(cl)) {
 		size_t cli = atol(cl);
-		rs.response->body = xmalloc(sizeof(struct body));
-		rs.response->body->len = cli;
-		rs.response->body->data = NULL;
-		rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
-		if (rs.response->body->mime_type == NULL) {
-			rs.response->body->mime_type = xstrdup("text/html", 0);
-			rs.response->body->freeMime = 1;
-		} else rs.response->body->freeMime = 0;
-		rs.response->body->stream_fd = rs.sender->fw_fd;
-		rs.response->body->stream_type = 0;
+		rs->response->body = xmalloc(sizeof(struct body));
+		rs->response->body->len = cli;
+		rs->response->body->data = NULL;
+		rs->response->body->mime_type = header_get(rs->response->headers, "Content-Type");
+		if (rs->response->body->mime_type == NULL) {
+			rs->response->body->mime_type = xstrdup("text/html", 0);
+			rs->response->body->freeMime = 1;
+		} else rs->response->body->freeMime = 0;
+		rs->response->body->stream_fd = rs->sender->fw_fd;
+		rs->response->body->stream_type = 0;
 	}
-	const char* te = header_get(rs.response->headers, "Transfer-Encoding");
+	const char* te = header_get(rs->response->headers, "Transfer-Encoding");
 	if (te != NULL) {
-		if (rs.response->body != NULL) xfree(rs.response->body);
-		rs.response->body = xmalloc(sizeof(struct body));
-		rs.response->body->len = 0;
-		rs.response->body->data = NULL;
-		rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
-		if (rs.response->body->mime_type == NULL) {
-			rs.response->body->mime_type = xstrdup("text/html", 0);
-			rs.response->body->freeMime = 1;
-		} else rs.response->body->freeMime = 0;
-		rs.response->body->freeMime = 0;
-		rs.response->body->stream_fd = rs.sender->fw_fd;
-		rs.response->body->stream_type = 1;
+		if (rs->response->body != NULL) xfree(rs->response->body);
+		rs->response->body = xmalloc(sizeof(struct body));
+		rs->response->body->len = 0;
+		rs->response->body->data = NULL;
+		rs->response->body->mime_type = header_get(rs->response->headers, "Content-Type");
+		if (rs->response->body->mime_type == NULL) {
+			rs->response->body->mime_type = xstrdup("text/html", 0);
+			rs->response->body->freeMime = 1;
+		} else rs->response->body->freeMime = 0;
+		rs->response->body->freeMime = 0;
+		rs->response->body->stream_fd = rs->sender->fw_fd;
+		rs->response->body->stream_type = 1;
 	}
 	return 0;
 }
 
-unsigned char* serializeResponse(struct reqsess rs, size_t* len) {
+unsigned char* serializeResponse(struct reqsess* rs, size_t* len) {
 	*len = 0;
-	size_t vl = strlen(rs.response->version);
-	size_t cl = strlen(rs.response->code);
+	size_t vl = strlen(rs->response->version);
+	size_t cl = strlen(rs->response->code);
 	*len = vl + 1 + cl + 2;
 	size_t hl = 0;
-	char* headers = serializeHeaders(rs.response->headers, &hl);
+	char* headers = serializeHeaders(rs->response->headers, &hl);
 	*len += hl;
-	if (rs.response->body != NULL && rs.response->body->stream_type < 0) *len += rs.response->body->len;
+	if (rs->response->body != NULL && rs->response->body->stream_type < 0) *len += rs->response->body->len;
 	unsigned char* ret = xmalloc(*len);
 	size_t wr = 0;
-	memcpy(ret, rs.response->version, vl);
+	memcpy(ret, rs->response->version, vl);
 	wr += vl;
 	ret[wr++] = ' ';
-	memcpy(ret + wr, rs.response->code, cl);
+	memcpy(ret + wr, rs->response->code, cl);
 	wr += cl;
 	ret[wr++] = '\r';
 	ret[wr++] = '\n';
 	memcpy(ret + wr, headers, hl);
 	wr += hl;
 	xfree(headers);
-	if (rs.request->method != METHOD_HEAD && rs.response->body != NULL && rs.response->body->stream_type < 0) {
-		memcpy(ret + wr, rs.response->body->data, rs.response->body->len);
-		wr += rs.response->body->len;
+	if (rs->request->method != METHOD_HEAD && rs->response->body != NULL && rs->response->body->stream_type < 0) {
+		memcpy(ret + wr, rs->response->body->data, rs->response->body->len);
+		wr += rs->response->body->len;
 	}
 	return ret;
 }
 
-int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* msg) {
-	if (rs.response->body == NULL) {
-		rs.response->body = xmalloc(sizeof(struct body));
+int generateDefaultErrorPage(struct reqsess* rs, struct vhost* vh, const char* msg) {
+	if (rs->response->body == NULL) {
+		rs->response->body = xmalloc(sizeof(struct body));
 	}
 	char* rmsg = escapehtml(msg);
 	size_t ml = strlen(rmsg);
-	size_t cl = strlen(rs.response->code);
+	size_t cl = strlen(rs->response->code);
 	size_t len = 120 + ml + (2 * cl);
-	rs.response->body->len = len;
-	rs.response->body->mime_type = xstrdup("text/html", 0);
-	rs.response->body->freeMime = 1;
-	rs.response->body->stream_fd = -1;
-	rs.response->body->stream_type = -1;
-	rs.response->body->data = xmalloc(len);
+	rs->response->body->len = len;
+	rs->response->body->mime_type = xstrdup("text/html", 0);
+	rs->response->body->freeMime = 1;
+	rs->response->body->stream_fd = -1;
+	rs->response->body->stream_type = -1;
+	rs->response->body->data = xmalloc(len);
 	static char* d1 = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\"><html><head><title>";
 	size_t d1s = strlen(d1);
 	size_t wr = 0;
-	memcpy(rs.response->body->data + wr, d1, d1s);
+	memcpy(rs->response->body->data + wr, d1, d1s);
 	wr += d1s;
-	size_t cs = strlen(rs.response->code);
-	memcpy(rs.response->body->data + wr, rs.response->code, cs);
+	size_t cs = strlen(rs->response->code);
+	memcpy(rs->response->body->data + wr, rs->response->code, cs);
 	wr += cs;
 	static char* d2 = "</title></head><body><h1>";
 	size_t d2s = strlen(d2);
-	memcpy(rs.response->body->data + wr, d2, d2s);
+	memcpy(rs->response->body->data + wr, d2, d2s);
 	wr += d2s;
-	memcpy(rs.response->body->data + wr, rs.response->code, cs);
+	memcpy(rs->response->body->data + wr, rs->response->code, cs);
 	wr += cs;
 	static char* d3 = "</h1><p>";
 	size_t d3s = strlen(d3);
-	memcpy(rs.response->body->data + wr, d3, d3s);
+	memcpy(rs->response->body->data + wr, d3, d3s);
 	wr += d3s;
-	memcpy(rs.response->body->data + wr, rmsg, ml);
+	memcpy(rs->response->body->data + wr, rmsg, ml);
 	wr += ml;
 	static char* d4 = "</p></body></html>";
 	size_t d4s = strlen(d4);
-	memcpy(rs.response->body->data + wr, d4, d4s);
+	memcpy(rs->response->body->data + wr, d4, d4s);
 	wr += d4s;
 	free(rmsg);
 	if (vh != NULL && vh->sub.htdocs.errpage_count > 0) {
 		for (int i = 0; i < vh->sub.htdocs.errpage_count; i++) {
-			if (startsWith_nocase(rs.response->code, vh->sub.htdocs.errpages[i]->code)) {
-				header_add(rs.response->headers, "Location", vh->sub.htdocs.errpages[i]->page);
+			if (startsWith_nocase(rs->response->code, vh->sub.htdocs.errpages[i]->code)) {
+				header_add(rs->response->headers, "Location", vh->sub.htdocs.errpages[i]->page);
 			}
 		}
 	}
 	return 0;
 }
 
-int generateResponse(struct reqsess rs) {
+int generateResponse(struct reqsess* rs) {
 	int eh = 1;
-	rs.response->version = rs.request->version;
-	rs.response->code = "200 OK";
-	rs.response->headers->count = 0;
-	rs.response->headers->names = NULL;
-	rs.response->headers->values = NULL;
-	const char* host = header_get(rs.request->headers, "Host");
+	rs->response->version = rs->request->version;
+	rs->response->code = "200 OK";
+	rs->response->headers->count = 0;
+	rs->response->headers->names = NULL;
+	rs->response->headers->values = NULL;
+	const char* host = header_get(rs->request->headers, "Host");
 	if (host == NULL) host = "";
 	struct vhost* vh = NULL;
-	for (int i = 0; i < rs.wp->vhosts_count; i++) {
-		if (rs.wp->vhosts[i]->host_count == 0) {
-			vh = rs.wp->vhosts[i];
+	for (int i = 0; i < rs->wp->vhosts_count; i++) {
+		if (rs->wp->vhosts[i]->host_count == 0) {
+			vh = rs->wp->vhosts[i];
 			break;
-		} else for (int x = 0; x < rs.wp->vhosts[i]->host_count; x++) {
-			if (domeq(rs.wp->vhosts[i]->hosts[x], host)) {
-				vh = rs.wp->vhosts[i];
+		} else for (int x = 0; x < rs->wp->vhosts[i]->host_count; x++) {
+			if (domeq(rs->wp->vhosts[i]->hosts[x], host)) {
+				vh = rs->wp->vhosts[i];
 				break;
 			}
 		}
 		if (vh != NULL) break;
 	}
-	rs.request->vhost = vh;
+	rs->request->vhost = vh;
 	jpvh: ;
-	const char* upg = header_get(rs.request->headers, "Upgrade");
-	if (!streq(rs.response->version, "HTTP/2.0")) {
+	const char* upg = header_get(rs->request->headers, "Upgrade");
+	if (!streq(rs->response->version, "HTTP/2.0")) {
 		if (upg != NULL && streq(upg, "h2")) {
-			//header_set(rs.response->headers, "Upgrade", "h2");
-			//printf("upgrade: %s\n", header_get(rs.response->headers, "HTTP2-Settings"));
+			//header_set(rs->response->headers, "Upgrade", "h2");
+			//printf("upgrade: %s\n", header_get(rs->response->headers, "HTTP2-Settings"));
 		}
 	}
-	header_add(rs.response->headers, "Server", "Avuna/" VERSION);
-	rs.response->body = NULL;
-	header_add(rs.response->headers, "Connection", "keep-alive");
+	header_add(rs->response->headers, "Server", "Avuna/" VERSION);
+	rs->response->body = NULL;
+	header_add(rs->response->headers, "Connection", "keep-alive");
 	int rp = 0;
 	if (vh == NULL) {
-		rs.response->code = "500 Internal Server Error";
+		rs->response->code = "500 Internal Server Error";
 		generateDefaultErrorPage(rs, NULL, "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
 	} else if (vh->type == VHOST_HTDOCS || vh->type == VHOST_RPROXY) {
 		char* extraPath = NULL;
 		rp = vh->type == VHOST_RPROXY;
 		int isStatic = 1;
 		size_t htdl = rp ? 0 : strlen(vh->sub.htdocs.htdocs);
-		size_t pl = strlen(rs.request->path);
+		size_t pl = strlen(rs->request->path);
 		char* tp = xmalloc(htdl + pl);
 		if (!rp) memcpy(tp, vh->sub.htdocs.htdocs, htdl);
-		memcpy(tp + htdl, rs.request->path + 1, pl);
+		memcpy(tp + htdl, rs->request->path + 1, pl);
 		tp[htdl + pl - 1] = 0;
 		char* ttp = strchr(tp, '#');
 		if (ttp != NULL) ttp[0] = 0;
@@ -497,35 +497,35 @@ int generateResponse(struct reqsess rs) {
 		if (ttp != NULL) ttp[0] = 0;
 		char* rtp = NULL;
 		if (vh->sub.htdocs.scacheEnabled) {
-			struct scache* osc = getSCache(&vh->sub.htdocs.cache, rs.request->path, contains_nocase(header_get(rs.request->headers, "Accept-Encoding"), "gzip"));
+			struct scache* osc = getSCache(&vh->sub.htdocs.cache, rs->request->path, contains_nocase(header_get(rs->request->headers, "Accept-Encoding"), "gzip"));
 			if (osc != NULL) {
-				rs.response->body = osc->body;
-				if (rs.response->headers->count > 0) for (int i = 0; i < rs.response->headers->count; i++) {
-					xfree(rs.response->headers->names[i]);
-					xfree(rs.response->headers->values[i]);
+				rs->response->body = osc->body;
+				if (rs->response->headers->count > 0) for (int i = 0; i < rs->response->headers->count; i++) {
+					xfree(rs->response->headers->names[i]);
+					xfree(rs->response->headers->values[i]);
 				}
-				rs.request->atc = 1;
-				if (rs.response->headers->names != NULL) xfree(rs.response->headers->names);
-				if (rs.response->headers->values != NULL) xfree(rs.response->headers->values);
-				rs.response->headers->count = osc->headers->count;
-				rs.response->headers->names = xcopy(osc->headers->names, osc->headers->count * sizeof(char*), 0);
-				rs.response->headers->values = xcopy(osc->headers->values, osc->headers->count * sizeof(char*), 0);
-				for (int i = 0; i < rs.response->headers->count; i++) {
-					rs.response->headers->names[i] = xstrdup(rs.response->headers->names[i], 0);
-					rs.response->headers->values[i] = xstrdup(rs.response->headers->values[i], 0);
+				rs->request->atc = 1;
+				if (rs->response->headers->names != NULL) xfree(rs->response->headers->names);
+				if (rs->response->headers->values != NULL) xfree(rs->response->headers->values);
+				rs->response->headers->count = osc->headers->count;
+				rs->response->headers->names = xcopy(osc->headers->names, osc->headers->count * sizeof(char*), 0);
+				rs->response->headers->values = xcopy(osc->headers->values, osc->headers->count * sizeof(char*), 0);
+				for (int i = 0; i < rs->response->headers->count; i++) {
+					rs->response->headers->names[i] = xstrdup(rs->response->headers->names[i], 0);
+					rs->response->headers->values[i] = xstrdup(rs->response->headers->values[i], 0);
 				}
-				rs.response->code = osc->code;
-				if (rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
-					if (streq(osc->etag, header_get(rs.request->headers, "If-None-Match"))) {
-						rs.response->code = "304 Not Modified";
-						rs.response->body = NULL;
+				rs->response->code = osc->code;
+				if (rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL && rs->response->code[0] == '2') {
+					if (streq(osc->etag, header_get(rs->request->headers, "If-None-Match"))) {
+						rs->response->code = "304 Not Modified";
+						rs->response->body = NULL;
 					}
 				}
 				goto pcacheadd;
 			}
 		}
-		if (pl < 1 || rs.request->path[0] != '/') {
-			rs.response->code = "500 Internal Server Error";
+		if (pl < 1 || rs->request->path[0] != '/') {
+			rs->response->code = "500 Internal Server Error";
 			generateDefaultErrorPage(rs, vh, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
 			goto epage;
 		}
@@ -562,14 +562,14 @@ int generateResponse(struct reqsess rs) {
 					struct stat cs;
 					if (stat(rstp, &cs) < 0) {
 						if (errno == ENOENT || errno == ENOTDIR) {
-							rs.response->code = "404 Not Found";
+							rs->response->code = "404 Not Found";
 							generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
 						} else if (errno == EACCES) {
-							rs.response->code = "403 Forbidden";
+							rs->response->code = "403 Forbidden";
 							generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
 						} else {
-							errlog(rs.wp->logsess, "Error while stating file: %s", strerror(errno));
-							rs.response->code = "500 Internal Server Error";
+							errlog(rs->wp->logsess, "Error while stating file: %s", strerror(errno));
+							rs->response->code = "500 Internal Server Error";
 							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 						}
 						goto epage;
@@ -606,11 +606,11 @@ int generateResponse(struct reqsess rs) {
 			}
 		}
 		if (!ff) {
-			char* tt = xstrdup(rs.request->path, 2);
+			char* tt = xstrdup(rs->request->path, 2);
 			char* ppl = strrchr(tt, '/'); // no extra path because extra paths dont work on directories
 			size_t ppll = strlen(ppl);
 			if (ppl != NULL && (ppll > 1 && ppl[1] != '?' && ppl[1] != '#')) {
-				rs.response->code = "302 Found";
+				rs->response->code = "302 Found";
 				char* el = strpbrk(ppl, "?#");
 				if (el != NULL) {
 					memmove(el, el + 1, strlen(el) + 1);
@@ -620,7 +620,7 @@ int generateResponse(struct reqsess rs) {
 					tt[ttl] = '/';
 					tt[ttl + 1] = 0;
 				}
-				header_add(rs.response->headers, "Location", tt);
+				header_add(rs->response->headers, "Location", tt);
 				xfree(tp);
 				xfree(tt);
 				xfree(extraPath);
@@ -628,7 +628,7 @@ int generateResponse(struct reqsess rs) {
 			}
 			xfree(tt);
 			if (!indf) {
-				rs.response->code = "404 Not Found";
+				rs->response->code = "404 Not Found";
 				generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
 				goto epage;
 			}
@@ -643,21 +643,21 @@ int generateResponse(struct reqsess rs) {
 			tp = NULL;
 			if (rtp == NULL) {
 				if (errno == ENOENT || errno == ENOTDIR) {
-					rs.response->code = "404 Not Found";
+					rs->response->code = "404 Not Found";
 					generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
 				} else if (errno == EACCES) {
-					rs.response->code = "403 Forbidden";
+					rs->response->code = "403 Forbidden";
 					generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
 				} else {
-					errlog(rs.wp->logsess, "Error while getting the realpath of a file: %s", strerror(errno));
-					rs.response->code = "500 Internal Server Error";
+					errlog(rs->wp->logsess, "Error while getting the realpath of a file: %s", strerror(errno));
+					rs->response->code = "500 Internal Server Error";
 					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 				}
 				goto epage;
 			}
 			if (stat(rtp, &st) != 0) {
-				errlog(rs.wp->logsess, "Failed stat on <%s>: %s", rtp, strerror(errno));
-				rs.response->code = "500 Internal Server Error";
+				errlog(rs->wp->logsess, "Failed stat on <%s>: %s", rtp, strerror(errno));
+				rs->response->code = "500 Internal Server Error";
 				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 				goto epage;
 			}
@@ -668,23 +668,23 @@ int generateResponse(struct reqsess rs) {
 				rtp[rtpl] = 0;
 			}
 			if (vh->sub.htdocs.symlock && !startsWith(rtp, vh->sub.htdocs.htdocs)) {
-				rs.response->code = "404 Not Found";
+				rs->response->code = "404 Not Found";
 				generateDefaultErrorPage(rs, vh, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
 				goto epage;
 			}
 			if (vh->sub.htdocs.nohardlinks && st.st_nlink != 1 && !(st.st_mode & S_IFDIR)) {
-				rs.response->code = "403 Forbidden";
+				rs->response->code = "403 Forbidden";
 				generateDefaultErrorPage(rs, vh, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
 				goto epage;
 			}
 		}
 		//TODO: overrides
 		if (rp) {
-			resrp: if (rs.sender->fw_fd < 0) {
-				rs.sender->fw_fd = socket(vh->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
-				if (rs.sender->fw_fd < 0 || connect(rs.sender->fw_fd, vh->sub.rproxy.fwaddr, vh->sub.rproxy.fwaddrlen) < 0) {
-					errlog(rs.wp->logsess, "Failed to create/connect to forwarding socket: %s", strerror(errno));
-					rs.response->code = "500 Internal Server Error";
+			resrp: if (rs->sender->fw_fd < 0) {
+				rs->sender->fw_fd = socket(vh->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+				if (rs->sender->fw_fd < 0 || connect(rs->sender->fw_fd, vh->sub.rproxy.fwaddr, vh->sub.rproxy.fwaddrlen) < 0) {
+					errlog(rs->wp->logsess, "Failed to create/connect to forwarding socket: %s", strerror(errno));
+					rs->response->code = "500 Internal Server Error";
 					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 					goto epage;
 				}
@@ -693,48 +693,50 @@ int generateResponse(struct reqsess rs) {
 			unsigned char* sreq = serializeRequest(rs, &sreql);
 			size_t wr = 0;
 			while (wr < sreql) {
-				int x = write(rs.sender->fw_fd, sreq + wr, sreql - wr);
+				int x = write(rs->sender->fw_fd, sreq + wr, sreql - wr);
 				if (x < 1) {
-					close(rs.sender->fw_fd);
-					rs.sender->fw_fd = -1;
+					close(rs->sender->fw_fd);
+					rs->sender->fw_fd = -1;
 					goto resrp;
 				}
 				wr += x;
 			}
 			xfree(sreq);
-			if (rs.sender->fwqueue == NULL) {
-				rs.sender->fwqueue = new_queue(0, sizeof(struct reqsess));
+			if (rs->sender->fwqueue == NULL) {
+				rs->sender->fwqueue = new_queue(0, 1);
 			}
-			rs.sender->fwed = 1;
+			rs->sender->fwed = 1;
 			eh = 0;
-			add_queue(rs.sender->fwqueue, &rs);
+			struct reqsess* rs2 = xmalloc(sizeof(struct reqsess));
+			memcpy(rs2, &rs, sizeof(struct reqsess));
+			add_queue(rs->sender->fwqueue, rs2);
 		} else {
-			rs.response->body = xmalloc(sizeof(struct body));
-			rs.response->body->len = 0;
-			rs.response->body->data = NULL;
+			rs->response->body = xmalloc(sizeof(struct body));
+			rs->response->body->len = 0;
+			rs->response->body->data = NULL;
 			const char* ext = strrchr(rtp, '.');
 			if (ext == NULL) {
-				rs.response->body->mime_type = xstrdup("application/octet-stream", 0);
-				rs.response->body->freeMime = 1;
+				rs->response->body->mime_type = xstrdup("application/octet-stream", 0);
+				rs->response->body->freeMime = 1;
 			} else {
 				const char* mime = getMimeForExt(ext + 1);
 				if (mime == NULL) {
-					rs.response->body->mime_type = xstrdup("application/octet-stream", 0);
-					rs.response->body->freeMime = 1;
+					rs->response->body->mime_type = xstrdup("application/octet-stream", 0);
+					rs->response->body->freeMime = 1;
 				} else {
-					rs.response->body->mime_type = xstrdup(mime, 0);
-					rs.response->body->freeMime = 1;
+					rs->response->body->mime_type = xstrdup(mime, 0);
+					rs->response->body->freeMime = 1;
 				}
 			}
-			rs.response->body->stream_fd = -1;
-			rs.response->body->stream_type = -1;
+			rs->response->body->stream_fd = -1;
+			rs->response->body->stream_type = -1;
 		}
-		if (!rp && rs.response->body != NULL && rs.response->body->mime_type != NULL) for (int i = 0; i < vh->sub.htdocs.fcgi_count; i++) {
+		if (!rp && rs->response->body != NULL && rs->response->body->mime_type != NULL) for (int i = 0; i < vh->sub.htdocs.fcgi_count; i++) {
 			struct fcgi* fcgi = vh->sub.htdocs.fcgis[i];
 			int df = 0;
 			for (int m = 0; m < fcgi->mime_count; m++) {
 				char* mime = fcgi->mimes[m];
-				if (streq_nocase(mime, rs.response->body->mime_type)) {
+				if (streq_nocase(mime, rs->response->body->mime_type)) {
 					df = 1;
 					break;
 				}
@@ -743,19 +745,19 @@ int generateResponse(struct reqsess rs) {
 				isStatic = 0;
 				int fc = 0;
 				sofcgi: ;
-				//printf("%i, %i\n", rs.wp->i, i);
-				//int ffd = vh->sub.htdocs.fcgifds[rs.wp->i][i];
+				//printf("%i, %i\n", rs->wp->i, i);
+				//int ffd = vh->sub.htdocs.fcgifds[rs->wp->i][i];
 				int ffd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
 				if (ffd < 0) {
-					errlog(rs.wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
-					rs.response->code = "500 Internal Server Error";
+					errlog(rs->wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
+					rs->response->code = "500 Internal Server Error";
 					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 					//if (ff.data != NULL) xfree(ff.data);
 					goto epage;
 				}
 				if (connect(ffd, fcgi->addr, fcgi->addrlen)) {
-					errlog(rs.wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
-					rs.response->code = "500 Internal Server Error";
+					errlog(rs->wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
+					rs->response->code = "500 Internal Server Error";
 					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 					//if (ff.data != NULL) xfree(ff.data);
 					close(ffd);
@@ -773,29 +775,29 @@ int generateResponse(struct reqsess rs) {
 				memset(pkt + 3, 0, 5);
 				ff.data = pkt;
 				if (writeFCGIFrame(ffd, &ff)) {
-					errlog(rs.wp->logsess, "Failed to write to FCGI Server! File: %s Error: %s, restarting connection!", rtp, strerror(errno));
+					errlog(rs->wp->logsess, "Failed to write to FCGI Server! File: %s Error: %s, restarting connection!", rtp, strerror(errno));
 					if (fc > 0) {
-						errlog(rs.wp->logsess, "Connection failed restart, perhaps FCGI server is down?");
-						rs.response->code = "500 Internal Server Error";
+						errlog(rs->wp->logsess, "Connection failed restart, perhaps FCGI server is down?");
+						rs->response->code = "500 Internal Server Error";
 						generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 						goto epage;
 					}
 					int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
 					if (fd < 0) {
-						errlog(rs.wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
+						errlog(rs->wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
 						continue;
 					}
 					if (connect(fd, fcgi->addr, fcgi->addrlen)) {
-						errlog(rs.wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
+						errlog(rs->wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
 						continue;
 					}
 					close(ffd);
-					vh->sub.htdocs.fcgifds[rs.wp->i][i] = fd;
+					vh->sub.htdocs.fcgifds[rs->wp->i][i] = fd;
 					fc++;
 					goto sofcgi;
 				}
 				//TODO: SERVER_ADDR
-				char* rq = xstrdup(rs.request->path, 0);
+				char* rq = xstrdup(rs->request->path, 0);
 				{
 					char* ht = strchr(rq, '#');
 					if (ht != NULL) ht[0] = 0;
@@ -807,30 +809,30 @@ int generateResponse(struct reqsess rs) {
 				} else {
 					get = "";
 				}
-				writeFCGIParam(ffd, "REQUEST_URI", rs.request->path);
+				writeFCGIParam(ffd, "REQUEST_URI", rs->request->path);
 				char cl[16];
-				if (rs.request->body != NULL) {
-					snprintf(cl, 16, "%i", rs.request->body->len);
+				if (rs->request->body != NULL) {
+					snprintf(cl, 16, "%i", rs->request->body->len);
 				} else {
 					cl[0] = '0';
 					cl[1] = 0;
 				}
 				writeFCGIParam(ffd, "CONTENT_LENGTH", cl);
-				if (rs.request->body != NULL && rs.request->body->mime_type != NULL) writeFCGIParam(ffd, "CONTENT_TYPE", rs.request->body->mime_type);
+				if (rs->request->body != NULL && rs->request->body->mime_type != NULL) writeFCGIParam(ffd, "CONTENT_TYPE", rs->request->body->mime_type);
 				writeFCGIParam(ffd, "GATEWAY_INTERFACE", "CGI/1.1");
 				writeFCGIParam(ffd, "QUERY_STRING", get);
 				{
 					char tip[48];
 					char* mip = tip;
-					if (rs.sender->addr.sin6_family == AF_INET) {
-						struct sockaddr_in *sip4 = (struct sockaddr_in*) &rs.sender->addr;
+					if (rs->sender->addr.sin6_family == AF_INET) {
+						struct sockaddr_in *sip4 = (struct sockaddr_in*) &rs->sender->addr;
 						inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
-					} else if (rs.sender->addr.sin6_family == AF_INET6) {
-						struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &rs.sender->addr;
+					} else if (rs->sender->addr.sin6_family == AF_INET6) {
+						struct sockaddr_in6 *sip6 = (struct sockaddr_in6*) &rs->sender->addr;
 						if (memseq((unsigned char*) &sip6->sin6_addr, 10, 0) && memseq((unsigned char*) &sip6->sin6_addr + 10, 2, 0xff)) {
 							inet_ntop(AF_INET, ((unsigned char*) &sip6->sin6_addr) + 12, tip, 48);
 						} else inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
-					} else if (rs.sender->addr.sin6_family == AF_LOCAL) {
+					} else if (rs->sender->addr.sin6_family == AF_LOCAL) {
 						mip = "UNIX";
 					} else {
 						mip = "UNKNOWN";
@@ -839,10 +841,10 @@ int generateResponse(struct reqsess rs) {
 					writeFCGIParam(ffd, "REMOTE_ADDR", mip);
 					writeFCGIParam(ffd, "REMOTE_HOST", mip);
 				}
-				if (rs.sender->addr.sin6_family == AF_INET) {
-					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in*) &rs.sender->addr)->sin_port));
-				} else if (rs.sender->addr.sin6_family == AF_INET6) {
-					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in6*) &rs.sender->addr)->sin6_port));
+				if (rs->sender->addr.sin6_family == AF_INET) {
+					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in*) &rs->sender->addr)->sin_port));
+				} else if (rs->sender->addr.sin6_family == AF_INET6) {
+					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in6*) &rs->sender->addr)->sin6_port));
 				} else {
 					cl[0] = '0';
 					cl[1] = 0;
@@ -861,27 +863,27 @@ int generateResponse(struct reqsess rs) {
 					writeFCGIParam(ffd, "PATH_INFO", "");
 					writeFCGIParam(ffd, "PATH_TRANSLATED", "");
 				}
-				writeFCGIParam(ffd, "REQUEST_METHOD", getMethod(rs.request->method));
+				writeFCGIParam(ffd, "REQUEST_METHOD", getMethod(rs->request->method));
 				char rss[4];
 				rss[3] = 0;
-				memcpy(rss, rs.response->code, 3);
+				memcpy(rss, rs->response->code, 3);
 				writeFCGIParam(ffd, "REDIRECT_STATUS", rss);
 				size_t htl = strlen(vh->sub.htdocs.htdocs);
 				int htes = vh->sub.htdocs.htdocs[htl - 1] == '/';
 				size_t rtpl = strlen(rtp);
-				if (rtpl < htl) errlog(rs.wp->logsess, "Setting FCGI SCRIPT_NAME requires the file to be in htdocs! @ %s", rtp);
+				if (rtpl < htl) errlog(rs->wp->logsess, "Setting FCGI SCRIPT_NAME requires the file to be in htdocs! @ %s", rtp);
 				else writeFCGIParam(ffd, "SCRIPT_NAME", rtp + htl + (htes ? -1 : 0));
 				if (host != NULL) writeFCGIParam(ffd, "SERVER_NAME", host);
-				snprintf(cl, 16, "%i", rs.wp->sport);
+				snprintf(cl, 16, "%i", rs->wp->sport);
 				writeFCGIParam(ffd, "SERVER_PORT", cl);
-				writeFCGIParam(ffd, "SERVER_PROTOCOL", rs.request->version);
+				writeFCGIParam(ffd, "SERVER_PROTOCOL", rs->request->version);
 				writeFCGIParam(ffd, "SERVER_SOFTWARE", "Avuna/" VERSION);
 				writeFCGIParam(ffd, "DOCUMENT_ROOT", vh->sub.htdocs.htdocs);
 				writeFCGIParam(ffd, "SCRIPT_FILENAME", rtp);
-				for (int i = 0; i < rs.request->headers->count; i++) {
-					const char* name = rs.request->headers->names[i];
+				for (int i = 0; i < rs->request->headers->count; i++) {
+					const char* name = rs->request->headers->names[i];
 					if (streq_nocase(name, "Accept-Encoding")) continue;
-					const char* value = rs.request->headers->values[i];
+					const char* value = rs->request->headers->values[i];
 					size_t nl = strlen(name);
 					char nname[nl + 6];
 					nname[0] = 'H';
@@ -903,17 +905,17 @@ int generateResponse(struct reqsess rs) {
 				ff.data = NULL;
 				writeFCGIFrame(ffd, &ff);
 				ff.type = FCGI_STDIN;
-				if (rs.request->body != NULL && rs.request->body->len > 0) {
-					ff.len = rs.request->body->len;
-					ff.data = rs.request->body->data;
+				if (rs->request->body != NULL && rs->request->body->len > 0) {
+					ff.len = rs->request->body->len;
+					ff.data = rs->request->body->data;
 					writeFCGIFrame(ffd, &ff);
 				}
 				ff.len = 0;
 				writeFCGIFrame(ffd, &ff);
-				if (rs.response->body != NULL) {
-					xfree(rs.response->body->data);
-					xfree(rs.response->body);
-					rs.response->body = NULL;
+				if (rs->response->body != NULL) {
+					xfree(rs->response->body->data);
+					xfree(rs->response->body);
+					rs->response->body = NULL;
 				}
 				xfree(rq);
 				char* ct = NULL;
@@ -923,32 +925,32 @@ int generateResponse(struct reqsess rs) {
 				//printf("read fcgi on %i\n", ffd);
 				while (ff.type != FCGI_END_REQUEST) {
 					if (readFCGIFrame(ffd, &ff)) {
-						errlog(rs.wp->logsess, "Error reading from FCGI server: %s", strerror(errno));
+						errlog(rs->wp->logsess, "Error reading from FCGI server: %s", strerror(errno));
 						if (fc > 0) {
-							errlog(rs.wp->logsess, "Connection failed restart, perhaps FCGI server is down?");
-							rs.response->code = "500 Internal Server Error";
+							errlog(rs->wp->logsess, "Connection failed restart, perhaps FCGI server is down?");
+							rs->response->code = "500 Internal Server Error";
 							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 							//if (ff.data != NULL) xfree(ff.data);
 							goto epage;
 						}
 						int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
 						if (fd < 0) {
-							errlog(rs.wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
-							rs.response->code = "500 Internal Server Error";
+							errlog(rs->wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
+							rs->response->code = "500 Internal Server Error";
 							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 							//if (ff.data != NULL) xfree(ff.data);
 							goto epage;
 						}
 						if (connect(fd, fcgi->addr, fcgi->addrlen)) {
-							errlog(rs.wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
-							rs.response->code = "500 Internal Server Error";
+							errlog(rs->wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
+							rs->response->code = "500 Internal Server Error";
 							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 							//if (ff.data != NULL) xfree(ff.data);
 							close(fd);
 							goto epage;
 						}
 						close(ffd);
-						vh->sub.htdocs.fcgifds[rs.wp->i][i] = fd;
+						vh->sub.htdocs.fcgifds[rs->wp->i][i] = fd;
 						fc++;
 						goto sofcgi;
 
@@ -959,7 +961,7 @@ int generateResponse(struct reqsess rs) {
 						continue;
 					}
 					if (ff.type == FCGI_STDERR) {
-						errlog(rs.wp->logsess, "FCGI STDERR <%s>: %s", rtp, ff.data);
+						errlog(rs->wp->logsess, "FCGI STDERR <%s>: %s", rtp, ff.data);
 					}
 					if (ff.type == FCGI_STDOUT || ff.type == FCGI_STDERR) {
 						int hr = 0;
@@ -1015,34 +1017,34 @@ int generateResponse(struct reqsess rs) {
 									if (ct != NULL) xfree(ct);
 									ct = xstrdup(value, 0);
 								} else if (streq_nocase(name, "Status")) {
-									if (!rs.response->parsed) {
-										rs.response->parsed = 2;
+									if (!rs->response->parsed) {
+										rs->response->parsed = 2;
 									} else {
-										xfree(rs.response->code);
+										xfree(rs->response->code);
 									}
-									rs.response->code = xstrdup(value, 0);
+									rs->response->code = xstrdup(value, 0);
 								} else if (streq_nocase(name, "ETag")) {
 
-								} else header_add(rs.response->headers, name, value);
+								} else header_add(rs->response->headers, name, value);
 							}
 						}
 						//printf("hr %i, fflem %i\n", hr, ff.len);
 						if (hr <= ff.len) {
 							unsigned char* ffd = ff.data + hr;
 							ff.len -= hr;
-							if (rs.response->body == NULL) {
-								rs.response->body = xmalloc(sizeof(struct body));
-								rs.response->body->data = xmalloc(ff.len);
-								memcpy(rs.response->body->data, ffd, ff.len);
-								rs.response->body->len = ff.len;
-								rs.response->body->mime_type = ct == NULL ? xstrdup("text/html", 0) : ct;
-								rs.response->body->freeMime = 1;
-								rs.response->body->stream_fd = -1;
-								rs.response->body->stream_type = -1;
+							if (rs->response->body == NULL) {
+								rs->response->body = xmalloc(sizeof(struct body));
+								rs->response->body->data = xmalloc(ff.len);
+								memcpy(rs->response->body->data, ffd, ff.len);
+								rs->response->body->len = ff.len;
+								rs->response->body->mime_type = ct == NULL ? xstrdup("text/html", 0) : ct;
+								rs->response->body->freeMime = 1;
+								rs->response->body->stream_fd = -1;
+								rs->response->body->stream_type = -1;
 							} else {
-								rs.response->body->len += ff.len;
-								rs.response->body->data = xrealloc(rs.response->body->data, rs.response->body->len);
-								memcpy(rs.response->body->data + rs.response->body->len - ff.len, ffd, ff.len);
+								rs->response->body->len += ff.len;
+								rs->response->body->data = xrealloc(rs->response->body->data, rs->response->body->len);
+								memcpy(rs->response->body->data + rs->response->body->len - ff.len, ffd, ff.len);
 							}
 						}
 					}
@@ -1053,16 +1055,16 @@ int generateResponse(struct reqsess rs) {
 			}
 		}
 		if (isStatic) {
-			if (vh->sub.htdocs.maxAge > 0 && rs.response->body != NULL) {
+			if (vh->sub.htdocs.maxAge > 0 && rs->response->body != NULL) {
 				int dcc = 0;
 				for (int i = 0; i < vh->sub.htdocs.cacheType_count; i++) {
-					if (streq_nocase(vh->sub.htdocs.cacheTypes[i], rs.response->body->mime_type)) {
+					if (streq_nocase(vh->sub.htdocs.cacheTypes[i], rs->response->body->mime_type)) {
 						dcc = 1;
 						break;
 					} else if (endsWith(vh->sub.htdocs.cacheTypes[i], "/*")) {
 						char* nct = xstrdup(vh->sub.htdocs.cacheTypes[i], 0);
 						nct[strlen(nct) - 1] = 0;
-						if (startsWith(rs.response->body->mime_type, nct)) {
+						if (startsWith(rs->response->body->mime_type, nct)) {
 							dcc = 1;
 							xfree(nct);
 							break;
@@ -1079,25 +1081,25 @@ int generateResponse(struct reqsess rs) {
 				} else {
 					ccbuf[8 + snr] = 0;
 				}
-				header_add(rs.response->headers, "Cache-Control", ccbuf);
+				header_add(rs->response->headers, "Cache-Control", ccbuf);
 			}
 		}
 		if (!rp && isStatic) {
 			int ffd = open(rtp, O_RDONLY);
 			if (ffd < 0) {
-				errlog(rs.wp->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
-				rs.response->code = "500 Internal Server Error";
+				errlog(rs->wp->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
+				rs->response->code = "500 Internal Server Error";
 				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 				goto epage;
 			}
-			rs.response->body->data = xmalloc(st.st_size);
+			rs->response->body->data = xmalloc(st.st_size);
 			int r = 0;
-			while ((r = read(ffd, rs.response->body->data + rs.response->body->len, st.st_size - rs.response->body->len)) > 0) {
-				rs.response->body->len += r;
+			while ((r = read(ffd, rs->response->body->data + rs->response->body->len, st.st_size - rs->response->body->len)) > 0) {
+				rs->response->body->len += r;
 			}
 			if (r < 0) {
-				errlog(rs.wp->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
-				rs.response->code = "500 Internal Server Error";
+				errlog(rs->wp->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
+				rs->response->code = "500 Internal Server Error";
 				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 				goto epage;
 			}
@@ -1110,10 +1112,10 @@ int generateResponse(struct reqsess rs) {
 		char etag[35];
 		int hetag = 0;
 		int nm = 0;
-		if (!rp && rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
+		if (!rp && rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL && rs->response->code[0] == '2') {
 			MD5_CTX md5ctx;
 			MD5_Init(&md5ctx);
-			MD5_Update(&md5ctx, rs.response->body->data, rs.response->body->len);
+			MD5_Update(&md5ctx, rs->response->body->data, rs->response->body->len);
 			unsigned char rawmd5[16];
 			MD5_Final(rawmd5, &md5ctx);
 			hetag = 1;
@@ -1123,21 +1125,21 @@ int generateResponse(struct reqsess rs) {
 				snprintf(etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
 			}
 			etag[33] = '\"';
-			header_add(rs.response->headers, "ETag", etag);
-			if (streq(etag, header_get(rs.request->headers, "If-None-Match"))) {
+			header_add(rs->response->headers, "ETag", etag);
+			if (streq(etag, header_get(rs->request->headers, "If-None-Match"))) {
 				nm = 1;
 				if (!isStatic) {
-					rs.response->code = "304 Not Modified";
-					xfree(rs.response->body->data);
-					xfree(rs.response->body);
-					rs.response->body = NULL;
+					rs->response->code = "304 Not Modified";
+					xfree(rs->response->body->data);
+					xfree(rs->response->body);
+					rs->response->body = NULL;
 				}
 			}
 		}
-		const char* cce = header_get(rs.response->headers, "Content-Encoding");
+		const char* cce = header_get(rs->response->headers, "Content-Encoding");
 		int wgz = streq(cce, "gzip");
-		if (rs.response->body != NULL && rs.response->body->len > 1024 && cce == NULL) {
-			const char* accenc = header_get(rs.request->headers, "Accept-Encoding");
+		if (rs->response->body != NULL && rs->response->body->len > 1024 && cce == NULL) {
+			const char* accenc = header_get(rs->request->headers, "Accept-Encoding");
 			if (contains_nocase(accenc, "gzip")) {
 				z_stream strm;
 				strm.zalloc = Z_NULL;
@@ -1145,11 +1147,11 @@ int generateResponse(struct reqsess rs) {
 				strm.opaque = Z_NULL;
 				int dr = 0;
 				if ((dr = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY)) != Z_OK) { // TODO: configurable level?
-					errlog(rs.wp->logsess, "Error with zlib defaultInit: %i", dr);
+					errlog(rs->wp->logsess, "Error with zlib defaultInit: %i", dr);
 					goto pgzip;
 				}
-				strm.avail_in = rs.response->body->len;
-				strm.next_in = rs.response->body->data;
+				strm.avail_in = rs->response->body->len;
+				strm.next_in = rs->response->body->data;
 				void* cdata = xmalloc(16384);
 				size_t ts = 0;
 				size_t cc = 16384;
@@ -1166,38 +1168,38 @@ int generateResponse(struct reqsess rs) {
 					}
 					if (dr == Z_STREAM_ERROR) {
 						xfree(cdata);
-						errlog(rs.wp->logsess, "Stream error with zlib deflate");
+						errlog(rs->wp->logsess, "Stream error with zlib deflate");
 						goto pgzip;
 					}
 				} while (strm.avail_out == 0);
 				deflateEnd(&strm);
-				xfree(rs.response->body->data);
+				xfree(rs->response->body->data);
 				cdata = xrealloc(cdata, ts); // shrink
-				rs.response->body->data = cdata;
-				rs.response->body->len = ts;
-				header_add(rs.response->headers, "Content-Encoding", "gzip");
-				header_add(rs.response->headers, "Vary", "Accept-Encoding");
+				rs->response->body->data = cdata;
+				rs->response->body->len = ts;
+				header_add(rs->response->headers, "Content-Encoding", "gzip");
+				header_add(rs->response->headers, "Vary", "Accept-Encoding");
 				wgz = 1;
 			}
 		}
 		pgzip: if (isStatic && vh->sub.htdocs.scacheEnabled && (vh->sub.htdocs.maxCache <= 0 || vh->sub.htdocs.maxCache < getCacheSize(&vh->sub.htdocs.cache))) {
 			if (rp) {
-				rs.request->atc = 1;
+				rs->request->atc = 1;
 			} else {
 				struct scache* sc = xmalloc(sizeof(struct scache));
-				sc->body = rs.response->body;
+				sc->body = rs->response->body;
 				sc->ce = wgz;
-				sc->code = rs.response->code;
+				sc->code = rs->response->code;
 				if (eh) {
-					if (rs.response->body != NULL) header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
+					if (rs->response->body != NULL) header_setoradd(rs->response->headers, "Content-Type", rs->response->body->mime_type);
 					char l[16];
-					if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);
-					header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
+					if (rs->response->body != NULL) sprintf(l, "%u", (unsigned int) rs->response->body->len);
+					header_setoradd(rs->response->headers, "Content-Length", rs->response->body == NULL ? "0" : l);
 				}
-				sc->headers = rs.response->headers;
-				sc->rp = rs.request->path;
+				sc->headers = rs->response->headers;
+				sc->rp = rs->request->path;
 				if (!hetag) {
-					if (rs.response->body == NULL) {
+					if (rs->response->body == NULL) {
 						hetag = 1;
 						etag[0] = '\"';
 						memset(etag + 1, '0', 32);
@@ -1206,7 +1208,7 @@ int generateResponse(struct reqsess rs) {
 					} else {
 						MD5_CTX md5ctx;
 						MD5_Init(&md5ctx);
-						MD5_Update(&md5ctx, rs.response->body->data, rs.response->body->len);
+						MD5_Update(&md5ctx, rs->response->body->data, rs->response->body->len);
 						unsigned char rawmd5[16];
 						MD5_Final(rawmd5, &md5ctx);
 						hetag = 1;
@@ -1220,11 +1222,11 @@ int generateResponse(struct reqsess rs) {
 				}
 				memcpy(sc->etag, etag, 35);
 				addSCache(&vh->sub.htdocs.cache, sc);
-				rs.response->fromCache = sc;
-				rs.request->atc = 1;
+				rs->response->fromCache = sc;
+				rs->request->atc = 1;
 				if (nm) {
-					rs.response->body = NULL;
-					rs.response->code = "304 Not Modified";
+					rs->response->body = NULL;
+					rs->response->code = "304 Not Modified";
 				}
 			}
 		}
@@ -1233,17 +1235,17 @@ int generateResponse(struct reqsess rs) {
 		if (extraPath != NULL) xfree(extraPath);
 		if (rtp != NULL) xfree(rtp);
 	} else if (vh->type == VHOST_REDIRECT) {
-		rs.response->code = "302 Found";
-		header_add(rs.response->headers, "Location", vh->sub.redirect.redir);
+		rs->response->code = "302 Found";
+		header_add(rs->response->headers, "Location", vh->sub.redirect.redir);
 	} else if (vh->type == VHOST_MOUNT) {
 		struct vhost_mount* vhm = &vh->sub.mount;
 		char* oid = vh->id;
-		char* orq = rs.request->path;
+		char* orq = rs->request->path;
 		vh = NULL;
 		for (int i = 0; i < vhm->vhm_count; i++) {
-			if (startsWith(rs.request->path, vhm->vhms[i].path)) {
-				for (int x = 0; x < rs.wp->vhosts_count; x++) {
-					if (streq_nocase(vhm->vhms[i].vh, rs.wp->vhosts[x]->id) && !streq_nocase(rs.wp->vhosts[x]->id, oid)) {
+			if (startsWith(rs->request->path, vhm->vhms[i].path)) {
+				for (int x = 0; x < rs->wp->vhosts_count; x++) {
+					if (streq_nocase(vhm->vhms[i].vh, rs->wp->vhosts[x]->id) && !streq_nocase(rs->wp->vhosts[x]->id, oid)) {
 						size_t vhpls = strlen(vhm->vhms[i].path);
 						char* tmpp = xstrdup(orq, 0);
 						char* tmpp2 = tmpp + vhpls;
@@ -1251,27 +1253,27 @@ int generateResponse(struct reqsess rs) {
 							tmpp2--;
 							tmpp2[0] = '/';
 						}
-						rs.request->path = xstrdup(tmpp2, 0);
+						rs->request->path = xstrdup(tmpp2, 0);
 						xfree(tmpp);
-						vh = rs.wp->vhosts[x];
+						vh = rs->wp->vhosts[x];
 						break;
 					}
 				}
 				if (vh != NULL) break;
 			}
 		}
-		if (orq != rs.request->path) xfree(orq);
+		if (orq != rs->request->path) xfree(orq);
 		goto jpvh;
 	}
 	pvh:
 //body stuff
-	if (eh && !rp && rs.response->body != NULL && rs.response->body->mime_type != NULL) {
-		header_setoradd(rs.response->headers, "Content-Type", rs.response->body->mime_type);
+	if (eh && !rp && rs->response->body != NULL && rs->response->body->mime_type != NULL) {
+		header_setoradd(rs->response->headers, "Content-Type", rs->response->body->mime_type);
 	}
 	if (eh && !rp) {
 		char l[16];
-		if (rs.response->body != NULL) sprintf(l, "%u", (unsigned int) rs.response->body->len);		//TODO: might be a size limit here
-		header_setoradd(rs.response->headers, "Content-Length", rs.response->body == NULL ? "0" : l);
+		if (rs->response->body != NULL) sprintf(l, "%u", (unsigned int) rs->response->body->len);		//TODO: might be a size limit here
+		header_setoradd(rs->response->headers, "Content-Length", rs->response->body == NULL ? "0" : l);
 	}
 	return 0;
 }

@@ -30,7 +30,7 @@
 #include "oqueue.h"
 #include "http2.h"
 
-void freeReqsess(struct reqsess rs);
+void freeReqsess(struct reqsess* rs);
 
 void closeConn(struct work_param* param, struct conn* conn) {
 	if (conn->tls) {
@@ -49,9 +49,9 @@ void closeConn(struct work_param* param, struct conn* conn) {
 	if (conn->fw_fd >= 0) close(conn->fw_fd);
 	if (conn->stream_type >= 0) {
 		if (conn->fw_fd != conn->stream_fd) close(conn->stream_fd);
-		struct reqsess rs;
+		struct reqsess* rs;
 		for (int i = 0; i < conn->fwqueue->size; i++) {
-			pop_queue(conn->fwqueue, &rs);
+			rs = pop_queue(conn->fwqueue);
 			freeReqsess(rs);
 		}
 	}
@@ -65,11 +65,11 @@ void closeConn(struct work_param* param, struct conn* conn) {
 	xfree(conn);
 }
 
-void sendReqsess(struct reqsess rs, struct timespec* stt) {
-	struct conn* conn = rs.sender;
-	struct work_param* param = rs.wp;
-	struct response* resp = rs.response;
-	struct request* req = rs.request;
+void sendReqsess(struct reqsess* rs, struct timespec* stt) {
+	struct conn* conn = rs->sender;
+	struct work_param* param = rs->wp;
+	struct response* resp = rs->response;
+	struct request* req = rs->request;
 	if (!conn->fwed) {
 		size_t rl = 0;
 		unsigned char* rda = serializeResponse(rs, &rl);
@@ -112,9 +112,9 @@ void sendReqsess(struct reqsess rs, struct timespec* stt) {
 	}
 }
 
-void freeReqsess(struct reqsess rs) {
-	struct response* resp = rs.response;
-	struct request* req = rs.request;
+void freeReqsess(struct reqsess* rs) {
+	struct response* resp = rs->response;
+	struct request* req = rs->request;
 	if (!req->atc) xfree(req->path);
 	xfree(req->version);
 	freeHeaders(req->headers);
@@ -139,6 +139,7 @@ void freeReqsess(struct reqsess rs) {
 	}
 	xfree(req);
 	xfree(resp);
+	xfree(rs);
 }
 
 void handleRequest(struct timespec* stt, struct conn* conn, struct work_param* param, struct request* req) {
@@ -149,11 +150,11 @@ void handleRequest(struct timespec* stt, struct conn* conn, struct work_param* p
 	resp->version = "HTTP/1.1";
 	resp->fromCache = NULL;
 	resp->headers = xmalloc(sizeof(struct headers));
-	struct reqsess rs;
-	rs.wp = param;
-	rs.sender = conn;
-	rs.response = resp;
-	rs.request = req;
+	struct reqsess* rs = xmalloc(sizeof(struct reqsess));
+	rs->wp = param;
+	rs->sender = conn;
+	rs->response = resp;
+	rs->request = req;
 	generateResponse(rs);
 	int fwed = conn->fwed;
 	sendReqsess(rs, stt);
@@ -190,7 +191,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 		int se = 0;
 		if (conn->stream_type == 0) {
 			size_t rbs = conn->fw_readBuffer_size;
-			if (conn->frs.response->fromCache != NULL) {
+			if (conn->frs->response->fromCache != NULL) {
 				if (conn->stream_md5 == NULL) {
 					conn->stream_md5 = xmalloc(sizeof(MD5_CTX));
 					MD5_Init(conn->stream_md5);
@@ -202,7 +203,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 			} else {
 				conn->writeBuffer = xrealloc(conn->writeBuffer, conn->writeBuffer_size + rbs);
 			}
-			if (conn->frs.request->atc) {
+			if (conn->frs->request->atc) {
 				if (conn->staticStreamCacheBuffer == NULL) {
 					conn->staticStreamCacheBuffer = xmalloc(rbs);
 					conn->sscbl = 0;
@@ -226,35 +227,35 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 			conn->streamed += rbs;
 			conn->fw_readBuffer_checked = 0;
 			if (conn->streamed >= conn->stream_len) {
-				if (conn->frs.request->atc) {
+				if (conn->frs->request->atc) {
 					int patc = 0;
 					int ib = 0;
-					const char* ct = header_get(conn->frs.response->headers, "Content-Type");
-					for (int i = 0; i < conn->frs.request->vhost->sub.rproxy.dmime_count; i++) {
-						if (streq_nocase(conn->frs.request->vhost->sub.rproxy.dmimes[i], ct)) {
+					const char* ct = header_get(conn->frs->response->headers, "Content-Type");
+					for (int i = 0; i < conn->frs->request->vhost->sub.rproxy.dmime_count; i++) {
+						if (streq_nocase(conn->frs->request->vhost->sub.rproxy.dmimes[i], ct)) {
 							ib = 1;
 							break;
 						}
 					}
 					if (!ib) {
-						conn->frs.request->atc = 1;
+						conn->frs->request->atc = 1;
 						struct scache* sc = xmalloc(sizeof(struct scache));
-						if (conn->frs.response->body == NULL) {
-							conn->frs.response->body = xmalloc(sizeof(struct body));
+						if (conn->frs->response->body == NULL) {
+							conn->frs->response->body = xmalloc(sizeof(struct body));
 						}
-						conn->frs.response->body->data = conn->staticStreamCacheBuffer;
+						conn->frs->response->body->data = conn->staticStreamCacheBuffer;
 						conn->staticStreamCacheBuffer = NULL;
-						conn->frs.response->body->len = conn->sscbl;
-						conn->frs.response->body->stream_type = -1;
-						conn->frs.response->body->stream_fd = -1;
-						conn->frs.response->body->mime_type = ct;
-						conn->frs.response->body->freeMime = 0;
-						sc->body = conn->frs.response->body;
-						sc->ce = header_get(conn->frs.response->headers, "Content-Encoding") != NULL;
-						sc->code = conn->frs.response->code;
-						sc->headers = conn->frs.response->headers;
-						sc->rp = conn->frs.request->path;
-						if (conn->frs.response->body == NULL) {
+						conn->frs->response->body->len = conn->sscbl;
+						conn->frs->response->body->stream_type = -1;
+						conn->frs->response->body->stream_fd = -1;
+						conn->frs->response->body->mime_type = ct;
+						conn->frs->response->body->freeMime = 0;
+						sc->body = conn->frs->response->body;
+						sc->ce = header_get(conn->frs->response->headers, "Content-Encoding") != NULL;
+						sc->code = conn->frs->response->code;
+						sc->headers = conn->frs->response->headers;
+						sc->rp = conn->frs->request->path;
+						if (conn->frs->response->body == NULL) {
 							sc->etag[0] = '\"';
 							memset(sc->etag + 1, '0', 32);
 							sc->etag[33] = '\"';
@@ -262,7 +263,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 						} else {
 							MD5_CTX md5ctx;
 							MD5_Init(&md5ctx);
-							MD5_Update(&md5ctx, conn->frs.response->body->data, conn->frs.response->body->len);
+							MD5_Update(&md5ctx, conn->frs->response->body->data, conn->frs->response->body->len);
 							unsigned char rawmd5[16];
 							MD5_Final(rawmd5, &md5ctx);
 							sc->etag[34] = 0;
@@ -272,16 +273,16 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 							}
 							sc->etag[33] = '\"';
 						}
-						header_setoradd(conn->frs.response->headers, "ETag", sc->etag);
-						addSCache(&conn->frs.request->vhost->sub.rproxy.cache, sc);
+						header_setoradd(conn->frs->response->headers, "ETag", sc->etag);
+						addSCache(&conn->frs->request->vhost->sub.rproxy.cache, sc);
 						patc = 1;
-						conn->frs.response->fromCache = sc;
+						conn->frs->response->fromCache = sc;
 					} else {
-						conn->frs.request->atc = 0;
+						conn->frs->request->atc = 0;
 					}
 					if (!ib && !patc) {
 						struct body* body = xmalloc(sizeof(struct body));
-						conn->frs.response->fromCache->body = body;
+						conn->frs->response->fromCache->body = body;
 						body->data = conn->staticStreamCacheBuffer;
 						conn->staticStreamCacheBuffer = NULL;
 						body->len = conn->sscbl;
@@ -297,14 +298,14 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 					xfree(conn->stream_md5);
 					conn->stream_md5 = NULL;
 					for (int i = 0; i < 16; i++) {
-						snprintf(conn->frs.response->fromCache->etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
+						snprintf(conn->frs->response->fromCache->etag + (i * 2) + 1, 3, "%02X", rawmd5[i]);
 					}
-					header_setoradd(conn->frs.response->fromCache->headers, "ETag", conn->frs.response->fromCache->etag);
+					header_setoradd(conn->frs->response->fromCache->headers, "ETag", conn->frs->response->fromCache->etag);
 				}
 				conn->stream_type = -1;
 				conn->streamed = 0;
 				freeReqsess(conn->frs);
-				pop_queue(conn->fwqueue, NULL);
+				pop_queue(conn->fwqueue);
 				se = 1;
 			}
 		} else if (conn->stream_type == 1) { // chunked already
@@ -346,29 +347,29 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 					}
 					handleRequest(&stt, conn, param, req);
 				} else if (ct == 1) {
-					struct reqsess rs;
-					peek_queue(conn->fwqueue, &rs);
+					struct reqsess* rs;
+					rs = peek_queue(conn->fwqueue);
 					if (parseResponse(rs, (char*) reqd) < 0) {
 						errlog(param->logsess, "Malformed Response!");
-						xfree(rs.response);
+						xfree(rs->response);
 						xfree(reqd);
 						closeConn(param, conn);
 						return 1;
 					}
-					if (rs.response->body != NULL) {
-						rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
-						rs.response->body->freeMime = 0;
+					if (rs->response->body != NULL) {
+						rs->response->body->mime_type = header_get(rs->response->headers, "Content-Type");
+						rs->response->body->freeMime = 0;
 					}
 					sendReqsess(rs, &stt);
-					if (rs.response->body != NULL && rs.response->body->stream_type >= 0) {
-						conn->stream_fd = rs.response->body->stream_fd;
-						conn->stream_type = rs.response->body->stream_type;
-						conn->stream_len = rs.response->body->len;
+					if (rs->response->body != NULL && rs->response->body->stream_type >= 0) {
+						conn->stream_fd = rs->response->body->stream_fd;
+						conn->stream_type = rs->response->body->stream_type;
+						conn->stream_len = rs->response->body->len;
 						conn->frs = rs;
 						goto sin;
 					} else {
 						conn->stream_type = -1;
-						pop_queue(conn->fwqueue, NULL);
+						pop_queue(conn->fwqueue);
 						freeReqsess(rs);
 					}
 				}

@@ -66,7 +66,7 @@ struct conn {
 		int stream_type;
 		size_t stream_len;
 		size_t streamed;
-		struct reqsess frs;
+		struct reqsess* frs;
 		MD5_CTX* stream_md5;
 		size_t sscbl;
 		unsigned char* staticStreamCacheBuffer;

@@ -44,6 +44,7 @@ int header_tryadd(struct headers* headers, const char* name, const char* value);
 int header_setoradd(struct headers* headers, const char* name, const char* value);
 
 int parseHeaders(struct headers* headers, char* data, int mode);
+
 char* serializeHeaders(struct headers* headers, size_t* len);
 
 void freeHeaders(struct headers* headers);
@@ -68,7 +69,8 @@ struct request {
 };
 
 int parseRequest(struct request* request, char* data, size_t maxPost);
-unsigned char* serializeRequest(struct reqsess rs, size_t* len);
+
+unsigned char* serializeRequest(struct reqsess* rs, size_t* len);
 
 struct response {
 		char* version;
@@ -79,11 +81,12 @@ struct response {
 		struct scache* fromCache;
 };
 
-int parseResponse(struct reqsess rs, char* data);
-unsigned char* serializeResponse(struct reqsess rs, size_t* len);
+int parseResponse(struct reqsess* rs, char* data);
 
-int generateDefaultErrorPage(struct reqsess rs, struct vhost* vh, const char* msg);
+unsigned char* serializeResponse(struct reqsess* rs, size_t* len);
 
-int generateResponse(struct reqsess rs);
+int generateDefaultErrorPage(struct reqsess* rs, struct vhost* vh, const char* msg);
+
+int generateResponse(struct reqsess* rs);
 
 #endif /* HTTP_H_ */

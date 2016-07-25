@@ -63,6 +63,7 @@ void run_accept(struct accept_param* param) {
 		c->nextStream = 2;
 		c->ssl_nextdir = 0;
 		c->fw_ssl_nextdir = 0;
+		c->frs = NULL;
 		if (param->cert != NULL) {
 			c->session = SSL_new(param->cert->ctx);
 			SSL_set_mode(c->session, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);

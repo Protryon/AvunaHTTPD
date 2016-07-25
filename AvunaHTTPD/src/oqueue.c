@@ -130,6 +130,23 @@ void* pop_queue(struct queue* queue) {
 	return data;
 }
 
+void* peek_queue(struct queue* queue) {
+	if (queue->mt) {
+		pthread_mutex_lock(&queue->data_mutex);
+		while (queue->size == 0) {
+			pthread_cond_wait(&queue->out_cond, &queue->data_mutex);
+		}
+	} else if (queue->size == 0) {
+		return NULL;
+	}
+	void* data = queue->data[queue->start];
+	if (queue->mt) {
+		pthread_mutex_unlock(&queue->data_mutex);
+		pthread_cond_signal(&queue->in_cond);
+	}
+	return data;
+}
+
 void* timedpop_queue(struct queue* queue, struct timespec* abstime) {
 	if (queue->mt) {
 		pthread_mutex_lock(&queue->data_mutex);
