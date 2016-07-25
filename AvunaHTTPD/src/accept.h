@@ -14,7 +14,8 @@
 #include "work.h"
 #include "log.h"
 #include "tls.h"
-#include <gnutls/gnutls.h>
+#include <openssl/ssl.h>
+#include <openssl/md5.h>
 #include <netinet/ip6.h>
 #include "oqueue.h"
 #include "http.h"
@@ -51,7 +52,7 @@ struct conn {
 		struct request* reqPosting;
 		int tls;
 		int handshaked;
-		gnutls_session_t session;
+		SSL* session;
 		int fw_fd;
 		int fwed;
 		struct queue *fwqueue;
@@ -60,19 +61,21 @@ struct conn {
 		size_t fw_readBuffer_checked;
 		int fw_tls;
 		int fw_handshaked;
-		gnutls_session_t fw_session;
+		SSL* fw_session;
 		int stream_fd;
 		int stream_type;
 		size_t stream_len;
 		size_t streamed;
 		struct reqsess frs;
-		struct md5_ctx* stream_md5;
+		MD5_CTX* stream_md5;
 		size_t sscbl;
 		unsigned char* staticStreamCacheBuffer;
 		int proto;
 		struct http2_stream** http2_stream;
 		size_t http2_stream_size;
 		size_t nextStream;
+		int ssl_nextdir;
+		int fw_ssl_nextdir;
 };
 
 void run_accept(struct accept_param* param);

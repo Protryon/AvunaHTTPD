@@ -18,7 +18,7 @@
 #include <unistd.h>
 #include "mime.h"
 #include <fcntl.h>
-#include <nettle/md5.h>
+#include <openssl/md5.h>
 #include <zlib.h>
 #include "cache.h"
 #include "fcgi.h"
@@ -1111,11 +1111,11 @@ int generateResponse(struct reqsess rs) {
 		int hetag = 0;
 		int nm = 0;
 		if (!rp && rs.response->body != NULL && rs.response->body->len > 0 && rs.response->code != NULL && rs.response->code[0] == '2') {
-			struct md5_ctx md5ctx;
-			md5_init(&md5ctx);
-			md5_update(&md5ctx, rs.response->body->len, rs.response->body->data);
+			MD5_CTX md5ctx;
+			MD5_Init(&md5ctx);
+			MD5_Update(&md5ctx, rs.response->body->data, rs.response->body->len);
 			unsigned char rawmd5[16];
-			md5_digest(&md5ctx, 16, rawmd5);
+			MD5_Final(rawmd5, &md5ctx);
 			hetag = 1;
 			etag[34] = 0;
 			etag[0] = '\"';
@@ -1204,11 +1204,11 @@ int generateResponse(struct reqsess rs) {
 						etag[33] = '\"';
 						etag[34] = 0;
 					} else {
-						struct md5_ctx md5ctx;
-						md5_init(&md5ctx);
-						md5_update(&md5ctx, rs.response->body->len, rs.response->body->data);
+						MD5_CTX md5ctx;
+						MD5_Init(&md5ctx);
+						MD5_Update(&md5ctx, rs.response->body->data, rs.response->body->len);
 						unsigned char rawmd5[16];
-						md5_digest(&md5ctx, 16, rawmd5);
+						MD5_Final(rawmd5, &md5ctx);
 						hetag = 1;
 						etag[34] = 0;
 						etag[0] = '\"';

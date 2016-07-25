@@ -29,7 +29,8 @@
 #include "work.h"
 #include <sys/types.h>
 #include "mime.h"
-#include <gnutls/gnutls.h>
+#include <openssl/ssl.h>
+#include <openssl/conf.h>
 #include "tls.h"
 #include "http.h"
 #include "vhost.h"
@@ -168,8 +169,10 @@ int main(int argc, char* argv[]) {
 		errlog(delog, "Error writing PID file: %s.", strerror(errno));
 		return 1;
 	}
-	gnutls_global_init();
-	initdh();
+	(void) SSL_library_init();
+	OpenSSL_add_all_algorithms();
+	SSL_load_error_strings();
+	OPENSSL_config (NULL);
 	int servsl;
 	struct cnode** servs = getCatsByCat(cfg, CAT_SERVER, &servsl);
 	int sr = 0;
@@ -339,16 +342,11 @@ int main(int argc, char* argv[]) {
 			}
 			const char* cert = getConfigValue(ssln, "publicKey");
 			const char* key = getConfigValue(ssln, "privateKey");
-			const char* ca = getConfigValue(ssln, "ca");
-			if (ca != NULL && access(ca, R_OK)) {
-				errlog(slog, "CA for SSL node was not valid, loading without CA!");
-				ca = NULL;
-			}
 			if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
 				errlog(slog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
 				goto pssl;
 			}
-			ap->cert = loadCert(ca, cert, key);
+			ap->cert = loadCert(cert, key);
 		} else {
 			ap->cert = NULL;
 		}

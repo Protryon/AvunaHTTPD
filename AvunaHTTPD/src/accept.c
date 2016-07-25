@@ -17,7 +17,7 @@
 #include <poll.h>
 #include "work.h"
 #include <unistd.h>
-#include <gnutls/gnutls.h>
+#include <openssl/ssl.h>
 #include "tls.h"
 
 void run_accept(struct accept_param* param) {
@@ -61,32 +61,33 @@ void run_accept(struct accept_param* param) {
 		c->http2_stream = NULL;
 		c->http2_stream_size = 0;
 		c->nextStream = 2;
+		c->ssl_nextdir = 0;
+		c->fw_ssl_nextdir = 0;
 		if (param->cert != NULL) {
-			gnutls_init(&c->session, GNUTLS_SERVER | GNUTLS_NONBLOCK);
-			gnutls_priority_set(c->session, param->cert->priority);
-			gnutls_credentials_set(c->session, GNUTLS_CRD_CERTIFICATE, param->cert->cert);
-			gnutls_certificate_server_set_request(c->session, GNUTLS_CERT_IGNORE);
+			c->session = SSL_new(param->cert->ctx);
+			SSL_set_mode(c->session, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
+			SSL_set_accept_state(c->session);
 			c->tls = 1;
 		} else {
 			c->tls = 0;
 		}
 		if (poll(&spfd, 1, -1) < 0) {
 			errlog(param->logsess, "Error while polling server: %s", strerror(errno));
-			if (param->cert != NULL) gnutls_deinit(c->session);
+			if (param->cert != NULL) SSL_free(c->session);
 			xfree(c);
 			continue;
 		}
 		if ((spfd.revents ^ POLLIN) != 0) {
 			errlog(param->logsess, "Error after polling server: %i (poll revents), closing server!", spfd.revents);
-			if (param->cert != NULL) gnutls_deinit(c->session);
+			if (param->cert != NULL) SSL_free(c->session);
 			xfree(c);
 			close(param->server_fd);
 			break;
 		}
 		spfd.revents = 0;
-		int cfd = accept(param->server_fd, &c->addr, &c->addrlen);
+		int cfd = accept(param->server_fd, (struct sockaddr*) &c->addr, &c->addrlen);
 		if (cfd < 0) {
-			if (param->cert != NULL) gnutls_deinit(c->session);
+			if (param->cert != NULL) SSL_free(c->session);
 			if (errno == EAGAIN) continue;
 			errlog(param->logsess, "Error while accepting client: %s", strerror(errno));
 			xfree(c);
@@ -97,14 +98,14 @@ void run_accept(struct accept_param* param) {
 		if (setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout))) errlog(param->logsess, "Setting send timeout failed! %s", strerror(errno));
 		if (setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (void *) &one, sizeof(one))) errlog(param->logsess, "Setting TCP_NODELAY failed! %s", strerror(errno));
 		if (fcntl(cfd, F_SETFL, fcntl(cfd, F_GETFL) | O_NONBLOCK) < 0) {
-			if (param->cert != NULL) gnutls_deinit(c->session);
+			if (param->cert != NULL) SSL_free(c->session);
 			errlog(param->logsess, "Setting O_NONBLOCK failed! %s, this error cannot be recovered, closing client.", strerror(errno));
 			close(cfd);
 			xfree(c);
 			continue;
 		}
 		if (param->cert != NULL) {
-			gnutls_transport_set_int2(c->session, cfd, cfd);
+			SSL_set_fd(c->session, c->fd);
 			/*if (sniCallback != NULL) {
 			 struct sni_data* ld = xmalloc(sizeof(struct sni_data));
 			 ld->this = this;
@@ -112,14 +113,24 @@ void run_accept(struct accept_param* param) {
 			 lsd = ld;
 			 gnutls_handshake_set_post_client_hello_function(sessiond, handleSNI);
 			 }*/
-			int r = gnutls_handshake(c->session);
-			if (gnutls_error_is_fatal(r)) {
-				gnutls_deinit(c->session);
+			int r = SSL_accept(c->session);
+			if (r == 1) {
+				c->handshaked = 1;
+			} else if (r == 2) {
+				SSL_free(c->session);
 				close(c->fd);
 				xfree(c);
 				continue;
-			} else if (r == GNUTLS_E_SUCCESS) {
-				c->handshaked = 1;
+			} else {
+				int err = SSL_get_error(c->session, r);
+				if (err == SSL_ERROR_WANT_READ) c->ssl_nextdir = 1;
+				else if (err == SSL_ERROR_WANT_WRITE) c->ssl_nextdir = 2;
+				else {
+					SSL_free(c->session);
+					close(c->fd);
+					xfree(c);
+					continue;
+				}
 			}
 		}
 		struct work_param* work = param->works[rand() % param->works_count];
@@ -129,11 +140,12 @@ void run_accept(struct accept_param* param) {
 			} else {
 				errlog(param->logsess, "Collection failure! Closing client. %s", strerror(errno));
 			}
+			SSL_free(c->session);
 			close(cfd);
 			continue;
 		}
 		if (write(work->pipes[1], &onec, 1) < 1) {
-			errlog(param->logsess, "Failed to write to wakeup pipe! Things may slow down. %s", strerror(errno));
+			errlog(param->logsess, "Failed to write to wakeup pipe! Connection may hang. %s", strerror(errno));
 		}
 	}
 }

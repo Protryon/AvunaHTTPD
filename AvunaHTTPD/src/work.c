@@ -24,8 +24,8 @@
 #include "time.h"
 #include <arpa/inet.h>
 #include <sys/mman.h>
-#include <gnutls/gnutls.h>
-#include <nettle/md5.h>
+#include <openssl/ssl.h>
+#include <openssl/md5.h>
 #include "vhost.h"
 #include "oqueue.h"
 #include "http2.h"
@@ -35,15 +35,15 @@ void freeReqsess(struct reqsess rs);
 void closeConn(struct work_param* param, struct conn* conn) {
 	if (conn->tls) {
 		if (conn->handshaked) {
-			gnutls_bye(conn->session, GNUTLS_SHUT_RDWR);
+			SSL_shutdown(conn->session);
 		}
-		gnutls_deinit(conn->session);
+		SSL_free(conn->session);
 	}
 	if (conn->fw_tls) {
-		if (conn->fw_handshaked) {
-			gnutls_bye(conn->fw_session, GNUTLS_SHUT_RDWR);
+		if (conn->handshaked) {
+			SSL_shutdown(conn->fw_session);
 		}
-		gnutls_deinit(conn->fw_session);
+		SSL_free(conn->fw_session);
 	}
 	close(conn->fd);
 	if (conn->fw_fd >= 0) close(conn->fw_fd);
@@ -65,7 +65,7 @@ void closeConn(struct work_param* param, struct conn* conn) {
 	xfree(conn);
 }
 
-void sendReqsess(struct reqsess rs, int wfd, struct timespec* stt) {
+void sendReqsess(struct reqsess rs, struct timespec* stt) {
 	struct conn* conn = rs.sender;
 	struct work_param* param = rs.wp;
 	struct response* resp = rs.response;
@@ -95,27 +95,17 @@ void sendReqsess(struct reqsess rs, int wfd, struct timespec* stt) {
 			errlog(param->logsess, "Invalid IP Address: %s", strerror(errno));
 		}
 		acclog(param->logsess, "%s %s %s returned %s took: %f ms", mip, getMethod(req->method), req->path, resp->code, msp);
-		ssize_t mtr = conn->tls ? gnutls_record_send(conn->session, rda, rl) : write(wfd, rda, rl);
-		if (mtr < 0 && (conn->tls ? gnutls_error_is_fatal(mtr) : errno != EAGAIN)) {
-			closeConn(param, conn);
-			conn = NULL;
-		} else if (mtr >= rl) {
-			//done writing!
+		unsigned char* loc = NULL;
+		if (conn->writeBuffer == NULL) {
+			conn->writeBuffer = xmalloc(rl); // TODO: max upload?
+			conn->writeBuffer_size = rl;
+			loc = conn->writeBuffer;
 		} else {
-			unsigned char* stw = rda + mtr;
-			rl -= mtr;
-			unsigned char* loc = NULL;
-			if (conn->writeBuffer == NULL) {
-				conn->writeBuffer = xmalloc(rl); // TODO: max upload?
-				conn->writeBuffer_size = rl;
-				loc = conn->writeBuffer;
-			} else {
-				conn->writeBuffer_size += rl;
-				conn->writeBuffer = xrealloc(conn->writeBuffer, conn->writeBuffer_size);
-				loc = conn->writeBuffer + conn->writeBuffer_size - rl;
-			}
-			memcpy(loc, stw, rl);
+			conn->writeBuffer_size += rl;
+			conn->writeBuffer = xrealloc(conn->writeBuffer, conn->writeBuffer_size);
+			loc = conn->writeBuffer + conn->writeBuffer_size - rl;
 		}
+		memcpy(loc, rda, rl);
 		xfree(rda);
 	} else {
 		conn->fwed = 0;
@@ -151,7 +141,7 @@ void freeReqsess(struct reqsess rs) {
 	xfree(resp);
 }
 
-void handleRequest(int wfd, struct timespec* stt, struct conn* conn, struct work_param* param, struct request* req) {
+void handleRequest(struct timespec* stt, struct conn* conn, struct work_param* param, struct request* req) {
 	struct response* resp = xmalloc(sizeof(struct response));
 	resp->body = NULL;
 	resp->parsed = 0;
@@ -166,7 +156,7 @@ void handleRequest(int wfd, struct timespec* stt, struct conn* conn, struct work
 	rs.request = req;
 	generateResponse(rs);
 	int fwed = conn->fwed;
-	sendReqsess(rs, wfd, stt);
+	sendReqsess(rs, stt);
 	if (!fwed) freeReqsess(rs);
 }
 
@@ -187,7 +177,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 			memmove(conn->readBuffer, conn->readBuffer + conn->postLeft, conn->readBuffer_size);
 			conn->postLeft -= os;
 			if (conn->postLeft == 0) {
-				handleRequest(fd, &stt, conn, param, conn->reqPosting);
+				handleRequest(&stt, conn, param, conn->reqPosting);
 				conn->reqPosting = NULL;
 			}
 		} else goto pc;
@@ -202,10 +192,10 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 			size_t rbs = conn->fw_readBuffer_size;
 			if (conn->frs.response->fromCache != NULL) {
 				if (conn->stream_md5 == NULL) {
-					conn->stream_md5 = xmalloc(sizeof(struct md5_ctx));
-					md5_init(conn->stream_md5);
+					conn->stream_md5 = xmalloc(sizeof(MD5_CTX));
+					MD5_Init(conn->stream_md5);
 				}
-				md5_update(conn->stream_md5, rbs, readBuffer);
+				MD5_Update(conn->stream_md5, readBuffer, rbs);
 			}
 			if (conn->writeBuffer == NULL) {
 				conn->writeBuffer = xmalloc(rbs);
@@ -270,11 +260,11 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 							sc->etag[33] = '\"';
 							sc->etag[34] = 0;
 						} else {
-							struct md5_ctx md5ctx;
-							md5_init(&md5ctx);
-							md5_update(&md5ctx, conn->frs.response->body->len, conn->frs.response->body->data);
+							MD5_CTX md5ctx;
+							MD5_Init(&md5ctx);
+							MD5_Update(&md5ctx, conn->frs.response->body->data, conn->frs.response->body->len);
 							unsigned char rawmd5[16];
-							md5_digest(&md5ctx, 16, rawmd5);
+							MD5_Final(rawmd5, &md5ctx);
 							sc->etag[34] = 0;
 							sc->etag[0] = '\"';
 							for (int i = 0; i < 16; i++) {
@@ -303,7 +293,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 				}
 				if (conn->stream_md5 != NULL) {
 					unsigned char rawmd5[16];
-					md5_digest(conn->stream_md5, 16, rawmd5);
+					MD5_Final(rawmd5, conn->stream_md5);
 					xfree(conn->stream_md5);
 					conn->stream_md5 = NULL;
 					for (int i = 0; i < 16; i++) {
@@ -354,7 +344,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 						conn->postLeft = req->body->len;
 						goto reqp;
 					}
-					handleRequest(fd, &stt, conn, param, req);
+					handleRequest(&stt, conn, param, req);
 				} else if (ct == 1) {
 					struct reqsess rs;
 					peek_queue(conn->fwqueue, &rs);
@@ -369,7 +359,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 						rs.response->body->mime_type = header_get(rs.response->headers, "Content-Type");
 						rs.response->body->freeMime = 0;
 					}
-					sendReqsess(rs, rs.sender->fd, &stt);
+					sendReqsess(rs, &stt);
 					if (rs.response->body != NULL && rs.response->body->stream_type >= 0) {
 						conn->stream_fd = rs.response->body->stream_fd;
 						conn->stream_type = rs.response->body->stream_type;
@@ -614,7 +604,7 @@ void run_work(struct work_param* param) {
 				conns[fdxi].conn = conn;
 				conns[fdxi].type = 0;
 				fds[fdxi].fd = conn->fd;
-				fds[fdxi].events = POLLIN | ((conn->writeBuffer_size > 0 || (conn->tls && !conn->handshaked && gnutls_record_get_direction(conn->session))) ? POLLOUT : 0);
+				fds[fdxi].events = POLLIN | ((conn->writeBuffer_size > 0 || (conn->tls && !conn->handshaked && conn->ssl_nextdir == 2)) ? POLLOUT : 0);
 				fds[fdxi++].revents = 0;
 				fdi++;
 				if (fdi == cc) break;
@@ -667,31 +657,49 @@ void run_work(struct work_param* param) {
 				goto cont;
 			}
 			if (ct == 0 && conn->tls && !conn->handshaked) {
-				int r = gnutls_handshake(conn->session);
-				if (gnutls_error_is_fatal(r)) {
+				int r = SSL_accept(conn->session);
+				if (r == 1) {
+					conn->handshaked = 1;
+				} else if (r == 2) {
 					closeConn(param, conn);
 					goto cont;
-				} else if (r == GNUTLS_E_SUCCESS) {
-					conn->handshaked = 1;
+				} else {
+					int err = SSL_get_error(conn->session, r);
+					if (err == SSL_ERROR_WANT_READ) conn->ssl_nextdir = 1;
+					else if (err == SSL_ERROR_WANT_WRITE) conn->ssl_nextdir = 2;
+					else {
+						closeConn(param, conn);
+						goto cont;
+					}
 				}
 				goto cont;
 			} else if (ct == 1 && conn->fw_tls && !conn->fw_handshaked) {
-				int r = gnutls_handshake(conn->fw_session);
-				if (gnutls_error_is_fatal(r)) {
+				int r = SSL_accept(conn->fw_session);
+				if (r == 1) {
+					conn->fw_handshaked = 1;
+				} else if (r == 2) {
 					closeConn(param, conn);
 					goto cont;
-				} else if (r == GNUTLS_E_SUCCESS) {
-					conn->fw_handshaked = 1;
+				} else {
+					int err = SSL_get_error(conn->fw_session, r);
+					if (err == SSL_ERROR_WANT_READ) conn->fw_ssl_nextdir = 1;
+					else if (err == SSL_ERROR_WANT_WRITE) conn->fw_ssl_nextdir = 2;
+					else {
+						closeConn(param, conn);
+						goto cont;
+					}
 				}
 				goto cont;
 			}
 			if ((re & POLLIN) == POLLIN) {
 				size_t tr = 0;
+				int ftr = 0;
 				if (ct == 1 ? conn->fw_tls : (ct == 0 ? conn->tls : 0)) {
-					if (ct == 0) tr = gnutls_record_check_pending(conn->session);
-					else if (ct == 1) tr = gnutls_record_check_pending(conn->fw_session);
+					if (ct == 0) tr = SSL_pending(conn->session);
+					else if (ct == 1) tr = SSL_pending(conn->fw_session);
 					if (tr == 0) {
-						tr += 1024;
+						tr += 4096;
+						ftr = 1;
 					}
 				} else {
 					ioctl(fds[i].fd, FIONREAD, &tr);
@@ -700,49 +708,43 @@ void run_work(struct work_param* param) {
 				if (ct == 0) {
 					if (conn->readBuffer == NULL) {
 						conn->readBuffer = xmalloc(tr); // TODO: max upload?
-						conn->readBuffer_size = tr;
+						conn->readBuffer_size = 0;
 						loc = conn->readBuffer;
 					} else {
-						conn->readBuffer_size += tr;
-						conn->readBuffer = xrealloc(conn->readBuffer, conn->readBuffer_size);
-						loc = conn->readBuffer + conn->readBuffer_size - tr;
+						conn->readBuffer = xrealloc(conn->readBuffer, conn->readBuffer_size + tr);
+						loc = conn->readBuffer + conn->readBuffer_size;
 					}
 				} else if (ct == 1) {
 					if (conn->fw_readBuffer == NULL) {
 						conn->fw_readBuffer = xmalloc(tr); // TODO: max upload?
-						conn->fw_readBuffer_size = tr;
+						conn->fw_readBuffer_size = 0;
 						loc = conn->fw_readBuffer;
 					} else {
-						conn->fw_readBuffer_size += tr;
-						conn->fw_readBuffer = xrealloc(conn->fw_readBuffer, conn->fw_readBuffer_size);
-						loc = conn->fw_readBuffer + conn->fw_readBuffer_size - tr;
+						conn->fw_readBuffer = xrealloc(conn->fw_readBuffer, conn->fw_readBuffer_size + tr);
+						loc = conn->fw_readBuffer + conn->fw_readBuffer_size;
 					}
 				}
 				ssize_t r = 0;
 				if (r == 0 && tr == 0) { // nothing to read, but wont block.
 					ssize_t x = 0;
 					if (conn->tls) {
-						if (ct == 0) x = gnutls_record_recv(conn->session, loc + r, tr - r);
-						else if (ct == 1) x = gnutls_record_recv(conn->fw_session, loc + r, tr - r);
-						if (x <= 0 && gnutls_error_is_fatal(x)) {
+						if (ct == 0) x = SSL_read(conn->session, loc + r, tr - r);
+						else if (ct == 1) x = SSL_read(conn->fw_session, loc + r, tr - r);
+						//printf("sslen2! %16lX %i %i %i %i\n", conn, x, SSL_get_error(conn->session, x), ERR_get_error(), ftr);
+						if (x <= 0) {
+							//printf("sk2 %16lX\n", conn);
 							if (ct == 1) {
-								errlog(param->logsess, "TLS Error receiving from backend server! %s", gnutls_strerror(x));
+								errlog(param->logsess, "TLS Error receiving from backend server! %i", SSL_get_error(ct == 0 ? conn->session : conn->fw_session, x));
 							}
 							closeConn(param, conn);
 							conn = NULL;
 							goto cont;
-						} else if (x <= 0) {
-							if (r < tr) {
-								if (ct == 0) {
-									conn->readBuffer_size += r - tr;
-									conn->readBuffer = xrealloc(conn->readBuffer, conn->readBuffer_size);
-								} else if (ct == 1) {
-									conn->fw_readBuffer_size += r - tr;
-									conn->fw_readBuffer = xrealloc(conn->fw_readBuffer, conn->fw_readBuffer_size);
-								}
-								tr = r;
+						} else {
+							if (ct == 0) {
+								conn->readBuffer_size += x;
+							} else if (ct == 1) {
+								conn->fw_readBuffer_size += x;
 							}
-							break;
 						}
 					} else {
 						x = read(fds[i].fd, loc + r, tr - r);
@@ -750,6 +752,12 @@ void run_work(struct work_param* param) {
 							closeConn(param, conn);
 							conn = NULL;
 							goto cont;
+						} else {
+							if (ct == 0) {
+								conn->readBuffer_size += x;
+							} else if (ct == 1) {
+								conn->fw_readBuffer_size += x;
+							}
 						}
 					}
 					r += x;
@@ -757,34 +765,37 @@ void run_work(struct work_param* param) {
 				while (r < tr) {
 					ssize_t x = 0;
 					if (conn->tls) {
-						if (ct == 0) x = gnutls_record_recv(conn->session, loc + r, tr - r);
-						else if (ct == 1) x = gnutls_record_recv(conn->fw_session, loc + r, tr - r);
-						if (x <= 0 && gnutls_error_is_fatal(x)) {
+						if (ct == 0) x = SSL_read(conn->session, loc + r, tr - r);
+						else if (ct == 1) x = SSL_read(conn->fw_session, loc + r, tr - r);
+						//printf("sslen! %16lX %i %i %i %i\n", conn, x, SSL_get_error(conn->session, x), ERR_get_error(), ftr);
+						if (x <= 0) {
+							//printf("sk %16lX\n", conn);
 							if (ct == 1) {
-								errlog(param->logsess, "TLS Error receiving from backend server! %s", gnutls_strerror(x));
+								errlog(param->logsess, "TLS Error receiving from backend server! %i", SSL_get_error(ct == 0 ? conn->session : conn->fw_session, x));
 							}
 							closeConn(param, conn);
 							conn = NULL;
 							goto cont;
-						} else if (x <= 0) {
-							if (r < tr) {
-								if (ct == 0) {
-									conn->readBuffer_size += r - tr;
-									conn->readBuffer = xrealloc(conn->readBuffer, conn->readBuffer_size);
-								} else if (ct == 1) {
-									conn->fw_readBuffer_size += r - tr;
-									conn->fw_readBuffer = xrealloc(conn->fw_readBuffer, conn->fw_readBuffer_size);
-								}
-								tr = r;
+						} else {
+							if (ct == 0) {
+								conn->readBuffer_size += x;
+							} else if (ct == 1) {
+								conn->fw_readBuffer_size += x;
 							}
-							break;
 						}
+						if (ftr) break;
 					} else {
 						x = read(fds[i].fd, loc + r, tr - r);
 						if (x <= 0) {
 							closeConn(param, conn);
 							conn = NULL;
 							goto cont;
+						} else {
+							if (ct == 0) {
+								conn->readBuffer_size += x;
+							} else if (ct == 1) {
+								conn->fw_readBuffer_size += x;
+							}
 						}
 					}
 					r += x;
@@ -797,8 +808,8 @@ void run_work(struct work_param* param) {
 				}
 			}
 			if ((re & POLLOUT) == POLLOUT && conn != NULL) {
-				ssize_t mtr = conn->tls ? gnutls_record_send(conn->session, conn->writeBuffer, conn->writeBuffer_size) : write(fds[i].fd, conn->writeBuffer, conn->writeBuffer_size);
-				if (mtr < 0 && (conn->tls ? gnutls_error_is_fatal(mtr) : errno != EAGAIN)) {
+				ssize_t mtr = conn->tls ? SSL_write(conn->session, conn->writeBuffer, conn->writeBuffer_size) : write(fds[i].fd, conn->writeBuffer, conn->writeBuffer_size);
+				if (mtr < 0 && (conn->tls ? (SSL_get_error(conn->session, mtr) != SSL_ERROR_SYSCALL || errno != EAGAIN) : errno != EAGAIN)) { // use error queue?
 					closeConn(param, conn);
 					conn = NULL;
 					goto cont;

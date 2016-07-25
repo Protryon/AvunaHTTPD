@@ -8,15 +8,12 @@
 #ifndef TLS_H_
 #define TLS_H_
 
-#include <gnutls/gnutls.h>
+#include <openssl/ssl.h>
 
 struct cert {
-		gnutls_certificate_credentials_t cert;
-		gnutls_priority_t priority;
+		SSL_CTX* ctx;
 };
 
-int initdh();
-
-struct cert* loadCert(const char* ca, const char* cert, const char* key);
+struct cert* loadCert(const char* cert, const char* key);
 
 #endif /* TLS_H_ */
