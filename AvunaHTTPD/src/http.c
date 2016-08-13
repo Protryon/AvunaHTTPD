@@ -529,7 +529,7 @@ int generateResponse(struct reqsess* rs) {
 			generateDefaultErrorPage(rs, vh, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
 			goto epage;
 		}
-		int ff = !rp ? 0 : tp[htdl + pl - 2] != '/';
+		int ff = !rp ? 0 : (pl > 1 && tp[htdl + pl - 2] != '/');
 		if (!rp) {
 			char* nxtp = xstrdup(tp + 1, 1);
 			char* onx = nxtp;
