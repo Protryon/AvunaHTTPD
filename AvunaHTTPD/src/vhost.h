@@ -15,9 +15,10 @@
 
 #include "cache.h"
 #include <sys/socket.h>
+#include <stdint.h>
 
 struct errpage {
-		char* code;
+		uint16_t code;
 		char* page;
 };
 

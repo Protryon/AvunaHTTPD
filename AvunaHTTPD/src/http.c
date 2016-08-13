@@ -435,7 +435,7 @@ int generateDefaultErrorPage(struct reqsess* rs, struct vhost* vh, const char* m
 	free(rmsg);
 	if (vh != NULL && vh->sub.htdocs.errpage_count > 0) {
 		for (int i = 0; i < vh->sub.htdocs.errpage_count; i++) {
-			if (startsWith_nocase(rs->response->code, vh->sub.htdocs.errpages[i]->code)) {
+			if (strtol(rs->response->code, NULL, 10) == vh->sub.htdocs.errpages[i]->code) {
 				header_add(rs->response->headers, "Location", vh->sub.htdocs.errpages[i]->page);
 			}
 		}

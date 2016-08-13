@@ -541,7 +541,7 @@ int main(int argc, char* argv[]) {
 							continue;
 						}
 						struct errpage* ep = xmalloc(sizeof(struct errpage));
-						ep->code = en;
+						ep->code = strtol(en, NULL, 10);
 						ep->page = vcn->values[i];
 						if (vhb->errpages == NULL) {
 							vhb->errpages = xmalloc(sizeof(struct errpage*));
