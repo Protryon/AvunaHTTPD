@@ -167,7 +167,10 @@ struct uconn {
 };
 
 int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
-	reqp: if (ct == 0 && conn->reqPosting != NULL && conn->postLeft > 0) {
+	reqp: ;
+	//printf("peq, %i, %i, %i\n", ct, conn->reqPosting != NULL, conn->postLeft);
+	if (ct == 0 && conn->reqPosting != NULL && conn->postLeft > 0) {
+		//printf("%i\n", conn->postLeft);
 		if (conn->readBuffer_size >= conn->postLeft) {
 			struct timespec stt;
 			clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
@@ -334,7 +337,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 				if (ct == 0) {
 					struct request* req = xmalloc(sizeof(struct request));
 					if (parseRequest(req, (char*) reqd, param->maxPost) < 0) {
-						errlog(param->logsess, "Malformed Request!");
+						errlog(param->logsess, "Malformed Request!\n%s", reqd);
 						xfree(req);
 						xfree(reqd);
 						closeConn(param, conn);
@@ -349,6 +352,8 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 				} else if (ct == 1) {
 					struct reqsess* rs;
 					rs = peek_queue(conn->fwqueue);
+					printf("1 %16lX\n", rs);
+					printf("2 %16lX\n", rs->response);
 					if (parseResponse(rs, (char*) reqd) < 0) {
 						errlog(param->logsess, "Malformed Response!");
 						xfree(rs->response);

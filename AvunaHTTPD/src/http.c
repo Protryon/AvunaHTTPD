@@ -24,7 +24,7 @@
 #include "fcgi.h"
 #include <netinet/in.h>
 #include "vhost.h"
-
+#include <stdint.h>
 #include "oqueue.h"
 
 const char* getMethod(int m) {
@@ -265,11 +265,12 @@ int parseRequest(struct request* request, char* data, size_t maxPost) {
 	const char* cl = header_get(request->headers, "Content-Length");
 	if (request->method == METHOD_POST && cl != NULL && strisunum(cl)) {
 		long int cli = atol(cl);
-		if (maxPost == 0 || cli < maxPost) {
+		if (cli > 0 && (maxPost == 0 || cli < maxPost)) {
 			request->body = xmalloc(sizeof(struct body));
 			request->body->len = cli;
 			request->body->data = xmalloc(cli);
-			request->body->mime_type = xstrdup("application/x-www-form-urlencoded", 0);
+			const char* tmp = header_get(request->headers, "Content-Type");
+			request->body->mime_type = xstrdup(tmp == NULL ? "application/x-www-form-urlencoded" : tmp, 0);
 			request->body->freeMime = 1;
 			request->body->stream_fd = -1;
 			request->body->stream_type = -1;
@@ -445,6 +446,7 @@ int generateDefaultErrorPage(struct reqsess* rs, struct vhost* vh, const char* m
 
 int generateResponse(struct reqsess* rs) {
 	int eh = 1;
+	rs->response->parsed = 0;
 	rs->response->version = rs->request->version;
 	rs->response->code = "200 OK";
 	rs->response->headers->count = 0;
@@ -529,15 +531,21 @@ int generateResponse(struct reqsess* rs) {
 			generateDefaultErrorPage(rs, vh, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
 			goto epage;
 		}
+		//printf("ps %s\n", tp);
 		int ff = !rp ? 0 : (pl > 1 && tp[htdl + pl - 2] != '/');
 		if (!rp) {
 			char* nxtp = xstrdup(tp + 1, 1);
 			char* onx = nxtp;
 			nxtp[strlen(nxtp) + 1] = 0;
 			size_t nxtpl = strlen(nxtp);
+			size_t lx = 0;
 			for (size_t x = 0; x < nxtpl; x++) {
 				if (nxtp[x] == '/') {
 					nxtp[x] = 0;
+					if (lx == x - 1) {
+						memmove(nxtp + x, nxtp + x + 1, nxtpl - x);
+					}
+					lx = x;
 				}
 			}
 			char* rstp = xmalloc(1);
@@ -593,6 +601,7 @@ int generateResponse(struct reqsess* rs) {
 			for (int ii = 0; ii < vh->sub.htdocs.index_count; ii++) {
 				size_t cl = strlen(vh->sub.htdocs.index[ii]);
 				char* tp2 = xmalloc(htdl + pl + cl);
+				//printf("%i<%s>, %i, %i, %i\n", strlen(tp), tp, htdl, pl, htdl + pl - 1);
 				memcpy(tp2, tp, htdl + pl - 1);
 				memcpy(tp2 + htdl + pl - 1, vh->sub.htdocs.index[ii], cl + 1);
 				if (!access(tp2, R_OK)) {
@@ -608,7 +617,15 @@ int generateResponse(struct reqsess* rs) {
 		if (!ff) {
 			char* tt = xstrdup(rs->request->path, 2);
 			char* ppl = strrchr(tt, '/'); // no extra path because extra paths dont work on directories
+			//printf("%s\n", ppl);
 			size_t ppll = strlen(ppl);
+			/*for (size_t j = ppl - tt - 1; j >= 0; j--) {
+			 if (ppl[j] == '/') {
+			 ppl--;
+			 ppll++;
+			 j = 1;
+			 } else break;
+			 }*/
 			if (ppl != NULL && (ppll > 1 && ppl[1] != '?' && ppl[1] != '#')) {
 				rs->response->code = "302 Found";
 				char* el = strpbrk(ppl, "?#");
@@ -633,6 +650,7 @@ int generateResponse(struct reqsess* rs) {
 				goto epage;
 			}
 		}
+		//TODO: overrides
 		struct stat st;
 		if (rp) {
 			rtp = tp;
@@ -678,8 +696,8 @@ int generateResponse(struct reqsess* rs) {
 				goto epage;
 			}
 		}
-		//TODO: overrides
 		if (rp) {
+			printf("-1 %16lX\n", rs->response);
 			resrp: if (rs->sender->fw_fd < 0) {
 				rs->sender->fw_fd = socket(vh->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
 				if (rs->sender->fw_fd < 0 || connect(rs->sender->fw_fd, vh->sub.rproxy.fwaddr, vh->sub.rproxy.fwaddrlen) < 0) {
@@ -709,6 +727,8 @@ int generateResponse(struct reqsess* rs) {
 			eh = 0;
 			struct reqsess* rs2 = xmalloc(sizeof(struct reqsess));
 			memcpy(rs2, &rs, sizeof(struct reqsess));
+			printf("1 %16lX vs %16lX\n", rs2, rs);
+			printf("2 %16lX vs %16lX\n", rs2->response, rs->response);
 			add_queue(rs->sender->fwqueue, rs2);
 		} else {
 			rs->response->body = xmalloc(sizeof(struct body));
@@ -820,6 +840,7 @@ int generateResponse(struct reqsess* rs) {
 				writeFCGIParam(ffd, "CONTENT_LENGTH", cl);
 				if (rs->request->body != NULL && rs->request->body->mime_type != NULL) writeFCGIParam(ffd, "CONTENT_TYPE", rs->request->body->mime_type);
 				writeFCGIParam(ffd, "GATEWAY_INTERFACE", "CGI/1.1");
+				writeFCGIParam(ffd, "PATH", getenv("PATH"));
 				writeFCGIParam(ffd, "QUERY_STRING", get);
 				{
 					char tip[48];
@@ -906,9 +927,15 @@ int generateResponse(struct reqsess* rs) {
 				writeFCGIFrame(ffd, &ff);
 				ff.type = FCGI_STDIN;
 				if (rs->request->body != NULL && rs->request->body->len > 0) {
-					ff.len = rs->request->body->len;
-					ff.data = rs->request->body->data;
-					writeFCGIFrame(ffd, &ff);
+					size_t cr = 0;
+					size_t left = rs->request->body->len;
+					while (left > 0) {
+						ff.len = left > 0xFFFF ? 0xFFFF : left;
+						ff.data = rs->request->body->data + cr;
+						cr += ff.len;
+						left -= ff.len;
+						writeFCGIFrame(ffd, &ff);
+					}
 				}
 				ff.len = 0;
 				writeFCGIFrame(ffd, &ff);
@@ -953,8 +980,8 @@ int generateResponse(struct reqsess* rs) {
 						vh->sub.htdocs.fcgifds[rs->wp->i][i] = fd;
 						fc++;
 						goto sofcgi;
-
 					}
+					//printf("recv %i\n", ff.type);
 					if (ff.type == FCGI_END_REQUEST) {
 						//printf("er!\n");
 						xfree(ff.data);
@@ -1012,7 +1039,6 @@ int generateResponse(struct reqsess* rs) {
 							for (int i = 0; i < hdrs.count; i++) {
 								const char* name = hdrs.names[i];
 								const char* value = hdrs.values[i];
-								//printf("hdr %s: %s\n", name, value);
 								if (streq_nocase(name, "Content-Type")) {
 									if (ct != NULL) xfree(ct);
 									ct = xstrdup(value, 0);

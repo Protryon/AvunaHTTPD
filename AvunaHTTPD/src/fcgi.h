@@ -9,6 +9,7 @@
 #define FCGI_H_
 
 #include <stdlib.h>
+#include <stdint.h>
 
 #define FCGI_VERSION_1 1
 #define FCGI_BEGIN_REQUEST 1
@@ -26,7 +27,7 @@
 struct fcgiframe {
 		unsigned char type;
 		int reqID;
-		size_t len;
+		uint16_t len;
 		void* data;
 };
 

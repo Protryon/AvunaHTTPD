@@ -754,6 +754,12 @@ int main(int argc, char* argv[]) {
 					nhl = "604800";
 				}
 				vhb->maxAge = atol(nhl);
+				nhl = getConfigValue(vcn, "maxSCache");
+				if (nhl == NULL || !strisunum(nhl)) {
+					errlog(slog, "No maxSCache at vhost: %s, assuming default", vcn->id);
+					nhl = "0";
+				}
+				vhb->maxCache = atol(nhl);
 				nhl = getConfigValue(vcn, "enable-gzip");
 				vhb->enableGzip = nhl == NULL ? 1 : streq_nocase(nhl, "true");
 				if (nhl == NULL) {
