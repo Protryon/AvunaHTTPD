@@ -554,6 +554,7 @@ int generateResponse(struct reqsess* rs) {
 			size_t extp = 0;
 			size_t clt = 0;
 			while ((clt = strlen(nxtp)) > 0) {
+				printf("%s\n", nxtp);
 				if (ff) {
 					if (extraPath == NULL) extraPath = xmalloc(extp + clt + 2);
 					else extraPath = xrealloc(extraPath, extp + clt + 2);
@@ -601,9 +602,9 @@ int generateResponse(struct reqsess* rs) {
 			for (int ii = 0; ii < vh->sub.htdocs.index_count; ii++) {
 				size_t cl = strlen(vh->sub.htdocs.index[ii]);
 				char* tp2 = xmalloc(htdl + pl + cl);
-				//printf("%i<%s>, %i, %i, %i\n", strlen(tp), tp, htdl, pl, htdl + pl - 1);
-				memcpy(tp2, tp, htdl + pl - 1);
-				memcpy(tp2 + htdl + pl - 1, vh->sub.htdocs.index[ii], cl + 1);
+				size_t l2 = strlen(tp);
+				memcpy(tp2, tp, l2);
+				memcpy(tp2 + l2, vh->sub.htdocs.index[ii], cl + 1);
 				if (!access(tp2, R_OK)) {
 					xfree(tp);
 					tp = tp2;
