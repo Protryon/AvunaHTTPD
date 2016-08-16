@@ -554,7 +554,6 @@ int generateResponse(struct reqsess* rs) {
 			size_t extp = 0;
 			size_t clt = 0;
 			while ((clt = strlen(nxtp)) > 0) {
-				printf("%s\n", nxtp);
 				if (ff) {
 					if (extraPath == NULL) extraPath = xmalloc(extp + clt + 2);
 					else extraPath = xrealloc(extraPath, extp + clt + 2);
