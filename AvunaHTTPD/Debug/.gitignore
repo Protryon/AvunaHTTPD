@@ -1,2 +1,3 @@
 AvunaHTTPD
 src/*.o
+/src/

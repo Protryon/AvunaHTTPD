@@ -697,7 +697,7 @@ int generateResponse(struct reqsess* rs) {
 			}
 		}
 		if (rp) {
-			printf("-1 %16lX\n", rs->response);
+			//printf("-1 %16lX\n", rs->response);
 			resrp: if (rs->sender->fw_fd < 0) {
 				rs->sender->fw_fd = socket(vh->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
 				if (rs->sender->fw_fd < 0 || connect(rs->sender->fw_fd, vh->sub.rproxy.fwaddr, vh->sub.rproxy.fwaddrlen) < 0) {
@@ -726,9 +726,9 @@ int generateResponse(struct reqsess* rs) {
 			rs->sender->fwed = 1;
 			eh = 0;
 			struct reqsess* rs2 = xmalloc(sizeof(struct reqsess));
-			memcpy(rs2, &rs, sizeof(struct reqsess));
-			printf("1 %16lX vs %16lX\n", rs2, rs);
-			printf("2 %16lX vs %16lX\n", rs2->response, rs->response);
+			memcpy(rs2, rs, sizeof(struct reqsess));
+			//printf("1 %16lX vs %16lX\n", rs2, rs);
+			//printf("2 %16lX vs %16lX\n", rs2->response, rs->response);
 			add_queue(rs->sender->fwqueue, rs2);
 		} else {
 			rs->response->body = xmalloc(sizeof(struct body));
