@@ -12,8 +12,11 @@
 
 struct cert {
 		SSL_CTX* ctx;
+		int isDummy;
 };
 
 struct cert* loadCert(const char* cert, const char* key);
+
+struct cert* dummyCert();
 
 #endif /* TLS_H_ */

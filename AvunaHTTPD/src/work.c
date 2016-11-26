@@ -33,6 +33,7 @@
 void freeReqsess(struct reqsess* rs);
 
 void closeConn(struct work_param* param, struct conn* conn) {
+	//printf("%16lX closed.\n", conn);
 	if (conn->tls) {
 		if (conn->handshaked) {
 			SSL_shutdown(conn->session);
@@ -94,7 +95,7 @@ void sendReqsess(struct reqsess* rs, struct timespec* stt) {
 		if (mip == NULL) {
 			errlog(param->logsess, "Invalid IP Address: %s", strerror(errno));
 		}
-		acclog(param->logsess, "%s %s %s returned %s took: %f ms", mip, getMethod(req->method), req->path, resp->code, msp);
+		acclog(param->logsess, "%s %s %s/%s%s returned %s took: %f ms", mip, getMethod(req->method), param->ap->config->id, req->vhost->id, req->path, resp->code, msp);
 		unsigned char* loc = NULL;
 		if (conn->writeBuffer == NULL) {
 			conn->writeBuffer = xmalloc(rl); // TODO: max upload?
@@ -352,8 +353,6 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, int fd) {
 				} else if (ct == 1) {
 					struct reqsess* rs;
 					rs = peek_queue(conn->fwqueue);
-					printf("1 %16lX\n", rs);
-					printf("2 %16lX\n", rs->response);
 					if (parseResponse(rs, (char*) reqd) < 0) {
 						errlog(param->logsess, "Malformed Response!");
 						xfree(rs->response);
@@ -646,12 +645,14 @@ void run_work(struct work_param* param) {
 			}
 
 			if ((re & POLLHUP) == POLLHUP && conn != NULL) {
+				//printf("%16lX hup\n", conn);
 				closeConn(param, conn);
 				conn = NULL;
 				goto cont;
 			}
 			if ((re & POLLERR) == POLLERR) { //TODO: probably a HUP
 				//printf("POLLERR in worker poll! This is bad!\n");
+				//printf("%16lX perr\n", conn);
 				closeConn(param, conn);
 				conn = NULL;
 				goto cont;
@@ -667,6 +668,7 @@ void run_work(struct work_param* param) {
 				if (r == 1) {
 					conn->handshaked = 1;
 				} else if (r == 2) {
+					//printf("%16lX fail handshake\n", conn);
 					closeConn(param, conn);
 					goto cont;
 				} else {
@@ -674,6 +676,7 @@ void run_work(struct work_param* param) {
 					if (err == SSL_ERROR_WANT_READ) conn->ssl_nextdir = 1;
 					else if (err == SSL_ERROR_WANT_WRITE) conn->ssl_nextdir = 2;
 					else {
+						//printf("%16lX fail handshake2\n", conn);
 						closeConn(param, conn);
 						goto cont;
 					}
@@ -684,6 +687,7 @@ void run_work(struct work_param* param) {
 				if (r == 1) {
 					conn->fw_handshaked = 1;
 				} else if (r == 2) {
+					//printf("%16lX fail handshake3\n", conn);
 					closeConn(param, conn);
 					goto cont;
 				} else {
@@ -691,6 +695,7 @@ void run_work(struct work_param* param) {
 					if (err == SSL_ERROR_WANT_READ) conn->fw_ssl_nextdir = 1;
 					else if (err == SSL_ERROR_WANT_WRITE) conn->fw_ssl_nextdir = 2;
 					else {
+						//printf("%16lX fail handshake4\n", conn);
 						closeConn(param, conn);
 						goto cont;
 					}
@@ -739,9 +744,12 @@ void run_work(struct work_param* param) {
 						//printf("sslen2! %16lX %i %i %i %i\n", conn, x, SSL_get_error(conn->session, x), ERR_get_error(), ftr);
 						if (x <= 0) {
 							//printf("sk2 %16lX\n", conn);
+							int serr = SSL_get_error(conn->session, x);
+							if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) goto cont;
 							if (ct == 1) {
 								errlog(param->logsess, "TLS Error receiving from backend server! %i", SSL_get_error(ct == 0 ? conn->session : conn->fw_session, x));
 							}
+							//printf("%16lX x <= 0  --- 1\n", conn);
 							closeConn(param, conn);
 							conn = NULL;
 							goto cont;
@@ -755,6 +763,7 @@ void run_work(struct work_param* param) {
 					} else {
 						x = read(fds[i].fd, loc + r, tr - r);
 						if (x <= 0) {
+							//printf("%16lX x <= 0  --- 2\n", conn);
 							closeConn(param, conn);
 							conn = NULL;
 							goto cont;
@@ -776,9 +785,14 @@ void run_work(struct work_param* param) {
 						//printf("sslen! %16lX %i %i %i %i\n", conn, x, SSL_get_error(conn->session, x), ERR_get_error(), ftr);
 						if (x <= 0) {
 							//printf("sk %16lX\n", conn);
+							int serr = SSL_get_error(conn->session, x);
+							if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) goto cont;
+							//int e = errno;
+							//int ege = ERR_get_error();
 							if (ct == 1) {
 								errlog(param->logsess, "TLS Error receiving from backend server! %i", SSL_get_error(ct == 0 ? conn->session : conn->fw_session, x));
 							}
+							//printf("%16lX %i <= 0  --- 4 %i %i %i\n", conn, x, serr, e, ege);
 							closeConn(param, conn);
 							conn = NULL;
 							goto cont;
@@ -793,6 +807,7 @@ void run_work(struct work_param* param) {
 					} else {
 						x = read(fds[i].fd, loc + r, tr - r);
 						if (x <= 0) {
+							//printf("%16lX x <= 0  --- 3\n", conn);
 							closeConn(param, conn);
 							conn = NULL;
 							goto cont;
@@ -815,7 +830,9 @@ void run_work(struct work_param* param) {
 			}
 			if ((re & POLLOUT) == POLLOUT && conn != NULL) {
 				ssize_t mtr = conn->tls ? SSL_write(conn->session, conn->writeBuffer, conn->writeBuffer_size) : write(fds[i].fd, conn->writeBuffer, conn->writeBuffer_size);
-				if (mtr < 0 && (conn->tls ? (SSL_get_error(conn->session, mtr) != SSL_ERROR_SYSCALL || errno != EAGAIN) : errno != EAGAIN)) { // use error queue?
+				int serr = (conn->tls && mtr < 0) ? SSL_get_error(conn->session, mtr) : 0;
+				if (mtr < 0 && (conn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) && serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) : errno != EAGAIN)) { // use error queue?
+					//printf("%16lX werr %i %i\n", conn, serr, errno);
 					closeConn(param, conn);
 					conn = NULL;
 					goto cont;

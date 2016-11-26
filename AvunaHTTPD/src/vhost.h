@@ -89,6 +89,7 @@ union vhost_sub {
 
 struct vhost {
 		int type;
+		struct cert* cert;
 		size_t host_count; // if 0, all hosts match
 		char** hosts;
 		char* id;

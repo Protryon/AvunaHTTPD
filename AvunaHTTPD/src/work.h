@@ -18,6 +18,7 @@
 
 struct work_param {
 		int i;
+		struct accept_param* ap;
 		struct collection* conns;
 		int pipes[2];
 		struct logsess* logsess;

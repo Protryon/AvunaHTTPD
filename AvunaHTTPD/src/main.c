@@ -419,6 +419,24 @@ int main(int argc, char* argv[]) {
 				cv->hosts[cv->host_count - 1] = hnv;
 				hnv = nph == NULL ? hnv + strlen(hnv) : nph;
 			}
+			sssl = getConfigValue(vcn, "ssl");
+			if (sssl != NULL) {
+				struct cnode* ssln = getCatByID(cfg, sssl);
+				if (ssln == NULL) {
+					errlog(slog, "Invalid SSL node! Node not found!");
+					goto pssl;
+				}
+				const char* cert = getConfigValue(ssln, "publicKey");
+				const char* key = getConfigValue(ssln, "privateKey");
+				if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
+					errlog(slog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
+					goto pssl;
+				}
+				cv->cert = loadCert(cert, key);
+				if (ap->cert == NULL) ap->cert = dummyCert();
+			} else {
+				cv->cert = NULL;
+			}
 			if (cv->type == VHOST_HTDOCS) {
 				struct vhost_htdocs* vhb = &cv->sub.htdocs;
 				vhb->index = NULL;
@@ -824,6 +842,7 @@ int main(int argc, char* argv[]) {
 		for (int x = 0; x < tc; x++) {
 			struct work_param* wp = xmalloc(sizeof(struct work_param));
 			wp->conns = new_collection(mc < 1 ? 0 : mc / tc, sizeof(struct conn*));
+			wp->ap = ap;
 			wp->logsess = slog;
 			wp->vhosts = vohs;
 			wp->vhosts_count = vhc;

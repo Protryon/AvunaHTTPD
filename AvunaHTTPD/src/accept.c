@@ -19,6 +19,29 @@
 #include <unistd.h>
 #include <openssl/ssl.h>
 #include "tls.h"
+#include "vhost.h"
+
+int accept_sni_callback(SSL* ssl, int *ad, struct accept_param* param) {
+	if (ssl == NULL || param->works_count == 0 || param->works[0] == NULL) return SSL_TLSEXT_ERR_NOACK;
+	const char* servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+	if (servername == NULL) return SSL_TLSEXT_ERR_NOACK;
+	struct vhost* vh = NULL;
+	for (int i = 0; i < param->works[0]->vhosts_count; i++) {
+		if (param->works[0]->vhosts[i]->host_count == 0) {
+			vh = param->works[0]->vhosts[i];
+			break;
+		} else for (int x = 0; x < param->works[0]->vhosts[i]->host_count; x++) {
+			if (domeq(param->works[0]->vhosts[i]->hosts[x], servername)) {
+				vh = param->works[0]->vhosts[i];
+				break;
+			}
+		}
+		if (vh != NULL) break;
+	}
+	if (vh == NULL || vh->cert == NULL) return SSL_TLSEXT_ERR_OK;
+	if (SSL_set_SSL_CTX(ssl, vh->cert->ctx) != vh->cert->ctx) return SSL_TLSEXT_ERR_NOACK;
+	return SSL_TLSEXT_ERR_OK;
+}
 
 void run_accept(struct accept_param* param) {
 	static int one = 1;
@@ -30,6 +53,10 @@ void run_accept(struct accept_param* param) {
 	spfd.events = POLLIN;
 	spfd.revents = 0;
 	spfd.fd = param->server_fd;
+	if (param->cert != NULL) {
+		SSL_CTX_set_tlsext_servername_callback(param->cert->ctx, accept_sni_callback);
+		SSL_CTX_set_tlsext_servername_arg(param->cert->ctx, param);
+	}
 	while (1) {
 		struct conn* c = xmalloc(sizeof(struct conn));
 		memset(&c->addr, 0, sizeof(struct sockaddr_in6));
@@ -134,6 +161,13 @@ void run_accept(struct accept_param* param) {
 				}
 			}
 		}
+		if (param->cert != NULL && param->cert->isDummy && SSL_get_SSL_CTX(c->session) == param->cert->ctx) {
+			SSL_free(c->session);
+			close(c->fd);
+			xfree(c);
+			continue;
+		}
+		printf("%16lX connected.\n", c);
 		struct work_param* work = param->works[rand() % param->works_count];
 		if (add_collection(work->conns, c)) { // TODO: send to lowest load, not random
 			if (errno == EINVAL) {
