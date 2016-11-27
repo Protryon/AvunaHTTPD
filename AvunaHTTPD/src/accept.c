@@ -167,7 +167,7 @@ void run_accept(struct accept_param* param) {
 			xfree(c);
 			continue;
 		}
-		printf("%16lX connected.\n", c);
+		//printf("%16lX connected.\n", c);
 		struct work_param* work = param->works[rand() % param->works_count];
 		if (add_collection(work->conns, c)) { // TODO: send to lowest load, not random
 			if (errno == EINVAL) {
