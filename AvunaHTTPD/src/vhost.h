@@ -27,6 +27,7 @@ struct fcgi {
 		struct sockaddr* addr;
 		size_t mime_count;
 		char** mimes;
+		uint16_t gc;
 };
 
 struct vhost_htdocs {

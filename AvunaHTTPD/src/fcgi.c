@@ -47,11 +47,11 @@ int writeFCGIFrame(int fd, struct fcgiframe* fcgif) {
 	return 0;
 }
 
-int writeFCGIParam(int fd, const char* name, const char* value) {
+int writeFCGIParam(int fd, int reqid, const char* name, const char* value) {
 	//printf("fcgi param     %s=%s\n", name, value);
 	struct fcgiframe fcgif;
 	fcgif.type = FCGI_PARAMS;
-	fcgif.reqID = 0;
+	fcgif.reqID = reqid;
 	size_t ml = strlen(name);
 	size_t vl = strlen(value);
 	int enl = ml > 127;

@@ -589,7 +589,7 @@ int main(int argc, char* argv[]) {
 						const char* fmode = getConfigValue(fcgin, "mode");
 						struct fcgi* fcgi = xmalloc(sizeof(struct fcgi));
 						fcgi->mimes = NULL;
-
+						fcgi->gc = 0;
 						if (streq_nocase(fmode, "tcp")) {
 							fcgi->addrlen = sizeof(struct sockaddr_in);
 							struct sockaddr_in* ina = xmalloc(sizeof(struct sockaddr_in));
@@ -663,19 +663,19 @@ int main(int argc, char* argv[]) {
 					vhb->fcgifds[i] = xmalloc(sizeof(int) * vhb->fcgi_count);
 					for (int f = 0; f < vhb->fcgi_count; f++) {
 						struct fcgi* fcgi = vhb->fcgis[f];
-						int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
-						if (fd < 0) {
-							errlog(slog, "Error creating socket for FCGI Server! %s", strerror(errno));
-							vhb->fcgifds[i][f] = -1;
-							continue;
-						}
-						if (connect(fd, fcgi->addr, fcgi->addrlen)) {
-							errlog(slog, "Error connecting socket to FCGI Server! %s", strerror(errno));
-							vhb->fcgifds[i][f] = -1;
-							close(fd);
-							continue;
-						}
-						vhb->fcgifds[i][f] = fd;
+						/*int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+						 if (fd < 0) {
+						 errlog(slog, "Error creating socket for FCGI Server! %s", strerror(errno));
+						 vhb->fcgifds[i][f] = -1;
+						 continue;
+						 }
+						 if (connect(fd, fcgi->addr, fcgi->addrlen)) {
+						 errlog(slog, "Error connecting socket to FCGI Server! %s", strerror(errno));
+						 vhb->fcgifds[i][f] = -1;
+						 close(fd);
+						 continue;
+						 }*/
+						vhb->fcgifds[i][f] = -1;
 						//TODO: perhaps it is worth getting FCGI_MAX_CONNS, FCGI_MAX_REQS, most impls do not multiplex, so we won't bother
 					}
 				}

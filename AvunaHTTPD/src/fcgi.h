@@ -33,7 +33,7 @@ struct fcgiframe {
 
 int writeFCGIFrame(int fd, struct fcgiframe* fcgif);
 
-int writeFCGIParam(int fd, const char* name, const char* value);
+int writeFCGIParam(int fd, int reqid, const char* name, const char* value);
 
 int readFCGIFrame(int fd, struct fcgiframe* fcgif);
 

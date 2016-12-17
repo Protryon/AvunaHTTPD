@@ -764,29 +764,37 @@ int generateResponse(struct reqsess* rs) {
 			if (df) {
 				isStatic = 0;
 				int fc = 0;
+				int* ffdl = &vh->sub.htdocs.fcgifds[rs->wp->i][i];
+				if (*ffdl >= 0) goto pfcgix;
 				sofcgi: ;
 				//printf("%i, %i\n", rs->wp->i, i);
 				//int ffd = vh->sub.htdocs.fcgifds[rs->wp->i][i];
-				int ffd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
-				if (ffd < 0) {
+				*ffdl = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+				if (*ffdl < 0) {
 					errlog(rs->wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
 					rs->response->code = "500 Internal Server Error";
 					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 					//if (ff.data != NULL) xfree(ff.data);
+					*ffdl = -1;
 					goto epage;
 				}
-				if (connect(ffd, fcgi->addr, fcgi->addrlen)) {
+				if (connect(*ffdl, fcgi->addr, fcgi->addrlen)) {
 					errlog(rs->wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
 					rs->response->code = "500 Internal Server Error";
 					generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 					//if (ff.data != NULL) xfree(ff.data);
-					close(ffd);
+					close(*ffdl);
+					*ffdl = -1;
 					goto epage;
 				}
+				pfcgix: ;
+				//printf("starting req on fd #%i\n", *ffdl);
 				//printf("begin fcgi on %i\n", ffd);
 				struct fcgiframe ff;
 				ff.type = FCGI_BEGIN_REQUEST;
-				ff.reqID = 0;
+				ff.reqID = fcgi->gc++ % 65535;
+				if (fcgi->gc > 65535) fcgi->gc = 0;
+				//printf("nreqid %i\n", ff.reqID);
 				ff.len = 8;
 				unsigned char pkt[8];
 				pkt[0] = 0;
@@ -794,28 +802,36 @@ int generateResponse(struct reqsess* rs) {
 				pkt[2] = 1;
 				memset(pkt + 3, 0, 5);
 				ff.data = pkt;
-				if (writeFCGIFrame(ffd, &ff)) {
+				if (writeFCGIFrame(*ffdl, &ff)) {
 					errlog(rs->wp->logsess, "Failed to write to FCGI Server! File: %s Error: %s, restarting connection!", rtp, strerror(errno));
+					close(*ffdl);
+					*ffdl = -1;
 					if (fc > 0) {
 						errlog(rs->wp->logsess, "Connection failed restart, perhaps FCGI server is down?");
 						rs->response->code = "500 Internal Server Error";
 						generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 						goto epage;
 					}
-					int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
-					if (fd < 0) {
+					*ffdl = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+					if (*ffdl < 0) {
 						errlog(rs->wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
-						continue;
+						rs->response->code = "500 Internal Server Error";
+						generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+						*ffdl = -1;
+						goto epage;
 					}
-					if (connect(fd, fcgi->addr, fcgi->addrlen)) {
+					if (connect(*ffdl, fcgi->addr, fcgi->addrlen)) {
 						errlog(rs->wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
-						continue;
+						close(*ffdl);
+						*ffdl = -1;
+						rs->response->code = "500 Internal Server Error";
+						generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+						goto epage;
 					}
-					close(ffd);
-					vh->sub.htdocs.fcgifds[rs->wp->i][i] = fd;
 					fc++;
 					goto sofcgi;
 				}
+				int ffd = *ffdl;
 				//TODO: SERVER_ADDR
 				char* rq = xstrdup(rs->request->path, 0);
 				{
@@ -829,7 +845,7 @@ int generateResponse(struct reqsess* rs) {
 				} else {
 					get = "";
 				}
-				writeFCGIParam(ffd, "REQUEST_URI", rs->request->path);
+				writeFCGIParam(ffd, ff.reqID, "REQUEST_URI", rs->request->path);
 				char cl[16];
 				if (rs->request->body != NULL) {
 					snprintf(cl, 16, "%i", rs->request->body->len);
@@ -837,11 +853,11 @@ int generateResponse(struct reqsess* rs) {
 					cl[0] = '0';
 					cl[1] = 0;
 				}
-				writeFCGIParam(ffd, "CONTENT_LENGTH", cl);
-				if (rs->request->body != NULL && rs->request->body->mime_type != NULL) writeFCGIParam(ffd, "CONTENT_TYPE", rs->request->body->mime_type);
-				writeFCGIParam(ffd, "GATEWAY_INTERFACE", "CGI/1.1");
-				writeFCGIParam(ffd, "PATH", getenv("PATH"));
-				writeFCGIParam(ffd, "QUERY_STRING", get);
+				writeFCGIParam(ffd, ff.reqID, "CONTENT_LENGTH", cl);
+				if (rs->request->body != NULL && rs->request->body->mime_type != NULL) writeFCGIParam(ffd, ff.reqID, "CONTENT_TYPE", rs->request->body->mime_type);
+				writeFCGIParam(ffd, ff.reqID, "GATEWAY_INTERFACE", "CGI/1.1");
+				writeFCGIParam(ffd, ff.reqID, "PATH", getenv("PATH"));
+				writeFCGIParam(ffd, ff.reqID, "QUERY_STRING", get);
 				{
 					char tip[48];
 					char* mip = tip;
@@ -859,8 +875,8 @@ int generateResponse(struct reqsess* rs) {
 						mip = "UNKNOWN";
 					}
 					if (mip == NULL) mip = "INVALID";
-					writeFCGIParam(ffd, "REMOTE_ADDR", mip);
-					writeFCGIParam(ffd, "REMOTE_HOST", mip);
+					writeFCGIParam(ffd, ff.reqID, "REMOTE_ADDR", mip);
+					writeFCGIParam(ffd, ff.reqID, "REMOTE_HOST", mip);
 				}
 				if (rs->sender->addr.sin6_family == AF_INET) {
 					snprintf(cl, 16, "%i", ntohs(((struct sockaddr_in*) &rs->sender->addr)->sin_port));
@@ -870,37 +886,37 @@ int generateResponse(struct reqsess* rs) {
 					cl[0] = '0';
 					cl[1] = 0;
 				}
-				writeFCGIParam(ffd, "REMOTE_PORT", cl);
+				writeFCGIParam(ffd, ff.reqID, "REMOTE_PORT", cl);
 				if (extraPath != NULL) {
-					writeFCGIParam(ffd, "PATH_INFO", extraPath);
+					writeFCGIParam(ffd, ff.reqID, "PATH_INFO", extraPath);
 					size_t epl = strlen(extraPath);
 					char* trns = xmalloc(htdl + epl);
 					memcpy(trns, vh->sub.htdocs.htdocs, htdl);
 					memcpy(trns + htdl, extraPath + 1, epl);
 					trns[htdl + epl - 1] = 0;
-					writeFCGIParam(ffd, "PATH_TRANSLATED", trns);
+					writeFCGIParam(ffd, ff.reqID, "PATH_TRANSLATED", trns);
 					xfree(trns);
 				} else {
-					writeFCGIParam(ffd, "PATH_INFO", "");
-					writeFCGIParam(ffd, "PATH_TRANSLATED", "");
+					writeFCGIParam(ffd, ff.reqID, "PATH_INFO", "");
+					writeFCGIParam(ffd, ff.reqID, "PATH_TRANSLATED", "");
 				}
-				writeFCGIParam(ffd, "REQUEST_METHOD", getMethod(rs->request->method));
+				writeFCGIParam(ffd, ff.reqID, "REQUEST_METHOD", getMethod(rs->request->method));
 				char rss[4];
 				rss[3] = 0;
 				memcpy(rss, rs->response->code, 3);
-				writeFCGIParam(ffd, "REDIRECT_STATUS", rss);
+				writeFCGIParam(ffd, ff.reqID, "REDIRECT_STATUS", rss);
 				size_t htl = strlen(vh->sub.htdocs.htdocs);
 				int htes = vh->sub.htdocs.htdocs[htl - 1] == '/';
 				size_t rtpl = strlen(rtp);
 				if (rtpl < htl) errlog(rs->wp->logsess, "Setting FCGI SCRIPT_NAME requires the file to be in htdocs! @ %s", rtp);
-				else writeFCGIParam(ffd, "SCRIPT_NAME", rtp + htl + (htes ? -1 : 0));
-				if (host != NULL) writeFCGIParam(ffd, "SERVER_NAME", host);
+				else writeFCGIParam(ffd, ff.reqID, "SCRIPT_NAME", rtp + htl + (htes ? -1 : 0));
+				if (host != NULL) writeFCGIParam(ffd, ff.reqID, "SERVER_NAME", host);
 				snprintf(cl, 16, "%i", rs->wp->sport);
-				writeFCGIParam(ffd, "SERVER_PORT", cl);
-				writeFCGIParam(ffd, "SERVER_PROTOCOL", rs->request->version);
-				writeFCGIParam(ffd, "SERVER_SOFTWARE", "Avuna/" VERSION);
-				writeFCGIParam(ffd, "DOCUMENT_ROOT", vh->sub.htdocs.htdocs);
-				writeFCGIParam(ffd, "SCRIPT_FILENAME", rtp);
+				writeFCGIParam(ffd, ff.reqID, "SERVER_PORT", cl);
+				writeFCGIParam(ffd, ff.reqID, "SERVER_PROTOCOL", rs->request->version);
+				writeFCGIParam(ffd, ff.reqID, "SERVER_SOFTWARE", "Avuna/" VERSION);
+				writeFCGIParam(ffd, ff.reqID, "DOCUMENT_ROOT", vh->sub.htdocs.htdocs);
+				writeFCGIParam(ffd, ff.reqID, "SCRIPT_FILENAME", rtp);
 				for (int i = 0; i < rs->request->headers->count; i++) {
 					const char* name = rs->request->headers->names[i];
 					if (streq_nocase(name, "Accept-Encoding")) continue;
@@ -918,10 +934,9 @@ int generateResponse(struct reqsess* rs) {
 						if (nname[x] >= 'a' && nname[x] <= 'z') nname[x] -= ' ';
 						else if (nname[x] == '-') nname[x] = '_';
 					}
-					writeFCGIParam(ffd, nname, value);
+					writeFCGIParam(ffd, ff.reqID, nname, value);
 				}
 				ff.type = FCGI_PARAMS;
-				ff.reqID = 0;
 				ff.len = 0;
 				ff.data = NULL;
 				writeFCGIFrame(ffd, &ff);
@@ -949,10 +964,13 @@ int generateResponse(struct reqsess* rs) {
 				int hd = 0;
 				char* hdd = NULL;
 				size_t hddl = 0;
+				int eid = ff.reqID;
 				//printf("read fcgi on %i\n", ffd);
 				while (ff.type != FCGI_END_REQUEST) {
 					if (readFCGIFrame(ffd, &ff)) {
 						errlog(rs->wp->logsess, "Error reading from FCGI server: %s", strerror(errno));
+						close(*ffdl);
+						*ffdl = -1;
 						if (fc > 0) {
 							errlog(rs->wp->logsess, "Connection failed restart, perhaps FCGI server is down?");
 							rs->response->code = "500 Internal Server Error";
@@ -960,26 +978,34 @@ int generateResponse(struct reqsess* rs) {
 							//if (ff.data != NULL) xfree(ff.data);
 							goto epage;
 						}
-						int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
-						if (fd < 0) {
+						*ffdl = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+						if (*ffdl < 0) {
 							errlog(rs->wp->logsess, "Error creating socket for FCGI Server! %s", strerror(errno));
 							rs->response->code = "500 Internal Server Error";
 							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 							//if (ff.data != NULL) xfree(ff.data);
+							*ffdl = -1;
 							goto epage;
 						}
-						if (connect(fd, fcgi->addr, fcgi->addrlen)) {
+						if (connect(*ffdl, fcgi->addr, fcgi->addrlen)) {
 							errlog(rs->wp->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
 							rs->response->code = "500 Internal Server Error";
 							generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 							//if (ff.data != NULL) xfree(ff.data);
-							close(fd);
+							close(*ffdl);
+							*ffdl = -1;
 							goto epage;
 						}
-						close(ffd);
-						vh->sub.htdocs.fcgifds[rs->wp->i][i] = fd;
 						fc++;
 						goto sofcgi;
+					}
+					if (ff.reqID != eid) {
+						//printf("unx id %i wanted: %i\n", ff.reqID, eid);
+						if (ff.type == FCGI_END_REQUEST) {
+							ff.type = FCGI_STDERR;
+							//printf("rewr\n");
+						}
+						continue;
 					}
 					//printf("recv %i\n", ff.type);
 					if (ff.type == FCGI_END_REQUEST) {
@@ -1077,7 +1103,10 @@ int generateResponse(struct reqsess* rs) {
 					xfree(ff.data);
 				}
 				//printf("end fcgi on %i\n", ffd);
-				close(ffd);
+				//close(ffd);
+				//printf("ending req on fd #%i appStatus: %i, protocolStatus: %i\n", *ffdl, *((int32_t*) (ff.data)), *((int8_t*) (ff.data) + 4));
+				//*ffdl = -1;
+
 			}
 		}
 		if (isStatic) {
