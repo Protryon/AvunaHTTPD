@@ -78,6 +78,7 @@ struct vhmount {
 struct vhost_mount {
 		struct vhmount* vhms;
 		int vhm_count;
+		int keep_prefix;
 };
 
 union vhost_sub {

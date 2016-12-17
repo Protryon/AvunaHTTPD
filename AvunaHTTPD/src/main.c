@@ -834,6 +834,12 @@ int main(int argc, char* argv[]) {
 						vhb->vhms[vhb->vhm_count - 1].vh = vcn->values[i];
 					}
 				}
+				const char* keep_prefix = getConfigValue(vcn, "keep-prefix");
+				if (keep_prefix == NULL) {
+					errlog(slog, "No keep-prefix at vhost: %s, assuming default", vcn->id);
+					keep_prefix = "false";
+				}
+				vhb->keep_prefix = streq_nocase(keep_prefix, "true");
 			}
 			cont_vh: ovh = np == NULL ? ovh + strlen(ovh) : np;
 		}

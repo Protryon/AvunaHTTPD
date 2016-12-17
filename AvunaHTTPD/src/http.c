@@ -1272,16 +1272,19 @@ int generateResponse(struct reqsess* rs) {
 			if (startsWith(rs->request->path, vhm->vhms[i].path)) {
 				for (int x = 0; x < rs->wp->vhosts_count; x++) {
 					if (streq_nocase(vhm->vhms[i].vh, rs->wp->vhosts[x]->id) && !streq_nocase(rs->wp->vhosts[x]->id, oid)) {
-						size_t vhpls = strlen(vhm->vhms[i].path);
-						char* tmpp = xstrdup(orq, 0);
-						char* tmpp2 = tmpp + vhpls;
-						if (tmpp2[0] != '/') {
-							tmpp2--;
-							tmpp2[0] = '/';
+						if (!vhm->keep_prefix) {
+							size_t vhpls = strlen(vhm->vhms[i].path);
+							char* tmpp = xstrdup(orq, 0);
+							char* tmpp2 = tmpp + vhpls;
+							if (tmpp2[0] != '/') {
+								tmpp2--;
+								tmpp2[0] = '/';
+							}
+							rs->request->path = xstrdup(tmpp2, 0);
+							xfree(tmpp);
 						}
-						rs->request->path = xstrdup(tmpp2, 0);
-						xfree(tmpp);
 						vh = rs->wp->vhosts[x];
+						rs->request->vhost = rs->wp->vhosts[x];
 						break;
 					}
 				}

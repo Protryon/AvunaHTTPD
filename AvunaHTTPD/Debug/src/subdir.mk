@@ -15,6 +15,7 @@ C_SRCS += \
 ../src/main.c \
 ../src/mime.c \
 ../src/oqueue.c \
+../src/override.c \
 ../src/streams.c \
 ../src/tls.c \
 ../src/util.c \
@@ -34,6 +35,7 @@ OBJS += \
 ./src/main.o \
 ./src/mime.o \
 ./src/oqueue.o \
+./src/override.o \
 ./src/streams.o \
 ./src/tls.o \
 ./src/util.o \
@@ -53,6 +55,7 @@ C_DEPS += \
 ./src/main.d \
 ./src/mime.d \
 ./src/oqueue.d \
+./src/override.d \
 ./src/streams.d \
 ./src/tls.d \
 ./src/util.d \
