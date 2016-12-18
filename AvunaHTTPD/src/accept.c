@@ -26,11 +26,11 @@ int accept_sni_callback(SSL* ssl, int *ad, struct accept_param* param) {
 	const char* servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 	if (servername == NULL) return SSL_TLSEXT_ERR_NOACK;
 	struct vhost* vh = NULL;
-	for (int i = 0; i < param->works[0]->vhosts_count; i++) {
+	for (size_t i = 0; i < param->works[0]->vhosts_count; i++) {
 		if (param->works[0]->vhosts[i]->host_count == 0) {
 			vh = param->works[0]->vhosts[i];
 			break;
-		} else for (int x = 0; x < param->works[0]->vhosts[i]->host_count; x++) {
+		} else for (size_t x = 0; x < param->works[0]->vhosts[i]->host_count; x++) {
 			if (domeq(param->works[0]->vhosts[i]->hosts[x], servername)) {
 				vh = param->works[0]->vhosts[i];
 				break;
@@ -134,13 +134,6 @@ void run_accept(struct accept_param* param) {
 		}
 		if (param->cert != NULL) {
 			SSL_set_fd(c->session, c->fd);
-			/*if (sniCallback != NULL) {
-			 struct sni_data* ld = xmalloc(sizeof(struct sni_data));
-			 ld->this = this;
-			 ld->sniCallback = sniCallback;
-			 lsd = ld;
-			 gnutls_handshake_set_post_client_hello_function(sessiond, handleSNI);
-			 }*/
 			int r = SSL_accept(c->session);
 			if (r == 1) {
 				c->handshaked = 1;

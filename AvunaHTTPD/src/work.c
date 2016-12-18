@@ -579,7 +579,7 @@ void run_work(struct work_param* param) {
 		struct uconn* conns = xmalloc(sizeof(struct uconn) * (mfds - 1));
 		size_t fdi = 0;
 		size_t fdxi = 0;
-		for (int i = 0; i < param->conns->size; i++) {
+		for (size_t i = 0; i < param->conns->size; i++) {
 			struct conn* conn = param->conns->data[i];
 			if (conn != NULL) {
 				if (conn->fwqueue != NULL) {
@@ -670,6 +670,7 @@ void run_work(struct work_param* param) {
 				} else if (r == 2) {
 					//printf("%16lX fail handshake\n", conn);
 					closeConn(param, conn);
+					conn = NULL;
 					goto cont;
 				} else {
 					int err = SSL_get_error(conn->session, r);
@@ -678,6 +679,7 @@ void run_work(struct work_param* param) {
 					else {
 						//printf("%16lX fail handshake2\n", conn);
 						closeConn(param, conn);
+						conn = NULL;
 						goto cont;
 					}
 				}
@@ -689,6 +691,7 @@ void run_work(struct work_param* param) {
 				} else if (r == 2) {
 					//printf("%16lX fail handshake3\n", conn);
 					closeConn(param, conn);
+					conn = NULL;
 					goto cont;
 				} else {
 					int err = SSL_get_error(conn->fw_session, r);
@@ -697,6 +700,7 @@ void run_work(struct work_param* param) {
 					else {
 						//printf("%16lX fail handshake4\n", conn);
 						closeConn(param, conn);
+						conn = NULL;
 						goto cont;
 					}
 				}
