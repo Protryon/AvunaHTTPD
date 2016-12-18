@@ -22,9 +22,12 @@ endif
 # All Target
 all: AvunaHTTPD
 
-debug:
-	CFLAGS="$(CFLAGS)-DDEBUG" ;\
-	make all
+debug: $(OBJS) $(USER_OBJS)
+	@echo 'Building target: $@'
+	@echo 'Invoking: GCC C Linker'
+	$(CC) -DDEBUG $(CFLAGS) -o "AvunaHTTPD" $(OBJS) $(USER_OBJS) $(LDFLAGS) $(LIBS)
+	@echo 'Finished building target: $@'
+	@echo ' '
 
 # Tool invocations
 AvunaHTTPD: $(OBJS) $(USER_OBJS)
