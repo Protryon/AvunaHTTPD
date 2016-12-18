@@ -3,6 +3,8 @@
 RM := rm -rf
 CP := cp -r
 CHMOD := chmod
+MKDIR := mkdir
+
 # All of the sources participating in the build are defined here
 -include sources.mk
 -include src/subdir.mk
@@ -41,6 +43,8 @@ clean:
 install:
 	-$(CP) AvunaHTTPD /usr/bin/AvunaHTTPD
 	-$(CHMOD) 755 /usr/bin/AvunaHTTPD
+	-$(MKDIR) -p /etc/avuna/httpd/
+	-$(CP) ../main.cfg /etc/avuna/httpd/main.cfg
 
 .PHONY: all clean dependents
 .SECONDARY:
