@@ -22,6 +22,10 @@ endif
 # All Target
 all: AvunaHTTPD
 
+debug:
+	CFLAGS="$(CFLAGS)-DDEBUG" ;\
+	make all
+
 # Tool invocations
 AvunaHTTPD: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
