@@ -10,6 +10,5 @@
 
 #define VERSION "2.0.0"
 #define DAEMON_NAME "HTTPD"
-#define DEBUG
 
 #endif /* VERSION_H_ */
