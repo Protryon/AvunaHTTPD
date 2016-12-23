@@ -1153,11 +1153,13 @@ int generateResponse(struct reqsess* rs) {
 				rs->response->body->len += r;
 			}
 			if (r < 0) {
+				close(ffd);
 				errlog(rs->wp->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
 				rs->response->code = "500 Internal Server Error";
 				generateDefaultErrorPage(rs, vh, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
 				goto epage;
 			}
+			close(ffd);
 		}
 		//TODO: CGI
 		//TODO: SCGI
