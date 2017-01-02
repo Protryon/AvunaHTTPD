@@ -34,6 +34,7 @@
 #include "tls.h"
 #include "http.h"
 #include "vhost.h"
+#include <sys/resource.h>
 
 int main(int argc, char* argv[]) {
 	signal(SIGPIPE, SIG_IGN);
@@ -145,6 +146,15 @@ int main(int argc, char* argv[]) {
 		errlog(delog, "Error making directories for PID file: %s.", strerror(errno));
 		return 1;
 	}
+	const char* rlt = getConfigValue(dm, "fd-limit");
+	if(rlt == NULL) {
+		errlog(delog, "No fd-limit in daemon config! Assuming 1024.");	
+	}
+	int fd_lim = rlt == NULL ? 1024 : atoi(rlt);
+	struct rlimit rlx;
+	rlx.rlim_cur = fd_lim;
+	rlx.rlim_max = fd_lim;
+	if(setrlimit(RLIMIT_NOFILE, &rlx) == -1) printf("Error setting resource limit: %s\n", strerror(errno));
 	const char* mtf = getConfigValue(dm, "mime-types");
 	if (mtf == NULL) {
 		errlog(delog, "No mime-types in daemon config!");
