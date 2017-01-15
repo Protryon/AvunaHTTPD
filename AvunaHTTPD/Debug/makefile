@@ -44,7 +44,8 @@ install:
 	-$(CP) AvunaHTTPD /usr/bin/AvunaHTTPD
 	-$(CHMOD) 755 /usr/bin/AvunaHTTPD
 	-$(MKDIR) -p /etc/avuna/httpd/
-	-$(CP) ../main.cfg /etc/avuna/httpd/main.cfg
+        -$(CP) ../main.cfg /etc/avuna/httpd/main.cfg
+	-$(CP) ../mime.txt /etc/avuna/httpd/mime.txt
 
 .PHONY: all clean dependents
 .SECONDARY:
