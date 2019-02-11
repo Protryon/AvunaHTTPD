@@ -1,0 +1,99 @@
+vhost.o: src/vhost.c src/xstring.h src/vhost.h src/cache.h src/util.h
+mime.o: src/mime.c src/mime.h src/xstring.h src/streams.h src/util.h \
+ src/globals.h
+config.o: src/config.c src/util.h src/config.h src/streams.h \
+ src/xstring.h
+log.o: src/log.c src/log.h src/xstring.h
+http2.o: src/http2.c
+streams.o: src/streams.c
+override.o: src/override.c src/override.h src/http.h src/accept.h \
+ src/config.h src/collection.h src/work.h src/log.h src/cache.h src/tls.h \
+ src/oqueue.h
+accept.o: src/accept.c src/accept.h src/config.h src/collection.h \
+ src/work.h src/log.h src/cache.h src/tls.h src/oqueue.h src/http.h \
+ src/util.h src/xstring.h src/vhost.h
+tls.o: src/tls.c src/tls.h src/util.h src/globals.h
+oqueue.o: src/oqueue.c src/oqueue.h src/xstring.h src/util.h
+main.o: src/main.c src/config.h src/xstring.h src/version.h src/util.h \
+ src/streams.h src/accept.h src/collection.h src/work.h src/log.h \
+ src/cache.h src/tls.h src/oqueue.h src/http.h src/globals.h src/mime.h \
+ src/vhost.h
+collection.o: src/collection.c src/collection.h src/xstring.h src/util.h
+util.o: src/util.c src/xstring.h
+cache.o: src/cache.c src/cache.h src/xstring.h src/util.h src/http.h \
+ src/accept.h src/config.h src/collection.h src/work.h src/log.h \
+ src/tls.h src/oqueue.h
+xstring.o: src/xstring.c
+work.o: src/work.c src/work.h src/collection.h src/accept.h src/config.h \
+ src/log.h src/tls.h src/oqueue.h src/http.h src/cache.h src/xstring.h \
+ src/util.h src/streams.h src/vhost.h src/http2.h
+http.o: src/http.c src/http.h src/accept.h src/config.h src/collection.h \
+ src/work.h src/log.h src/cache.h src/tls.h src/oqueue.h src/util.h \
+ src/xstring.h src/version.h src/mime.h src/fcgi.h src/vhost.h
+fcgi.o: src/fcgi.c src/fcgi.h src/xstring.h src/util.h
+vhost.o: src/vhost.c src/xstring.h src/vhost.h src/cache.h src/util.h
+mime.o: src/mime.c src/mime.h src/xstring.h src/streams.h src/util.h \
+ src/globals.h
+config.o: src/config.c src/util.h src/config.h src/streams.h \
+ src/xstring.h
+log.o: src/log.c src/log.h src/xstring.h
+http2.o: src/http2.c
+streams.o: src/streams.c
+override.o: src/override.c src/override.h src/http.h src/accept.h \
+ src/config.h src/collection.h src/work.h src/log.h src/cache.h src/tls.h \
+ src/oqueue.h
+accept.o: src/accept.c src/accept.h src/config.h src/collection.h \
+ src/work.h src/log.h src/cache.h src/tls.h src/oqueue.h src/http.h \
+ src/util.h src/xstring.h src/vhost.h
+tls.o: src/tls.c src/tls.h src/util.h src/globals.h
+oqueue.o: src/oqueue.c src/oqueue.h src/xstring.h src/util.h
+main.o: src/main.c src/config.h src/xstring.h src/version.h src/util.h \
+ src/streams.h src/accept.h src/collection.h src/work.h src/log.h \
+ src/cache.h src/tls.h src/oqueue.h src/http.h src/globals.h src/mime.h \
+ src/vhost.h
+collection.o: src/collection.c src/collection.h src/xstring.h src/util.h
+util.o: src/util.c src/xstring.h
+cache.o: src/cache.c src/cache.h src/xstring.h src/util.h src/http.h \
+ src/accept.h src/config.h src/collection.h src/work.h src/log.h \
+ src/tls.h src/oqueue.h
+xstring.o: src/xstring.c
+work.o: src/work.c src/work.h src/collection.h src/accept.h src/config.h \
+ src/log.h src/tls.h src/oqueue.h src/http.h src/cache.h src/xstring.h \
+ src/util.h src/streams.h src/vhost.h src/http2.h
+http.o: src/http.c src/http.h src/accept.h src/config.h src/collection.h \
+ src/work.h src/log.h src/cache.h src/tls.h src/oqueue.h src/util.h \
+ src/xstring.h src/version.h src/mime.h src/fcgi.h src/vhost.h
+fcgi.o: src/fcgi.c src/fcgi.h src/xstring.h src/util.h
+vhost.o: src/vhost.c src/xstring.h src/vhost.h src/cache.h src/util.h
+mime.o: src/mime.c src/mime.h src/xstring.h src/streams.h src/util.h \
+ src/globals.h
+config.o: src/config.c src/util.h src/config.h src/streams.h \
+ src/xstring.h
+log.o: src/log.c src/log.h src/xstring.h
+http2.o: src/http2.c
+streams.o: src/streams.c
+override.o: src/override.c src/override.h src/http.h src/accept.h \
+ src/config.h src/collection.h src/work.h src/log.h src/cache.h src/tls.h \
+ src/oqueue.h
+accept.o: src/accept.c src/accept.h src/config.h src/collection.h \
+ src/work.h src/log.h src/cache.h src/tls.h src/oqueue.h src/http.h \
+ src/util.h src/xstring.h src/vhost.h
+tls.o: src/tls.c src/tls.h src/util.h src/globals.h
+oqueue.o: src/oqueue.c src/oqueue.h src/xstring.h src/util.h
+main.o: src/main.c src/config.h src/xstring.h src/version.h src/util.h \
+ src/streams.h src/accept.h src/collection.h src/work.h src/log.h \
+ src/cache.h src/tls.h src/oqueue.h src/http.h src/globals.h src/mime.h \
+ src/vhost.h
+collection.o: src/collection.c src/collection.h src/xstring.h src/util.h
+util.o: src/util.c src/xstring.h
+cache.o: src/cache.c src/cache.h src/xstring.h src/util.h src/http.h \
+ src/accept.h src/config.h src/collection.h src/work.h src/log.h \
+ src/tls.h src/oqueue.h
+xstring.o: src/xstring.c
+work.o: src/work.c src/work.h src/collection.h src/accept.h src/config.h \
+ src/log.h src/tls.h src/oqueue.h src/http.h src/cache.h src/xstring.h \
+ src/util.h src/streams.h src/vhost.h src/http2.h
+http.o: src/http.c src/http.h src/accept.h src/config.h src/collection.h \
+ src/work.h src/log.h src/cache.h src/tls.h src/oqueue.h src/util.h \
+ src/xstring.h src/version.h src/mime.h src/fcgi.h src/vhost.h
+fcgi.o: src/fcgi.c src/fcgi.h src/xstring.h src/util.h
