@@ -47,7 +47,7 @@ const char* getMethod(int m) {
 
 int parseRequest(struct request_session *rs, char *data, size_t maxPost) {
 	struct request* req = rs->request;
-	req->atc = 0;
+	req->add_to_cache = 0;
 	char* cd = data;
 	char* eol1 = strchr(cd, '\n');
 	if (eol1 == NULL) {
@@ -99,7 +99,7 @@ int parseRequest(struct request_session *rs, char *data, size_t maxPost) {
 			const char* tmp = header_get(req->headers, "Content-Type");
 			req->body->mime_type = tmp == NULL ? "application/x-www-form-urlencoded" : tmp;
 			req->body->stream_fd = -1;
-			req->body->stream_type = -1;
+			req->body->stream_type = STREAM_TYPE_INVALID;
 		}
 	}
 	return 0;
@@ -169,8 +169,8 @@ int parseResponse(struct request_session* rs, char* data) {
 		if (rs->response->body->mime_type == NULL) {
 			rs->response->body->mime_type = "text/html";
 		}
-		rs->response->body->stream_fd = rs->sender->fw_fd;
-		rs->response->body->stream_type = 0;
+		rs->response->body->stream_fd = rs->conn->forward_conn->fd;
+		rs->response->body->stream_type = STREAM_TYPE_RAW;
 	}
 	const char* te = header_get(rs->response->headers, "Transfer-Encoding");
 	if (te != NULL) {
@@ -181,8 +181,8 @@ int parseResponse(struct request_session* rs, char* data) {
 		if (rs->response->body->mime_type == NULL) {
 			rs->response->body->mime_type = "text/html";
 		}
-		rs->response->body->stream_fd = rs->sender->fw_fd;
-		rs->response->body->stream_type = 1;
+		rs->response->body->stream_fd = rs->conn->forward_conn->fd;
+		rs->response->body->stream_type = STREAM_TYPE_CHUNKED;
 	}
 	return 0;
 }

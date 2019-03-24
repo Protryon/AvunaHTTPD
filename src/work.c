@@ -35,16 +35,16 @@
 #include "smem.h"
 #include "llist.h"
 
-void closeConn(struct work_param* param, struct conn* conn) {
+void closeConn(struct conn* conn) {
 	pfree(conn->pool);
 }
 
 void sendReqsess(struct request_session* rs, struct timespec* stt) {
-	struct conn* conn = rs->sender;
-	struct work_param* param = rs->wp;
+	struct conn* conn = rs->conn;
+	struct work_param* param = rs->worker;
 	struct response* resp = rs->response;
 	struct request* req = rs->request;
-	if (!conn->fwed) {
+	if (conn->forward_conn == NULL) {
 		size_t response_length = 0;
 		unsigned char* serialized_response = serializeResponse(rs, &response_length);
 		struct timespec stt2;
@@ -69,12 +69,12 @@ void sendReqsess(struct request_session* rs, struct timespec* stt) {
 			errlog(param->server->logsess, "Invalid IP Address: %s", strerror(errno));
 		}
 		acclog(param->server->logsess, "%s %s %s/%s%s returned %s took: %f ms", mip, getMethod(req->method), param->server->id, req->vhost->id, req->path, resp->code, msp);
-		buffer_ensure_capacity(&conn->write_buffer, response_length);
-        uint8_t* loc = conn->write_buffer.buffer + conn->write_buffer.size;
+		buffer_ensure_capacity(&conn->conn->write_buffer, response_length);
+        uint8_t* loc = conn->conn->write_buffer.buffer + conn->conn->write_buffer.size;
 		memcpy(loc, serialized_response, response_length);
-		conn->write_buffer.size += response_length;
+		conn->conn->write_buffer.size += response_length;
 	} else {
-		conn->fwed = 0;
+		conn->forward_conn = NULL;
 	}
 }
 
@@ -99,17 +99,18 @@ struct uconn {
 
 int handleRead(struct conn* conn, int ct, struct work_param* param) {
 	reqp: ;
-	if (ct == 0 && conn->currently_posting != NULL && conn->postLeft > 0) {
-		if (conn->read_buffer.size >= conn->postLeft) {
+	struct sub_conn* sconn = conn->conn;
+	if (ct == 0 && conn->currently_posting != NULL && conn->post_left > 0) {
+		if (sconn->read_buffer.size >= conn->post_left) {
 			struct timespec stt;
 			clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
-			memcpy(conn->currently_posting->request->body->data + conn->currently_posting->request->body->len - conn->postLeft, conn->read_buffer.buffer, conn->postLeft);
-			size_t os = conn->read_buffer.size;
-            conn->read_buffer.size -= conn->postLeft;
-			conn->readBuffer_checked = 0;
-			memmove(conn->read_buffer.buffer, conn->read_buffer.buffer + conn->postLeft, conn->read_buffer.size);
-			conn->postLeft -= os;
-			if (conn->postLeft == 0) {
+			memcpy(conn->currently_posting->request->body->data + conn->currently_posting->request->body->len - conn->post_left, sconn->read_buffer.buffer, conn->post_left);
+			size_t os = sconn->read_buffer.size;
+			sconn->read_buffer.size -= conn->post_left;
+			sconn->read_buffer_checked = 0;
+			memmove(sconn->read_buffer.buffer, sconn->read_buffer.buffer + conn->post_left, sconn->read_buffer.size);
+			conn->post_left -= os;
+			if (conn->post_left == 0) {
 				handleRequest(&stt, conn->currently_posting);
 				pfree(conn->currently_posting->pool);
 				conn->currently_posting = NULL;
@@ -118,12 +119,14 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 	}
 	static unsigned char newlines[4] = { 0x0D, 0x0A, 0x0D, 0x0A };
 	int ml = 0;
-	uint8_t* readBuffer = (ct == 0 ? conn->read_buffer.buffer : (ct == 1 ? conn->fw_read_buffer.buffer : 0));
+	struct sub_conn* active_conn = ct == 0 ? conn->conn :
+			ct == 1 ? conn->forward_conn : NULL;
+	uint8_t* readBuffer = active_conn->read_buffer.buffer;
 	sin: ;
-	if (ct == 1 && conn->stream_type >= 0) { //todo ct==2
+	if (ct == 1 && conn->stream_type >= 0) {
 		int se = 0;
-		if (conn->stream_type == 0) {
-			size_t fw_buffer_size = conn->fw_read_buffer.size;
+		if (conn->stream_type == STREAM_TYPE_RAW) {
+			size_t fw_buffer_size = active_conn->read_buffer.size;
 			if (conn->forwarding_request->response->fromCache != NULL) {
 				if (conn->stream_md5 == NULL) {
 					conn->stream_md5 = pmalloc(conn->pool, sizeof(MD5_CTX));
@@ -131,37 +134,37 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 				}
 				MD5_Update(conn->stream_md5, readBuffer, fw_buffer_size);
 			}
-			buffer_ensure_capacity(&conn->write_buffer, fw_buffer_size);
-			if (conn->forwarding_request->request->atc) {
+			buffer_ensure_capacity(&sconn->write_buffer, fw_buffer_size);
+			if (conn->forwarding_request->request->add_to_cache) {
 			    buffer_ensure_capacity(&conn->cache_buffer, fw_buffer_size);
 				memcpy(conn->cache_buffer.buffer + conn->cache_buffer.size, readBuffer, fw_buffer_size);
                 conn->cache_buffer.size += fw_buffer_size;
 			}
-			memcpy(conn->write_buffer.buffer + conn->write_buffer.size, readBuffer, fw_buffer_size);
-            conn->write_buffer.size += fw_buffer_size;
-			size_t new_size = conn->fw_read_buffer.size - fw_buffer_size;
+			memcpy(sconn->write_buffer.buffer + sconn->write_buffer.size, readBuffer, fw_buffer_size);
+            sconn->write_buffer.size += fw_buffer_size;
+			size_t new_size = active_conn->read_buffer.size - fw_buffer_size;
 			if (new_size > 0) {
-				memmove(conn->fw_read_buffer.buffer, conn->fw_read_buffer.buffer + fw_buffer_size, new_size);
+				memmove(active_conn->read_buffer.buffer, active_conn->read_buffer.buffer + fw_buffer_size, new_size);
 			}
-            conn->fw_read_buffer.size -= fw_buffer_size;
+			active_conn->read_buffer.size -= fw_buffer_size;
 			conn->streamed += fw_buffer_size;
-			conn->fw_readBuffer_checked = 0;
+			active_conn->read_buffer_checked = 0;
 			if (conn->streamed >= conn->stream_len) {
                 struct response* fwd_response = conn->forwarding_request->response;
-                if (conn->forwarding_request->request->atc) {
+                if (conn->forwarding_request->request->add_to_cache) {
 				    struct vhost* vhost = conn->forwarding_request->request->vhost;
 					const char* content_type = header_get(fwd_response->headers, "Content-Type");
 					int is_dynamic_type = hashset_has(conn->forwarding_request->request->vhost->sub.rproxy.dynamic_types, content_type);
 
 					if (!is_dynamic_type) {
-						conn->forwarding_request->request->atc = 1;
+						conn->forwarding_request->request->add_to_cache = 1;
 						struct scache* new_scache = pmalloc(vhost->pool, sizeof(struct scache));
 						if (fwd_response->body == NULL) {
                             fwd_response->body = pmalloc(conn->pool, sizeof(struct body));
 						}
                         fwd_response->body->len = buffer_consume(&conn->cache_buffer, &fwd_response->body->data);
 						pclaim(conn->forwarding_request->pool, fwd_response->body->data);
-                        fwd_response->body->stream_type = -1;
+                        fwd_response->body->stream_type = STREAM_TYPE_INVALID;
                         fwd_response->body->stream_fd = -1;
                         fwd_response->body->mime_type = content_type;
 						new_scache->content_encoding = header_get(fwd_response->headers, "Content-Encoding") != NULL;
@@ -190,19 +193,8 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 						cache_add(&conn->forwarding_request->request->vhost->sub.rproxy.cache, new_scache);
                         fwd_response->fromCache = new_scache;
 					} else {
-						conn->forwarding_request->request->atc = 0;
+						conn->forwarding_request->request->add_to_cache = 0;
 					}
-					/*if (!is_dynamic_type && !patc) {
-						struct body* body = smalloc(sizeof(struct body));
-						fwd_response->fromCache->body = body;
-						body->data = conn->staticStreamCacheBuffer;
-						conn->staticStreamCacheBuffer = NULL;
-						body->len = conn->sscbl;
-						body->stream_type = -1;
-						body->stream_fd = -1;
-						body->mime_type = content_type;
-						body->freeMime = 0;
-					}*/
 				}
 				if (conn->stream_md5 != NULL) {
 					unsigned char rawmd5[16];
@@ -213,26 +205,26 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 					}
 					header_setoradd(fwd_response->fromCache->headers, "ETag", fwd_response->fromCache->etag);
 				}
-				conn->stream_type = -1;
+				conn->stream_type = STREAM_TYPE_INVALID;
 				conn->streamed = 0;
-				queue_pop(conn->fwqueue);
+				queue_pop(conn->fw_queue);
 				se = 1;
 			}
-		} else if (conn->stream_type == 1) { // chunked already
+		} else if (conn->stream_type == STREAM_TYPE_CHUNKED) { // chunked already
 
 		}
 		if (!se) goto pc;
 	}
-	struct buffer* active_buffer = ct == 0 ? &conn->read_buffer : &conn->fw_read_buffer;
-	size_t active_buffer_checked = ct == 0 ? conn->readBuffer_checked : conn->fw_readBuffer_checked;
-	for (size_t checking_index = active_buffer_checked; checking_index < active_buffer->size; checking_index++) {
+
+
+	for (size_t checking_index = active_conn->read_buffer_checked; checking_index < active_conn->read_buffer.size; ++checking_index) {
 		if (readBuffer[checking_index] == newlines[ml]) {
 			ml++;
 			if (ml == 4) {
 				struct request_session* rs = NULL;
 				struct mempool* req_pool;
 				if (ct == 1) {
-					rs = queue_peek(conn->fwqueue);
+					rs = queue_peek(conn->fw_queue);
 					req_pool = rs->pool;
 				} else {
 					req_pool = mempool_new();
@@ -241,32 +233,29 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 				unsigned char* request_headers = pmalloc(req_pool, checking_index + 2);
 				memcpy(request_headers, readBuffer, checking_index + 1);
 				request_headers[checking_index + 1] = 0;
-				active_buffer->size -= checking_index + 1;
-				if (ct == 0) {
-					conn->readBuffer_checked = 0;
-				} else if (ct == 1) {
-					conn->fw_readBuffer_checked = 0;
-				}
-				memmove(readBuffer, readBuffer + checking_index + 1, active_buffer->size);
+				active_conn->read_buffer.size -= checking_index + 1;
+				active_conn->read_buffer_checked = 0;
+
+				memmove(readBuffer, readBuffer + checking_index + 1, active_conn->read_buffer.size);
 				struct timespec stt;
 				clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
 
 				if (ct == 0) {
 					struct request* req = pmalloc(req_pool, sizeof(struct request));
 					rs = pmalloc(req_pool, sizeof(struct request_session));
-					rs->wp = param;
-					rs->sender = conn;
+					rs->worker = param;
+					rs->conn = conn;
 					rs->response = NULL;
 					rs->request = req;
 					rs->pool = req_pool;
 					if (parseRequest(rs, (char*) request_headers, param->server->max_post) < 0) {
 						errlog(param->server->logsess, "Malformed Request!\n%s", request_headers);
-						closeConn(param, conn);
+						closeConn(conn);
 						return 1;
 					}
 					if (req->body != NULL) {
 						conn->currently_posting = rs;
-						conn->postLeft = req->body->len;
+						conn->post_left = req->body->len;
 						goto reqp;
 					}
 					handleRequest(&stt, rs);
@@ -274,7 +263,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 				} else if (ct == 1) {
 					if (parseResponse(rs, (char*) request_headers) < 0) {
 						errlog(param->server->logsess, "Malformed Response!");
-						closeConn(param, conn);
+						closeConn(conn);
 						return 1;
 					}
 					if (rs->response->body != NULL) {
@@ -290,8 +279,8 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 						conn->forwarding_request = rs;
 						goto sin;
 					} else {
-						conn->stream_type = -1;
-						queue_pop(conn->fwqueue);
+						conn->stream_type = STREAM_TYPE_INVALID;
+						queue_pop(conn->fw_queue);
 						pfree(req_pool);
 					}
 				}
@@ -299,10 +288,10 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 		} else ml = 0;
 	}
 	pc:
-	if (conn->read_buffer.size >= 10)
-		conn->readBuffer_checked = conn->read_buffer.size - 10;
+	if (conn->conn->read_buffer.size >= 10)
+		conn->conn->read_buffer_checked = conn->conn->read_buffer.size - 10;
 	else
-		conn->readBuffer_checked = 0;
+		conn->conn->read_buffer_checked = 0;
 	return 0;
 }
 /*
@@ -527,22 +516,22 @@ void run_work(struct work_param* param) {
         }
         ITER_LLIST(claimed_connections, value) {
         	struct conn* conn = value;
-            if (conn->fwqueue != NULL) {
-                pthread_mutex_lock(&conn->fwqueue->data_mutex);
-                if (conn->fwqueue->size > 0) {
+            if (conn->fw_queue != NULL) {
+                pthread_mutex_lock(&conn->fw_queue->data_mutex);
+                if (conn->fw_queue->size > 0) {
                     mfds += 1;
                     struct uconn* uconn = pmalloc(iter_pool, sizeof(struct uconn));
                     uconn->conn = conn;
                     uconn->type = 1;
                     list_add(uconns, uconn);
                     struct pollfd* pollfd = &poll_fds[poll_fd_index++];
-                    pollfd->fd = conn->fw_fd;
+                    pollfd->fd = conn->forward_conn->fd;
                     pollfd->events = POLLIN;
                     pollfd->revents = 0;
                 }
-                pthread_mutex_unlock(&conn->fwqueue->data_mutex);
+                pthread_mutex_unlock(&conn->fw_queue->data_mutex);
             }
-            if (conn->stream_type >= 0 && conn->stream_fd != conn->fw_fd) { // TODO: finish impl
+            if (conn->stream_type >= 0 && conn->stream_fd != conn->forward_conn->fd) { // TODO: finish impl
                 mfds += 1;
                 struct uconn* uconn = pmalloc(iter_pool, sizeof(struct uconn));
                 uconn->conn = conn;
@@ -559,7 +548,7 @@ void run_work(struct work_param* param) {
             list_add(uconns, uconn);
             struct pollfd* pollfd = &poll_fds[poll_fd_index++];
             pollfd->fd = conn->fd;
-            pollfd->events = POLLIN | ((conn->write_buffer.size > 0 || (conn->tls && !conn->handshaked && conn->ssl_nextdir == 2)) ? POLLOUT : 0);
+            pollfd->events = POLLIN | ((conn->conn->write_buffer.size > 0 || (conn->conn->tls && !conn->conn->tls_handshaked && conn->conn->tls_next_direction == 2)) ? POLLOUT : 0);
             pollfd->revents = 0;
 			ITER_LLIST_END();
         }
@@ -594,48 +583,32 @@ void run_work(struct work_param* param) {
             poll_count--;
 
 			if ((revents & POLLHUP) == POLLHUP && conn != NULL) {
-				closeConn(param, conn);
+				closeConn(conn);
 				continue;
 			}
 			if ((revents & POLLERR) == POLLERR) { //TODO: probably a HUP
-				closeConn(param, conn);
+				closeConn(conn);
                 continue;
 			}
 			if ((revents & POLLNVAL) == POLLNVAL) {
 				errlog(param->server->logsess, "Invalid FD in worker poll! This is bad!");
-				closeConn(param, conn);
+				closeConn(conn);
                 continue;
 			}
-			if (connection_type == 0 && conn->tls && !conn->handshaked) {
-				int r = SSL_accept(conn->session);
+			struct sub_conn* sconn = connection_type == 0 ? conn->conn : conn->forward_conn;
+			if (sconn->tls && !sconn->tls_handshaked) {
+				int r = SSL_accept(sconn->tls_session);
 				if (r == 1) {
-					conn->handshaked = 1;
+					sconn->tls_handshaked = 1;
 				} else if (r == 2) {
-					closeConn(param, conn);
+					closeConn(conn);
                     continue;
 				} else {
-					int err = SSL_get_error(conn->session, r);
-					if (err == SSL_ERROR_WANT_READ) conn->ssl_nextdir = 1;
-					else if (err == SSL_ERROR_WANT_WRITE) conn->ssl_nextdir = 2;
+					int err = SSL_get_error(sconn->tls_session, r);
+					if (err == SSL_ERROR_WANT_READ) sconn->tls_next_direction = 1;
+					else if (err == SSL_ERROR_WANT_WRITE) sconn->tls_next_direction = 2;
 					else {
-						closeConn(param, conn);
-                        continue;
-					}
-				}
-                continue;
-			} else if (connection_type == 1 && conn->fw_tls && !conn->fw_handshaked) {
-				int r = SSL_accept(conn->fw_session);
-				if (r == 1) {
-					conn->fw_handshaked = 1;
-				} else if (r == 2) {
-					closeConn(param, conn);
-                    continue;
-				} else {
-					int err = SSL_get_error(conn->fw_session, r);
-					if (err == SSL_ERROR_WANT_READ) conn->fw_ssl_nextdir = 1;
-					else if (err == SSL_ERROR_WANT_WRITE) conn->fw_ssl_nextdir = 2;
-					else {
-						closeConn(param, conn);
+						closeConn(conn);
                         continue;
 					}
 				}
@@ -644,9 +617,8 @@ void run_work(struct work_param* param) {
 			if ((revents & POLLIN) == POLLIN) {
 				size_t tr = 0;
 				int ftr = 0;
-				if (connection_type == 1 ? conn->fw_tls : (connection_type == 0 ? conn->tls : 0)) {
-					if (connection_type == 0) tr = SSL_pending(conn->session);
-					else if (connection_type == 1) tr = SSL_pending(conn->fw_session);
+				if (sconn->tls) {
+					tr = (size_t) SSL_pending(sconn->tls_session);
 					if (tr == 0) {
 						tr += 4096;
 						ftr = 1;
@@ -654,82 +626,58 @@ void run_work(struct work_param* param) {
 				} else {
 					ioctl(poll_fds[i].fd, FIONREAD, &tr);
 				}
-				uint8_t* loc;
-				if (connection_type == 0) {
-                    buffer_ensure_capacity(&conn->read_buffer, tr);
-                    loc = conn->read_buffer.buffer + conn->read_buffer.size;
-				} else if (connection_type == 1) {
-                    buffer_ensure_capacity(&conn->fw_read_buffer, tr);
-                    loc = conn->fw_read_buffer.buffer + conn->fw_read_buffer.size;
-				}
+				buffer_ensure_capacity(&sconn->read_buffer, tr);
+				uint8_t* loc = sconn->read_buffer.buffer + sconn->read_buffer.size;
 				ssize_t r = 0;
-				if (r == 0 && tr == 0) { // nothing to read, but wont block.
+				if (tr == 0) { // nothing to read, but wont block.
 					ssize_t x = 0;
-					if (conn->tls) {
-						if (connection_type == 0) x = SSL_read(conn->session, loc + r, tr - r);
-						else if (connection_type == 1) x = SSL_read(conn->fw_session, loc + r, tr - r);
+					if (sconn->tls) {
+						x = SSL_read(sconn->tls_session, loc + r, tr - r);
 						if (x <= 0) {
-							int serr = SSL_get_error(conn->session, x);
+							int serr = SSL_get_error(sconn->tls_session, x);
 							if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) continue;
 							if (connection_type == 1) {
-								errlog(param->server->logsess, "TLS Error receiving from backend server! %i", SSL_get_error(connection_type == 0 ? conn->session : conn->fw_session, x));
+								errlog(param->server->logsess, "TLS Error receiving from backend server! %i", SSL_get_error(sconn->tls_session, x));
 							}
-							closeConn(param, conn);
+							closeConn(conn);
                             continue;
                         } else {
-							if (connection_type == 0) {
-								conn->read_buffer.size += x;
-							} else if (connection_type == 1) {
-								conn->fw_read_buffer.size += x;
-							}
+							sconn->read_buffer.size += x;
 						}
 					} else {
 						x = read(poll_fds[i].fd, loc + r, tr - r);
 						if (x <= 0) {
-							closeConn(param, conn);
+							closeConn(conn);
                             continue;
 						} else {
-							if (connection_type == 0) {
-                                conn->read_buffer.size += x;
-							} else if (connection_type == 1) {
-                                conn->fw_read_buffer.size += x;
-							}
+							sconn->read_buffer.size += x;
 						}
 					}
 					r += x;
 				}
 				while (r < tr) {
 					ssize_t x = 0;
-					if (conn->tls) {
-						if (connection_type == 0) x = SSL_read(conn->session, loc + r, tr - r);
-						else if (connection_type == 1) x = SSL_read(conn->fw_session, loc + r, tr - r);
+					if (sconn->tls) {
+						x = SSL_read(sconn->tls_session, loc + r, tr - r);
 						if (x <= 0) {
-							int serr = SSL_get_error(conn->session, x);
+							int serr = SSL_get_error(sconn->tls_session, x);
 							if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) goto cont;
 							if (connection_type == 1) {
-								errlog(param->server->logsess, "TLS Error receiving from backend server! %i", SSL_get_error(connection_type == 0 ? conn->session : conn->fw_session, x));
+								errlog(param->server->logsess, "TLS Error receiving from backend server! %i", SSL_get_error(sconn->tls_session, x));
 							}
-							closeConn(param, conn);
+							closeConn(conn);
 							goto cont;
 						} else {
-							if (connection_type == 0) {
-                                conn->read_buffer.size += x;
-							} else if (connection_type == 1) {
-                                conn->fw_read_buffer.size += x;
-							}
+							sconn->read_buffer.size += x;
 						}
 						if (ftr) break;
 					} else {
 						x = read(poll_fds[i].fd, loc + r, tr - r);
 						if (x <= 0) {
-							closeConn(param, conn);
+							closeConn(conn);
 							goto cont;
 						} else {
-							if (connection_type == 0) {
-                                conn->read_buffer.size += x;
-							} else if (connection_type == 1) {
-                                conn->fw_read_buffer.size += x;
-							}
+							sconn->read_buffer.size += x;
 						}
 					}
 					r += x;
@@ -742,18 +690,18 @@ void run_work(struct work_param* param) {
 				}
 			}
 			if ((revents & POLLOUT) == POLLOUT && conn != NULL) {
-				ssize_t mtr = conn->tls ? SSL_write(conn->session, conn->write_buffer.buffer, conn->write_buffer.size) : write(poll_fds[i].fd, conn->write_buffer.buffer, conn->write_buffer.size);
-				int serr = (conn->tls && mtr < 0) ? SSL_get_error(conn->session, mtr) : 0;
-				if (mtr < 0 && (conn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) && serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) : errno != EAGAIN)) { // use error queue?
-					closeConn(param, conn);
+				ssize_t mtr = sconn->tls ? SSL_write(sconn->tls_session, sconn->write_buffer.buffer, sconn->write_buffer.size) : write(poll_fds[i].fd, sconn->write_buffer.buffer, sconn->write_buffer.size);
+				int serr = (sconn->tls && mtr < 0) ? SSL_get_error(sconn->tls_session, mtr) : 0;
+				if (mtr < 0 && (sconn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) && serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) : errno != EAGAIN)) { // use error queue?
+					closeConn(conn);
                     continue;
 				} else if (mtr < 0) {
                     continue;
-				} else if (mtr < conn->write_buffer.size) {
-					memmove(conn->write_buffer.buffer, conn->write_buffer.buffer + mtr, conn->write_buffer.size - mtr);
-                    conn->write_buffer.size -= mtr;
+				} else if (mtr < sconn->write_buffer.size) {
+					memmove(sconn->write_buffer.buffer, sconn->write_buffer.buffer + mtr, sconn->write_buffer.size - mtr);
+                    sconn->write_buffer.size -= mtr;
 				} else {
-                    conn->write_buffer.size = 0;
+                    sconn->write_buffer.size = 0;
 				}
 			}
 		    cont:;

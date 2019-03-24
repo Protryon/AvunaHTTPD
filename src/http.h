@@ -22,12 +22,16 @@
 const char* getMethod(int m);
 
 struct request_session {
-		struct work_param* wp;
-		struct conn* sender;
+		struct work_param* worker;
+		struct conn* conn;
 		struct response* response;
 		struct request* request;
 		struct mempool* pool;
 };
+
+#define STREAM_TYPE_INVALID -1
+#define STREAM_TYPE_RAW 0
+#define STREAM_TYPE_CHUNKED 1
 
 struct body {
 		char* mime_type;
@@ -43,7 +47,7 @@ struct request {
 		char* version;
 		struct headers* headers;
 		struct body* body; // may be NULL
-		int atc;
+		int add_to_cache;
 		struct vhost* vhost;
 };
 

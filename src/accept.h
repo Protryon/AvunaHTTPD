@@ -36,6 +36,17 @@ struct http2_stream {
 	size_t http2_headerBuffer_size;
 };
 
+struct sub_conn {
+	int fd;
+	int tls;
+	int tls_handshaked;
+	SSL* tls_session;
+	struct buffer read_buffer;
+	size_t read_buffer_checked;
+	struct buffer write_buffer;
+	int tls_next_direction;
+};
+
 
 struct conn {
 	int fd;
@@ -44,22 +55,11 @@ struct conn {
 		struct sockaddr_in tcp4;
 	} addr;
 	struct server_binding* incoming_binding;
-	struct buffer read_buffer;
-	size_t readBuffer_checked;
-	struct buffer write_buffer;
-	size_t postLeft;
+	struct sub_conn* conn;
+	struct sub_conn* forward_conn;
+	size_t post_left;
 	struct request_session* currently_posting;
-	int tls;
-	int handshaked;
-	SSL* session;
-	int fw_fd;
-	int fwed;
-	struct queue *fwqueue;
-	struct buffer fw_read_buffer;
-	size_t fw_readBuffer_checked;
-	int fw_tls;
-	int fw_handshaked;
-	SSL* fw_session;
+	struct queue *fw_queue;
 	int stream_fd;
 	int stream_type;
 	size_t stream_len;
@@ -71,8 +71,6 @@ struct conn {
 	struct http2_stream** http2_stream;
 	size_t http2_stream_size;
 	size_t nextStream;
-	int ssl_nextdir;
-	int fw_ssl_nextdir;
 	struct mempool* pool;
 };
 

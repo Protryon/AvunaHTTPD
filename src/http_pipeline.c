@@ -89,7 +89,7 @@ void generateDefaultErrorPage(struct request_session* rs, struct vhost* vh, cons
     rs->response->body->len = len;
     rs->response->body->mime_type = "text/html";
     rs->response->body->stream_fd = -1;
-    rs->response->body->stream_type = -1;
+    rs->response->body->stream_type = STREAM_TYPE_INVALID;
     rs->response->body->data = pmalloc(rs->pool, len);
     static char* d1 = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\"><html><head><title>";
     size_t d1s = strlen(d1);
@@ -135,8 +135,8 @@ int generateResponse(struct request_session* rs) {
     const char* host = header_get(rs->request->headers, "Host");
     if (host == NULL) host = "";
     struct vhost* vhost = NULL;
-    for (size_t i = 0; i < rs->wp->server->vhosts->count; i++) {
-        struct vhost* iter_vhost = rs->wp->server->vhosts->data[i];
+    for (size_t i = 0; i < rs->worker->server->vhosts->count; i++) {
+        struct vhost* iter_vhost = rs->worker->server->vhosts->data[i];
         if (iter_vhost->hosts->count == 0) {
             vhost = iter_vhost;
             break;
@@ -184,7 +184,7 @@ int generateResponse(struct request_session* rs) {
                                            str_contains(header_get(rs->request->headers, "Accept-Encoding"), "gzip"));
             if (osc != NULL) {
                 rs->response->body = osc->body;
-                rs->request->atc = 1;
+                rs->request->add_to_cache = 1;
                 rs->response->headers = osc->headers;
                 rs->response->code = osc->code;
                 if (rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL && rs->response->code[0] == '2') {
@@ -246,7 +246,7 @@ int generateResponse(struct request_session* rs) {
                             rs->response->code = "403 Forbidden";
                             generateDefaultErrorPage(rs, vhost, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
                         } else {
-                            errlog(rs->wp->server->logsess, "Error while stating file: %s", strerror(errno));
+                            errlog(rs->worker->server->logsess, "Error while stating file: %s", strerror(errno));
                             rs->response->code = "500 Internal Server Error";
                             generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                         }
@@ -322,14 +322,14 @@ int generateResponse(struct request_session* rs) {
                     rs->response->code = "403 Forbidden";
                     generateDefaultErrorPage(rs, vhost, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
                 } else {
-                    errlog(rs->wp->server->logsess, "Error while getting the realpath of a file: %s", strerror(errno));
+                    errlog(rs->worker->server->logsess, "Error while getting the realpath of a file: %s", strerror(errno));
                     rs->response->code = "500 Internal Server Error";
                     generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                 }
                 goto epage;
             }
             if (stat(rtp, &st) != 0) {
-                errlog(rs->wp->server->logsess, "Failed stat on <%s>: %s", rtp, strerror(errno));
+                errlog(rs->worker->server->logsess, "Failed stat on <%s>: %s", rtp, strerror(errno));
                 rs->response->code = "500 Internal Server Error";
                 generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                 goto epage;
@@ -352,37 +352,44 @@ int generateResponse(struct request_session* rs) {
             }
         }
         if (rp) {
-            resrp: if (rs->sender->fw_fd < 0) {
-            rs->sender->fw_fd = socket(vhost->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
-            if (rs->sender->fw_fd < 0 || connect(rs->sender->fw_fd, vhost->sub.rproxy.fwaddr, vhost->sub.rproxy.fwaddrlen) < 0) {
-                errlog(rs->wp->server->logsess, "Failed to create/connect to forwarding socket: %s", strerror(errno));
-                rs->response->code = "500 Internal Server Error";
-                generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
-                goto epage;
+            if (rs->conn->forward_conn == NULL) {
+                rs->conn->forward_conn = pcalloc(rs->pool, sizeof(struct sub_conn));
+                rs->conn->forward_conn->fd = -1;
+                buffer_init(&rs->conn->forward_conn->read_buffer, rs->pool, 0);
+                //todo: TLS
             }
-            phook(rs->sender->pool, close_hook, (void*) rs->sender->fw_fd);
-        }
+            resrp: ;
+            if (rs->conn->forward_conn->fd < 0) {
+                rs->conn->forward_conn->fd = socket(vhost->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
+                if (rs->conn->forward_conn->fd < 0 || connect(rs->conn->forward_conn->fd, vhost->sub.rproxy.fwaddr, vhost->sub.rproxy.fwaddrlen) < 0) {
+                    errlog(rs->worker->server->logsess, "Failed to create/connect to forwarding socket: %s", strerror(errno));
+                    rs->response->code = "500 Internal Server Error";
+                    generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                    goto epage;
+                }
+                phook(rs->pool, close_hook, (void*) rs->conn->forward_conn->fd);
+            }
             size_t sreql = 0;
             unsigned char* sreq = serializeRequest(rs, &sreql);
             size_t wr = 0;
             while (wr < sreql) {
-                ssize_t x = write(rs->sender->fw_fd, sreq + wr, sreql - wr);
+                ssize_t x = write(rs->conn->forward_conn->fd, sreq + wr, sreql - wr);
                 if (x < 1) {
-                    close(rs->sender->fw_fd);
-                    rs->sender->fw_fd = -1;
+                    // we should ideally close the current connection here, but it will have to wait until the connection closes due to the `phook` call above.
+                    rs->conn->forward_conn->fd = -1;
                     goto resrp;
                 }
                 wr += x;
             }
 
-            if (rs->sender->fwqueue == NULL) {
-                rs->sender->fwqueue = queue_new(0, 1, rs->pool);
+            if (rs->conn->fw_queue == NULL) {
+                rs->conn->fw_queue = queue_new(0, 1, rs->pool);
             }
-            rs->sender->fwed = 1;
             eh = 0;
+            // why do we copy here?
             struct request_session* rs2 = pmalloc(rs->pool, sizeof(struct request_session));
             memcpy(rs2, rs, sizeof(struct request_session));
-            queue_push(rs->sender->fwqueue, rs2);
+            queue_push(rs->conn->fw_queue, rs2);
         } else {
             rs->response->body = pmalloc(rs->pool, sizeof(struct body));
             rs->response->body->len = 0;
@@ -399,7 +406,7 @@ int generateResponse(struct request_session* rs) {
                 }
             }
             rs->response->body->stream_fd = -1;
-            rs->response->body->stream_type = -1;
+            rs->response->body->stream_type = STREAM_TYPE_INVALID;
         }
         if (!rp && rs->response->body != NULL && rs->response->body->mime_type != NULL) {
             struct fcgi* fcgi = hashmap_get(vhost->sub.htdocs.fcgis, rs->response->body->mime_type);
@@ -427,16 +434,16 @@ int generateResponse(struct request_session* rs) {
                     content_len_str[1] = 0;
                 }
                 char port_str[16];
-                if (rs->sender->addr.tcp6.sin6_family == AF_INET) {
-                    snprintf(port_str, 16, "%i", ntohs(rs->sender->addr.tcp4.sin_port));
-                } else if (rs->sender->addr.tcp6.sin6_family == AF_INET6) {
-                    snprintf(port_str, 16, "%i", ntohs(rs->sender->addr.tcp6.sin6_port));
+                if (rs->conn->addr.tcp6.sin6_family == AF_INET) {
+                    snprintf(port_str, 16, "%i", ntohs(rs->conn->addr.tcp4.sin_port));
+                } else if (rs->conn->addr.tcp6.sin6_family == AF_INET6) {
+                    snprintf(port_str, 16, "%i", ntohs(rs->conn->addr.tcp6.sin6_port));
                 } else {
                     port_str[0] = '0';
                     port_str[1] = 0;
                 }
                 char sport_str[16];
-                struct server_binding* incoming_binding = rs->sender->incoming_binding;
+                struct server_binding* incoming_binding = rs->conn->incoming_binding;
                 if (incoming_binding->binding_type == BINDING_TCP4) {
                     snprintf(sport_str, 16, "%i", htons(incoming_binding->binding.tcp4.sin_port));
                 } else if (incoming_binding->binding_type == BINDING_TCP6) {
@@ -453,17 +460,17 @@ int generateResponse(struct request_session* rs) {
                     close(fcgi_fd);
                 }
                 attempt_count++;
-                errlog(rs->wp->server->logsess, "Failed to read/write to FCGI Server! File: %s Error: %s, restarting connection!", rtp, strerror(errno));
+                errlog(rs->worker->server->logsess, "Failed to read/write to FCGI Server! File: %s Error: %s, restarting connection!", rtp, strerror(errno));
                 start_fcgi: ;
                 if (attempt_count >= 2) {
-                    errlog(rs->wp->server->logsess, "Too many FCGI connection attempts, aborting.");
+                    errlog(rs->worker->server->logsess, "Too many FCGI connection attempts, aborting.");
                     rs->response->code = "500 Internal Server Error";
                     generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                     goto epage;
                 }
                 fcgi_fd = fcgi_request_connection(fcgi);
                 if (fcgi_fd < 0) {
-                    errlog(rs->wp->server->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
+                    errlog(rs->worker->server->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
                     rs->response->code = "500 Internal Server Error";
                     generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                     goto epage;
@@ -495,13 +502,13 @@ int generateResponse(struct request_session* rs) {
                 {
                     char tip[48];
                     char* mip = tip;
-                    if (rs->sender->addr.tcp6.sin6_family == AF_INET) {
-                        inet_ntop(AF_INET, &rs->sender->addr.tcp4.sin_addr, tip, 48);
-                    } else if (rs->sender->addr.tcp6.sin6_family == AF_INET6) {
-                        if (memseq((unsigned char*) &rs->sender->addr.tcp6.sin6_addr, 10, 0) && memseq((unsigned char*) &rs->sender->addr.tcp6.sin6_addr + 10, 2, 0xff)) {
-                            inet_ntop(AF_INET, ((unsigned char*) &rs->sender->addr.tcp6.sin6_addr) + 12, tip, 48);
-                        } else inet_ntop(AF_INET6, &rs->sender->addr.tcp6.sin6_addr, tip, 48);
-                    } else if (rs->sender->addr.tcp6.sin6_family == AF_LOCAL) {
+                    if (rs->conn->addr.tcp6.sin6_family == AF_INET) {
+                        inet_ntop(AF_INET, &rs->conn->addr.tcp4.sin_addr, tip, 48);
+                    } else if (rs->conn->addr.tcp6.sin6_family == AF_INET6) {
+                        if (memseq((unsigned char*) &rs->conn->addr.tcp6.sin6_addr, 10, 0) && memseq((unsigned char*) &rs->conn->addr.tcp6.sin6_addr + 10, 2, 0xff)) {
+                            inet_ntop(AF_INET, ((unsigned char*) &rs->conn->addr.tcp6.sin6_addr) + 12, tip, 48);
+                        } else inet_ntop(AF_INET6, &rs->conn->addr.tcp6.sin6_addr, tip, 48);
+                    } else if (rs->conn->addr.tcp6.sin6_family == AF_LOCAL) {
                         mip = "UNIX";
                     } else {
                         mip = "UNKNOWN";
@@ -532,7 +539,7 @@ int generateResponse(struct request_session* rs) {
                 size_t htl = strlen(vhost->sub.htdocs.htdocs);
                 int htes = vhost->sub.htdocs.htdocs[htl - 1] == '/';
                 size_t rtpl = strlen(rtp);
-                if (rtpl < htl) errlog(rs->wp->server->logsess, "Setting FCGI SCRIPT_NAME requires the file to be in htdocs! @ %s", rtp);
+                if (rtpl < htl) errlog(rs->worker->server->logsess, "Setting FCGI SCRIPT_NAME requires the file to be in htdocs! @ %s", rtp);
                 else {
                     hashmap_put(fcgi_params, "SCRIPT_NAME", rtp + htl + (htes ? -1 : 0));
                 }
@@ -595,7 +602,7 @@ int generateResponse(struct request_session* rs) {
 
                 while (ff.type != FCGI_END_REQUEST) {
                     if (readFCGIFrame(fcgi_fd, &ff, rs->pool)) {
-                        errlog(rs->wp->server->logsess, "Error reading from FCGI server: %s", strerror(errno));
+                        errlog(rs->worker->server->logsess, "Error reading from FCGI server: %s", strerror(errno));
                         goto restart_fcgi;
                     }
                     if (ff.reqID != eid) {
@@ -612,7 +619,7 @@ int generateResponse(struct request_session* rs) {
                         continue;
                     }
                     if (ff.type == FCGI_STDERR) {
-                        errlog(rs->wp->server->logsess, "FCGI STDERR <%s>: %s", rtp, ff.data);
+                        errlog(rs->worker->server->logsess, "FCGI STDERR <%s>: %s", rtp, ff.data);
                     }
                     if (ff.type == FCGI_STDOUT || ff.type == FCGI_STDERR) {
                         int hr = 0;
@@ -687,7 +694,7 @@ int generateResponse(struct request_session* rs) {
                                 rs->response->body->len = ff.len;
                                 rs->response->body->mime_type = ct == NULL ? "text/html" : ct;
                                 rs->response->body->stream_fd = -1;
-                                rs->response->body->stream_type = -1;
+                                rs->response->body->stream_type = STREAM_TYPE_INVALID;
                             } else {
                                 rs->response->body->len += ff.len;
                                 rs->response->body->data = prealloc(rs->pool, rs->response->body->data, rs->response->body->len);
@@ -732,7 +739,7 @@ int generateResponse(struct request_session* rs) {
         if (!rp && isStatic) {
             int ffd = open(rtp, O_RDONLY);
             if (ffd < 0) {
-                errlog(rs->wp->server->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
+                errlog(rs->worker->server->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
                 rs->response->code = "500 Internal Server Error";
                 generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                 goto epage;
@@ -744,7 +751,7 @@ int generateResponse(struct request_session* rs) {
             }
             if (r < 0) {
                 close(ffd);
-                errlog(rs->wp->server->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
+                errlog(rs->worker->server->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
                 rs->response->code = "500 Internal Server Error";
                 generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                 goto epage;
@@ -792,7 +799,7 @@ int generateResponse(struct request_session* rs) {
                 strm.opaque = Z_NULL;
                 int dr = 0;
                 if ((dr = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY)) != Z_OK) { // TODO: configurable level?
-                    errlog(rs->wp->server->logsess, "Error with zlib defaultInit: %i", dr);
+                    errlog(rs->worker->server->logsess, "Error with zlib defaultInit: %i", dr);
                     goto pgzip;
                 }
                 strm.avail_in = rs->response->body->len;
@@ -812,7 +819,7 @@ int generateResponse(struct request_session* rs) {
                         cdata = prealloc(rs->pool, cdata, cc);
                     }
                     if (dr == Z_STREAM_ERROR) {
-                        errlog(rs->wp->server->logsess, "Stream error with zlib deflate");
+                        errlog(rs->worker->server->logsess, "Stream error with zlib deflate");
                         goto pgzip;
                     }
                 } while (strm.avail_out == 0);
@@ -828,7 +835,7 @@ int generateResponse(struct request_session* rs) {
         pgzip: ;
         if (isStatic && vhost->sub.htdocs.scacheEnabled && (vhost->sub.htdocs.maxCache <= 0 || vhost->sub.htdocs.maxCache < vhost->sub.htdocs.cache->max_size)) {
             if (rp) {
-                rs->request->atc = 1;
+                rs->request->add_to_cache = 1;
             } else {
                 struct mempool* scpool = mempool_new();
                 struct scache* sc = pmalloc(scpool, sizeof(struct scache));
@@ -879,7 +886,7 @@ int generateResponse(struct request_session* rs) {
                 memcpy(sc->etag, etag, 35);
                 cache_add(vhost->sub.htdocs.cache, sc);
                 rs->response->fromCache = sc;
-                rs->request->atc = 1;
+                rs->request->add_to_cache = 1;
                 if (nm) {
                     rs->response->body = NULL;
                     rs->response->code = "304 Not Modified";
@@ -898,8 +905,8 @@ int generateResponse(struct request_session* rs) {
         for (int i = 0; i < vhm->mounts->count; i++) {
             struct mountpoint* mount = vhm->mounts->data[i];
             if (str_prefixes_case(rs->request->path, mount->path)) {
-                for (size_t x = 0; x < rs->wp->server->vhosts->count; x++) {
-                    struct vhost* iter_vhost = rs->wp->server->vhosts->data[x];
+                for (size_t x = 0; x < rs->worker->server->vhosts->count; x++) {
+                    struct vhost* iter_vhost = rs->worker->server->vhosts->data[x];
                     if (str_eq(mount->vhost, iter_vhost->id) && !str_eq(iter_vhost->id, oid)) {
                         if (!vhm->keep_prefix) {
                             size_t vhpls = strlen(mount->path);

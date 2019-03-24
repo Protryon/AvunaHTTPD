@@ -76,43 +76,26 @@ void run_accept(struct accept_param* param) {
 	}
 	while (1) {
 	    struct mempool* pool = mempool_new();
-		struct conn* conn = pmalloc(pool, sizeof(struct conn));
-		memset(&conn->addr, 0, sizeof(conn->addr));
+		struct conn* conn = pcalloc(pool, sizeof(struct conn));
 		conn->incoming_binding = param->binding;
-		buffer_init(&conn->read_buffer, pool, 0);
-		conn->readBuffer_checked = 0;
-		buffer_init(&conn->write_buffer, pool, 0);
-		conn->postLeft = 0;
-		conn->currently_posting = NULL;
-		conn->handshaked = 0;
-		conn->fw_fd = -1;
-		conn->fwqueue = NULL;
-		conn->fwed = 0;
-		buffer_init(&conn->fw_read_buffer, pool, 0);
-		conn->fw_readBuffer_checked = 0;
-		conn->fw_tls = 0;
-		conn->fw_handshaked = 0;
-		conn->stream_type = -1;
+		conn->pool = pool;
+		conn->conn = pcalloc(pool, sizeof(struct sub_conn));
+		conn->forward_conn = NULL;
+		buffer_init(&conn->conn->read_buffer, pool, 0);
+		buffer_init(&conn->conn->write_buffer, pool, 0);
+		conn->conn->tls = ssl;
+		if (ssl) {
+			conn->conn->tls_session = SSL_new(param->binding->ssl_cert->ctx);
+			phook(conn->pool, shutdown_ssl_hook, conn->conn->tls_session);
+			SSL_set_mode(conn->conn->tls_session, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
+			SSL_set_accept_state(conn->conn->tls_session);
+		}
+
+		conn->stream_type = STREAM_TYPE_INVALID;
 		conn->stream_fd = -1;
-		conn->stream_len = 0;
-		conn->streamed = 0;
-		conn->stream_md5 = NULL;
 		buffer_init(&conn->cache_buffer, pool, 0);
 		conn->proto = (param->binding->mode & BINDING_MODE_HTTP2_ONLY != 0) && (param->binding->mode & BINDING_MODE_HTTP11_ONLY == 0) ? PROTO_HTTP2 : PROTO_HTTP1;
-		conn->http2_stream = NULL;
-		conn->http2_stream_size = 0;
 		conn->nextStream = 2;
-		conn->ssl_nextdir = 0;
-		conn->fw_ssl_nextdir = 0;
-		conn->forwarding_request = NULL;
-		conn->pool = pool;
-		conn->tls = ssl;
-		if (ssl) {
-			conn->session = SSL_new(param->binding->ssl_cert->ctx);
-			phook(conn->pool, shutdown_ssl_hook, conn->session);
-			SSL_set_mode(conn->session, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
-			SSL_set_accept_state(conn->session);
-		}
 		if (poll(&spfd, 1, -1) < 0) {
 			errlog(param->server->logsess, "Error while polling server: %s", strerror(errno));
 			pfree(pool);
@@ -143,24 +126,24 @@ void run_accept(struct accept_param* param) {
 			continue;
 		}
 		if (ssl) {
-			SSL_set_fd(conn->session, conn->fd);
-			int r = SSL_accept(conn->session);
+			SSL_set_fd(conn->conn->tls_session, conn->fd);
+			int r = SSL_accept(conn->conn->tls_session);
 			if (r == 1) {
-				conn->handshaked = 1;
+				conn->conn->tls_handshaked = 1;
 			} else if (r == 2) {
                 pfree(pool);
 				continue;
 			} else {
-				int err = SSL_get_error(conn->session, r);
-				if (err == SSL_ERROR_WANT_READ) conn->ssl_nextdir = 1;
-				else if (err == SSL_ERROR_WANT_WRITE) conn->ssl_nextdir = 2;
+				int err = SSL_get_error(conn->conn->tls_session, r);
+				if (err == SSL_ERROR_WANT_READ) conn->conn->tls_next_direction = 1;
+				else if (err == SSL_ERROR_WANT_WRITE) conn->conn->tls_next_direction = 2;
 				else {
                     pfree(pool);
 					continue;
 				}
 			}
 		}
-		if (ssl && param->binding->ssl_cert->isDummy && SSL_get_SSL_CTX(conn->session) == param->binding->ssl_cert->ctx) {
+		if (ssl && param->binding->ssl_cert->isDummy && SSL_get_SSL_CTX(conn->conn->tls_session) == param->binding->ssl_cert->ctx) {
             pfree(pool);
 			continue;
 		}
