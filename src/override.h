@@ -2,7 +2,7 @@
 #ifndef OVERRIDE_H_
 #define OVERRIDE_H_
 
-#include <stdlib.h> 
+#include <stdlib.h>
 #include "http.h"
 
 #define OD_ACCEPTPATHINFO 0 // On|Off|Default
@@ -553,15 +553,15 @@
 #define OD_XML2STARTPARSE 279 // element [element ...]
 //^ Advise the parser to skip leading junk.
 
-struct directive { 
+struct directive {
     int id;
     void** args;
     size_t argc;
 };
 
 struct override {
-	struct directive** dirs;
-	size_t directive_count;
+    struct directive** dirs;
+    size_t directive_count;
 };
 
 struct override* readOverride(char* data);

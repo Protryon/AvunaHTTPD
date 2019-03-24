@@ -2,7 +2,7 @@
 #include "http.h"
 
 struct override* readOverride(char* data) {
-	
+
 }
 
 void freeOverride(struct override* override) {

@@ -14,33 +14,34 @@
 #include "hash.h"
 #include "pmem.h"
 
-char* str_trim(char *str);
+char* str_trim(char* str);
 
-int str_eq_case(const char *str1, const char *str2);
+int str_eq_case(const char* str1, const char* str2);
 
-int str_eq(const char *str1, const char *str2);
+int str_eq(const char* str1, const char* str2);
 
-int str_prefixes_case(const char *str, const char *with);
+int str_prefixes_case(const char* str, const char* with);
 
-int str_prefixes(const char *str, const char *with);
+int str_prefixes(const char* str, const char* with);
 
-int str_suffixes_case(const char *str, const char *with);
+int str_suffixes_case(const char* str, const char* with);
 
-int str_suffixes(const char *str, const char *with);
+int str_suffixes(const char* str, const char* with);
 
-int str_contains_case(const char *str, const char *with);
+int str_contains_case(const char* str, const char* with);
 
-int str_contains(const char *str, const char *with);
+int str_contains(const char* str, const char* with);
 
-char* str_tolower(char *str);
+char* str_tolower(char* str);
 
-char* str_toupper(char *str);
+char* str_toupper(char* str);
 
 char* str_urlencode(char* str, struct mempool* pool); // must be freed and str must be on heap
 
 char* str_urldecode(char* str);
 
-char* str_replace(char* str, char* from, char* to, struct mempool* pool); // when strlen(to) > strlen(from), str MUST be heap allocated!
+char* str_replace(char* str, char* from, char* to,
+                  struct mempool* pool); // when strlen(to) > strlen(from), str MUST be heap allocated!
 
 char* str_replace_case(char* str, char* from, char* to, struct mempool* pool);
 
@@ -53,7 +54,7 @@ void str_split_set(char* str, const char* delim, struct hashset* out);
 
 void str_split_set_case(char* str, const char* delim, struct hashset* out);
 
-int str_isunum(const char *str);
+int str_isunum(const char* str);
 
 char* str_dup(char* str, ssize_t expand, struct mempool* pool);
 

@@ -17,9 +17,9 @@
 #define PROTO_HTTP2 1
 
 struct work_param {
-		size_t i;
-		struct server_info* server;
-		int pipes[2];
+    size_t i;
+    struct server_info* server;
+    int pipes[2];
 };
 
 void run_work(struct work_param* param);

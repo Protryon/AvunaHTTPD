@@ -13,16 +13,16 @@
 #include "pmem.h"
 
 struct config_node {
-		char* category;
-		char* name;
-		struct hashmap* map;
+    char* category;
+    char* name;
+    struct hashmap* map;
 };
 
 struct config {
-		struct mempool* pool;
-		struct list* allNodes;
-		struct hashmap* nodesByName;
-		struct hashmap* nodeListsByCat;
+    struct mempool* pool;
+    struct list* allNodes;
+    struct hashmap* nodesByName;
+    struct hashmap* nodeListsByCat;
 };
 
 struct config* loadConfig(const char* file);

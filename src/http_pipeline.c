@@ -140,16 +140,17 @@ int generateResponse(struct request_session* rs) {
         if (iter_vhost->hosts->count == 0) {
             vhost = iter_vhost;
             break;
-        } else for (size_t x = 0; x < iter_vhost->hosts->count; x++) {
-            if (domeq(iter_vhost->hosts->data[x], host)) {
-                vhost = iter_vhost;
-                break;
+        } else
+            for (size_t x = 0; x < iter_vhost->hosts->count; x++) {
+                if (domeq(iter_vhost->hosts->data[x], host)) {
+                    vhost = iter_vhost;
+                    break;
+                }
             }
-        }
         if (vhost != NULL) break;
     }
     rs->request->vhost = vhost;
-    jpvh: ;
+    jpvh:;
     const char* upg = header_get(rs->request->headers, "Upgrade");
     if (!str_eq_case(rs->response->version, "HTTP/2.0")) {
         if (upg != NULL && str_eq_case(upg, "h2")) {
@@ -163,7 +164,8 @@ int generateResponse(struct request_session* rs) {
     int rp = 0;
     if (vhost == NULL) {
         rs->response->code = "500 Internal Server Error";
-        generateDefaultErrorPage(rs, NULL, "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
+        generateDefaultErrorPage(rs, NULL,
+                                 "There was no website found at this domain! If you believe this to be an error, please contact your system administrator.");
     } else if (vhost->type == VHOST_HTDOCS || vhost->type == VHOST_RPROXY) {
         char* extraPath = NULL;
         rp = vhost->type == VHOST_RPROXY;
@@ -187,7 +189,8 @@ int generateResponse(struct request_session* rs) {
                 rs->request->add_to_cache = 1;
                 rs->response->headers = osc->headers;
                 rs->response->code = osc->code;
-                if (rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL && rs->response->code[0] == '2') {
+                if (rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL &&
+                    rs->response->code[0] == '2') {
                     if (str_eq_case(osc->etag, header_get(rs->request->headers, "If-None-Match"))) {
                         rs->response->code = "304 Not Modified";
                         rs->response->body = NULL;
@@ -198,7 +201,8 @@ int generateResponse(struct request_session* rs) {
         }
         if (pl < 1 || rs->request->path[0] != '/') {
             rs->response->code = "500 Internal Server Error";
-            generateDefaultErrorPage(rs, vhost, "Malformed Request! If you believe this to be an error, please contact your system administrator.");
+            generateDefaultErrorPage(rs, vhost,
+                                     "Malformed Request! If you believe this to be an error, please contact your system administrator.");
             goto epage;
         }
 
@@ -241,14 +245,17 @@ int generateResponse(struct request_session* rs) {
                     if (stat(rstp, &cs) < 0) {
                         if (errno == ENOENT || errno == ENOTDIR) {
                             rs->response->code = "404 Not Found";
-                            generateDefaultErrorPage(rs, vhost, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
+                            generateDefaultErrorPage(rs, vhost,
+                                                     "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
                         } else if (errno == EACCES) {
                             rs->response->code = "403 Forbidden";
-                            generateDefaultErrorPage(rs, vhost, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
+                            generateDefaultErrorPage(rs, vhost,
+                                                     "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
                         } else {
                             errlog(rs->worker->server->logsess, "Error while stating file: %s", strerror(errno));
                             rs->response->code = "500 Internal Server Error";
-                            generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                            generateDefaultErrorPage(rs, vhost,
+                                                     "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                         }
                         goto epage;
                     }
@@ -302,7 +309,8 @@ int generateResponse(struct request_session* rs) {
 
             if (!indf) {
                 rs->response->code = "404 Not Found";
-                generateDefaultErrorPage(rs, vhost, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
+                generateDefaultErrorPage(rs, vhost,
+                                         "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
                 goto epage;
             }
         }
@@ -317,21 +325,26 @@ int generateResponse(struct request_session* rs) {
             if (rtp == NULL) {
                 if (errno == ENOENT || errno == ENOTDIR) {
                     rs->response->code = "404 Not Found";
-                    generateDefaultErrorPage(rs, vhost, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
+                    generateDefaultErrorPage(rs, vhost,
+                                             "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
                 } else if (errno == EACCES) {
                     rs->response->code = "403 Forbidden";
-                    generateDefaultErrorPage(rs, vhost, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
+                    generateDefaultErrorPage(rs, vhost,
+                                             "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
                 } else {
-                    errlog(rs->worker->server->logsess, "Error while getting the realpath of a file: %s", strerror(errno));
+                    errlog(rs->worker->server->logsess, "Error while getting the realpath of a file: %s",
+                           strerror(errno));
                     rs->response->code = "500 Internal Server Error";
-                    generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                    generateDefaultErrorPage(rs, vhost,
+                                             "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                 }
                 goto epage;
             }
             if (stat(rtp, &st) != 0) {
                 errlog(rs->worker->server->logsess, "Failed stat on <%s>: %s", rtp, strerror(errno));
                 rs->response->code = "500 Internal Server Error";
-                generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                generateDefaultErrorPage(rs, vhost,
+                                         "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                 goto epage;
             }
             size_t rtpl = strlen(rtp);
@@ -342,12 +355,14 @@ int generateResponse(struct request_session* rs) {
             }
             if (vhost->sub.htdocs.symlock && !str_prefixes_case(rtp, vhost->sub.htdocs.htdocs)) {
                 rs->response->code = "404 Not Found";
-                generateDefaultErrorPage(rs, vhost, "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
+                generateDefaultErrorPage(rs, vhost,
+                                         "The requested URL was not found on this server. If you believe this to be an error, please contact your system administrator.");
                 goto epage;
             }
             if (vhost->sub.htdocs.nohardlinks && st.st_nlink != 1 && !(st.st_mode & S_IFDIR)) {
                 rs->response->code = "403 Forbidden";
-                generateDefaultErrorPage(rs, vhost, "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
+                generateDefaultErrorPage(rs, vhost,
+                                         "The requested URL is not available. If you believe this to be an error, please contact your system administrator.");
                 goto epage;
             }
         }
@@ -358,13 +373,17 @@ int generateResponse(struct request_session* rs) {
                 buffer_init(&rs->conn->forward_conn->read_buffer, rs->conn->pool);
                 //todo: TLS
             }
-            resrp: ;
+            resrp:;
             if (rs->conn->forward_conn->fd < 0) {
-                rs->conn->forward_conn->fd = socket(vhost->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
-                if (rs->conn->forward_conn->fd < 0 || connect(rs->conn->forward_conn->fd, vhost->sub.rproxy.fwaddr, vhost->sub.rproxy.fwaddrlen) < 0) {
-                    errlog(rs->worker->server->logsess, "Failed to create/connect to forwarding socket: %s", strerror(errno));
+                rs->conn->forward_conn->fd = socket(vhost->sub.rproxy.fwaddr->sa_family == AF_INET ? PF_INET : PF_LOCAL,
+                                                    SOCK_STREAM, 0);
+                if (rs->conn->forward_conn->fd < 0 ||
+                    connect(rs->conn->forward_conn->fd, vhost->sub.rproxy.fwaddr, vhost->sub.rproxy.fwaddrlen) < 0) {
+                    errlog(rs->worker->server->logsess, "Failed to create/connect to forwarding socket: %s",
+                           strerror(errno));
                     rs->response->code = "500 Internal Server Error";
-                    generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                    generateDefaultErrorPage(rs, vhost,
+                                             "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                     goto epage;
                 }
                 phook(rs->pool, close_hook, (void*) rs->conn->forward_conn->fd);
@@ -455,24 +474,28 @@ int generateResponse(struct request_session* rs) {
                 }
 
                 goto start_fcgi;
-                restart_fcgi: ;
+                restart_fcgi:;
                 if (fcgi_fd >= 0) {
                     close(fcgi_fd);
                 }
                 attempt_count++;
-                errlog(rs->worker->server->logsess, "Failed to read/write to FCGI Server! File: %s Error: %s, restarting connection!", rtp, strerror(errno));
-                start_fcgi: ;
+                errlog(rs->worker->server->logsess,
+                       "Failed to read/write to FCGI Server! File: %s Error: %s, restarting connection!", rtp,
+                       strerror(errno));
+                start_fcgi:;
                 if (attempt_count >= 2) {
                     errlog(rs->worker->server->logsess, "Too many FCGI connection attempts, aborting.");
                     rs->response->code = "500 Internal Server Error";
-                    generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                    generateDefaultErrorPage(rs, vhost,
+                                             "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                     goto epage;
                 }
                 fcgi_fd = fcgi_request_connection(fcgi);
                 if (fcgi_fd < 0) {
                     errlog(rs->worker->server->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
                     rs->response->code = "500 Internal Server Error";
-                    generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                    generateDefaultErrorPage(rs, vhost,
+                                             "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                     goto epage;
                 }
 
@@ -505,7 +528,8 @@ int generateResponse(struct request_session* rs) {
                     if (rs->conn->addr.tcp6.sin6_family == AF_INET) {
                         inet_ntop(AF_INET, &rs->conn->addr.tcp4.sin_addr, tip, 48);
                     } else if (rs->conn->addr.tcp6.sin6_family == AF_INET6) {
-                        if (memseq((unsigned char*) &rs->conn->addr.tcp6.sin6_addr, 10, 0) && memseq((unsigned char*) &rs->conn->addr.tcp6.sin6_addr + 10, 2, 0xff)) {
+                        if (memseq((unsigned char*) &rs->conn->addr.tcp6.sin6_addr, 10, 0) &&
+                            memseq((unsigned char*) &rs->conn->addr.tcp6.sin6_addr + 10, 2, 0xff)) {
                             inet_ntop(AF_INET, ((unsigned char*) &rs->conn->addr.tcp6.sin6_addr) + 12, tip, 48);
                         } else inet_ntop(AF_INET6, &rs->conn->addr.tcp6.sin6_addr, tip, 48);
                     } else if (rs->conn->addr.tcp6.sin6_family == AF_LOCAL) {
@@ -539,7 +563,9 @@ int generateResponse(struct request_session* rs) {
                 size_t htl = strlen(vhost->sub.htdocs.htdocs);
                 int htes = vhost->sub.htdocs.htdocs[htl - 1] == '/';
                 size_t rtpl = strlen(rtp);
-                if (rtpl < htl) errlog(rs->worker->server->logsess, "Setting FCGI SCRIPT_NAME requires the file to be in htdocs! @ %s", rtp);
+                if (rtpl < htl)
+                    errlog(rs->worker->server->logsess,
+                           "Setting FCGI SCRIPT_NAME requires the file to be in htdocs! @ %s", rtp);
                 else {
                     hashmap_put(fcgi_params, "SCRIPT_NAME", rtp + htl + (htes ? -1 : 0));
                 }
@@ -567,8 +593,9 @@ int generateResponse(struct request_session* rs) {
                     }
                     hashmap_put(fcgi_params, nname, value);
                 }
-                ITER_MAP(fcgi_params) {
-                    writeFCGIParam(fcgi_fd, ff.reqID, str_key, (char*) value);
+                ITER_MAP(fcgi_params)
+                            {
+                                writeFCGIParam(fcgi_fd, ff.reqID, str_key, (char*) value);
                     ITER_MAP_END();
                 }
 
@@ -697,7 +724,8 @@ int generateResponse(struct request_session* rs) {
                                 rs->response->body->stream_type = STREAM_TYPE_INVALID;
                             } else {
                                 rs->response->body->len += ff.len;
-                                rs->response->body->data = prealloc(rs->pool, rs->response->body->data, rs->response->body->len);
+                                rs->response->body->data = prealloc(rs->pool, rs->response->body->data,
+                                                                    rs->response->body->len);
                                 memcpy(rs->response->body->data + rs->response->body->len - ff.len, ffd, ff.len);
                             }
                         }
@@ -741,19 +769,22 @@ int generateResponse(struct request_session* rs) {
             if (ffd < 0) {
                 errlog(rs->worker->server->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
                 rs->response->code = "500 Internal Server Error";
-                generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                generateDefaultErrorPage(rs, vhost,
+                                         "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                 goto epage;
             }
             rs->response->body->data = pmalloc(rs->pool, st.st_size);
             ssize_t r = 0;
-            while ((r = read(ffd, rs->response->body->data + rs->response->body->len, st.st_size - rs->response->body->len)) > 0) {
+            while ((r = read(ffd, rs->response->body->data + rs->response->body->len,
+                             st.st_size - rs->response->body->len)) > 0) {
                 rs->response->body->len += r;
             }
             if (r < 0) {
                 close(ffd);
                 errlog(rs->worker->server->logsess, "Failed to read file %s! %s", rtp, strerror(errno));
                 rs->response->code = "500 Internal Server Error";
-                generateDefaultErrorPage(rs, vhost, "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
+                generateDefaultErrorPage(rs, vhost,
+                                         "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
                 goto epage;
             }
             close(ffd);
@@ -762,11 +793,12 @@ int generateResponse(struct request_session* rs) {
         //TODO: SCGI
         //TODO: SO-CGI
         //TODO: SSI
-        epage: ;
+        epage:;
         char etag[35];
         int hetag = 0;
         int nm = 0;
-        if (!rp && rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL && rs->response->code[0] == '2') {
+        if (!rp && rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL &&
+            rs->response->code[0] == '2') {
             MD5_CTX md5ctx;
             MD5_Init(&md5ctx);
             MD5_Update(&md5ctx, rs->response->body->data, rs->response->body->len);
@@ -798,7 +830,8 @@ int generateResponse(struct request_session* rs) {
                 strm.zfree = Z_NULL;
                 strm.opaque = Z_NULL;
                 int dr = 0;
-                if ((dr = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY)) != Z_OK) { // TODO: configurable level?
+                if ((dr = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY)) !=
+                    Z_OK) { // TODO: configurable level?
                     errlog(rs->worker->server->logsess, "Error with zlib defaultInit: %i", dr);
                     goto pgzip;
                 }
@@ -832,8 +865,9 @@ int generateResponse(struct request_session* rs) {
                 wgz = 1;
             }
         }
-        pgzip: ;
-        if (isStatic && vhost->sub.htdocs.scacheEnabled && (vhost->sub.htdocs.maxCache <= 0 || vhost->sub.htdocs.maxCache < vhost->sub.htdocs.cache->max_size)) {
+        pgzip:;
+        if (isStatic && vhost->sub.htdocs.scacheEnabled &&
+            (vhost->sub.htdocs.maxCache <= 0 || vhost->sub.htdocs.maxCache < vhost->sub.htdocs.cache->max_size)) {
             if (rp) {
                 rs->request->add_to_cache = 1;
             } else {
@@ -847,7 +881,8 @@ int generateResponse(struct request_session* rs) {
                 sc->content_encoding = wgz;
                 sc->code = pxfer(rs->pool, sc->pool, rs->response->code);
                 if (eh) {
-                    if (rs->response->body != NULL) header_setoradd(rs->response->headers, "Content-Type", rs->response->body->mime_type);
+                    if (rs->response->body != NULL)
+                        header_setoradd(rs->response->headers, "Content-Type", rs->response->body->mime_type);
                     char l[16];
                     if (rs->response->body != NULL) sprintf(l, "%u", (unsigned int) rs->response->body->len);
                     header_setoradd(rs->response->headers, "Content-Length", rs->response->body == NULL ? "0" : l);
@@ -893,7 +928,7 @@ int generateResponse(struct request_session* rs) {
                 }
             }
         }
-        pcacheadd: ;
+        pcacheadd:;
         //TODO: Chunked
     } else if (vhost->type == VHOST_REDIRECT) {
         rs->response->code = "302 Found";

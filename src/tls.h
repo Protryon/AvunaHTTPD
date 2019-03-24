@@ -12,8 +12,8 @@
 #include "pmem.h"
 
 struct cert {
-		SSL_CTX* ctx;
-		int isDummy;
+    SSL_CTX* ctx;
+    int isDummy;
 };
 
 struct cert* loadCert(const char* cert, const char* key, struct mempool* pool);

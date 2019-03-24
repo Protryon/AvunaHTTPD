@@ -18,21 +18,21 @@
 #define CE_GZIP 1
 
 struct scache {
-		char* request_path;
-		int content_encoding;
-		char etag[35];
-		char* code;
-		struct headers* headers;
-		struct body* body;
-		size_t size;
-		struct mempool* pool;
+    char* request_path;
+    int content_encoding;
+    char etag[35];
+    char* code;
+    struct headers* headers;
+    struct body* body;
+    size_t size;
+    struct mempool* pool;
 };
 
 struct cache {
-		struct mempool* pool;
-		struct hashmap* entries; // request_path -> list of scache
-		pthread_rwlock_t scachelock;
-		size_t max_size;
+    struct mempool* pool;
+    struct hashmap* entries; // request_path -> list of scache
+    pthread_rwlock_t scachelock;
+    size_t max_size;
 };
 
 struct cache* cache_new(size_t max_size);

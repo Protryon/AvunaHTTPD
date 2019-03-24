@@ -98,12 +98,12 @@
 //};
 
 struct frame {
-		size_t length;
-		unsigned char type;
-		unsigned char flags;
-		uint32_t stream;
-		struct http2_stream* strobj;
-		unsigned char* uf;
+    size_t length;
+    unsigned char type;
+    unsigned char flags;
+    uint32_t stream;
+    struct http2_stream* strobj;
+    unsigned char* uf;
 };
 
 #endif /* HTTP2_H_ */

@@ -11,15 +11,15 @@ uint64_t hashmap_hash(char* key, size_t size) {
     size_t kl = strlen(key);
     size_t i = 0;
     uint64_t hash = 0x8888888888888888;
-    for(; i + 8 < kl; i += 8) {
-        uint64_t v = *(uint64_t*)&key[i];
+    for (; i + 8 < kl; i += 8) {
+        uint64_t v = *(uint64_t*) &key[i];
         hash = hash ^ v;
     }
     if (kl >= 8) {
-        uint64_t v = *(uint64_t*)&key[kl - 8];
+        uint64_t v = *(uint64_t*) &key[kl - 8];
         hash = hash ^ v;
     } else {
-        for(; i < kl; i++) {
+        for (; i < kl; i++) {
             uint8_t v = (uint8_t) key[i];
             hash = hash ^ (v << (8 * i));
         }
@@ -60,7 +60,7 @@ struct hashset* hashset_new(size_t init_cap, struct mempool* pool) {
     return set;
 }
 
-void hashmap_free(struct hashmap *hashmap) {
+void hashmap_free(struct hashmap* hashmap) {
     if (hashmap->pool != NULL) {
         return;
     }
@@ -75,7 +75,7 @@ void hashmap_free(struct hashmap *hashmap) {
     free(hashmap);
 }
 
-void hashset_free(struct hashset *set) {
+void hashset_free(struct hashset* set) {
     if (set->pool != NULL) {
         return;
     }
@@ -102,7 +102,7 @@ void* hashmap_get(struct hashmap* hashmap, char* key) {
 }
 
 void* hashmap_getptr(struct hashmap* hashmap, void* key) {
-    uint64_t hash = (uint64_t)key % hashmap->bucket_count;
+    uint64_t hash = (uint64_t) key % hashmap->bucket_count;
     for (struct hashmap_bucket_entry* bucket = hashmap->buckets[hash]; bucket != NULL; bucket = bucket->next) {
         if (bucket->umod_hash == (uint64_t) key && bucket->key == NULL) {
             return bucket->data;
@@ -123,7 +123,7 @@ int hashset_has(struct hashset* set, char* key) {
 }
 
 int hashset_hasptr(struct hashset* set, void* key) {
-    uint64_t hash = (uint64_t)key % set->bucket_count;
+    uint64_t hash = (uint64_t) key % set->bucket_count;
     for (struct hashset_bucket_entry* bucket = set->buckets[hash]; bucket != NULL; bucket = bucket->next) {
         if (bucket->key == key) {
             return 1;
@@ -159,14 +159,14 @@ void hashmap_put(struct hashmap* hashmap, char* key, void* data) {
             bucket->next = bucketc;
             hashmap->entry_count++;
             break;
-       }
+        }
     }
     putret:;
     hashmap_fixcap(hashmap);
 }
 
 void hashmap_putptr(struct hashmap* hashmap, void* key, void* data) {
-    uint64_t hash = (uint64_t)key % hashmap->bucket_count;
+    uint64_t hash = (uint64_t) key % hashmap->bucket_count;
     struct hashmap_bucket_entry* bucket = hashmap->buckets[hash];
     if (bucket == NULL) {
         bucket = pmalloc(hashmap->pool, sizeof(struct hashmap_bucket_entry));
@@ -191,7 +191,7 @@ void hashmap_putptr(struct hashmap* hashmap, void* key, void* data) {
             bucket->next = bucketc;
             hashmap->entry_count++;
             break;
-       }
+        }
     }
     putret:;
     hashmap_fixcap(hashmap);
@@ -200,10 +200,12 @@ void hashmap_putptr(struct hashmap* hashmap, void* key, void* data) {
 void hashmap_fixcap(struct hashmap* hashmap) {
     if ((hashmap->entry_count / hashmap->bucket_count) > 4) {
         size_t nbuck_count = hashmap->bucket_count * 2;
-        hashmap->buckets = prealloc(hashmap->pool, hashmap->buckets, nbuck_count * sizeof(struct hashmap_bucket_entry*));
-        memset((void*)hashmap->buckets + (hashmap->bucket_count * sizeof(struct hashmap_bucket_entry*)), 0, hashmap->bucket_count * sizeof(struct hashmap_bucket_entry*));
+        hashmap->buckets = prealloc(hashmap->pool, hashmap->buckets,
+                                    nbuck_count * sizeof(struct hashmap_bucket_entry*));
+        memset((void*) hashmap->buckets + (hashmap->bucket_count * sizeof(struct hashmap_bucket_entry*)), 0,
+               hashmap->bucket_count * sizeof(struct hashmap_bucket_entry*));
         for (size_t i = 0; i < hashmap->bucket_count; i++) {
-            struct hashmap_bucket_entry* lbucket = NULL; 
+            struct hashmap_bucket_entry* lbucket = NULL;
             for (struct hashmap_bucket_entry* bucket = hashmap->buckets[i]; bucket != NULL;) {
                 size_t ni = bucket->umod_hash % nbuck_count;
                 if (ni == i) {
@@ -264,7 +266,7 @@ void hashset_add(struct hashset* set, char* key) {
 }
 
 void hashset_addptr(struct hashset* set, void* key) {
-    uint64_t hash = (uint64_t)key % set->bucket_count;
+    uint64_t hash = (uint64_t) key % set->bucket_count;
     struct hashset_bucket_entry* bucket = set->buckets[hash];
     if (bucket == NULL) {
         bucket = pmalloc(set->pool, sizeof(struct hashset_bucket_entry));
@@ -318,7 +320,7 @@ void hashset_rem(struct hashset* set, char* key) {
 }
 
 void hashset_remptr(struct hashset* set, void* key) {
-    uint64_t hash = (uint64_t)key % set->bucket_count;
+    uint64_t hash = (uint64_t) key % set->bucket_count;
     struct hashset_bucket_entry* bucket = set->buckets[hash];
     if (bucket == NULL) {
         return;
@@ -343,7 +345,8 @@ void hashset_fixcap(struct hashset* set) {
     if ((set->entry_count / set->bucket_count) > 4) {
         size_t nbuck_count = set->bucket_count * 2;
         set->buckets = prealloc(set->pool, set->buckets, nbuck_count * sizeof(struct hashset_bucket_entry*));
-        memset((void*)set->buckets + (set->bucket_count * sizeof(struct hashset_bucket_entry*)), 0, set->bucket_count * sizeof(struct hashset_bucket_entry*));
+        memset((void*) set->buckets + (set->bucket_count * sizeof(struct hashset_bucket_entry*)), 0,
+               set->bucket_count * sizeof(struct hashset_bucket_entry*));
         for (size_t i = 0; i < set->bucket_count; i++) {
             struct hashset_bucket_entry* lbucket = NULL;
             for (struct hashset_bucket_entry* bucket = set->buckets[i]; bucket != NULL;) {

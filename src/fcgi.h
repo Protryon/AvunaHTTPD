@@ -26,10 +26,10 @@
 #define FCGI_UNKNOWN_TYPE 11
 
 struct fcgiframe {
-		unsigned char type;
-		int reqID;
-		uint16_t len;
-		void* data;
+    unsigned char type;
+    int reqID;
+    uint16_t len;
+    void* data;
 };
 
 int writeFCGIFrame(int fd, struct fcgiframe* fcgif);

@@ -28,8 +28,8 @@ int header_tryadd(struct headers* headers, const char* name, const char* value);
 
 int header_setoradd(struct headers* headers, const char* name, const char* value);
 
-int header_parse(struct headers *headers, char *data, int mode, struct mempool *pool);
+int header_parse(struct headers* headers, char* data, int mode, struct mempool* pool);
 
-char* header_serialize(struct headers *headers, size_t *len);
+char* header_serialize(struct headers* headers, size_t* len);
 
 #endif //AVUNA_HTTPD_HEADERS_H

@@ -10,13 +10,13 @@
 #include "pmem.h"
 
 struct llist* llist_new(struct mempool* pool) {
-	struct llist* list = pcalloc(pool, sizeof(struct llist));
-	list->pool = pool;
-	return list;
+    struct llist* list = pcalloc(pool, sizeof(struct llist));
+    list->pool = pool;
+    return list;
 }
 
 int llist_free(struct llist* list) {
-	pfree(list->pool);
+    pfree(list->pool);
 }
 
 struct llist_node* _llist_new_node(struct llist* llist, void* data) {
@@ -25,7 +25,7 @@ struct llist_node* _llist_new_node(struct llist* llist, void* data) {
     return node;
 }
 
-struct llist_node* llist_prepend(struct llist* llist, void *data) {
+struct llist_node* llist_prepend(struct llist* llist, void* data) {
     struct llist_node* node = _llist_new_node(llist, data);
     node->next = llist->head;
     if (llist->head == NULL) {
@@ -39,7 +39,7 @@ struct llist_node* llist_prepend(struct llist* llist, void *data) {
     return node;
 }
 
-struct llist_node* llist_append(struct llist* llist, void *data) {
+struct llist_node* llist_append(struct llist* llist, void* data) {
     struct llist_node* node = _llist_new_node(llist, data);
     node->prev = llist->tail;
     if (llist->tail == NULL) {
@@ -76,9 +76,9 @@ struct llist_node* llist_before(struct llist* llist, struct llist_node* node, vo
 }
 
 void llist_del(struct llist* llist, struct llist_node* node) {
-	if (node == NULL) {
-	    return;
-	}
+    if (node == NULL) {
+        return;
+    }
     if (node->prev == NULL) {
         llist->head = node->next;
     } else {
@@ -89,6 +89,6 @@ void llist_del(struct llist* llist, struct llist_node* node) {
     } else {
         node->next->prev = node->prev;
     }
-	--llist->size;
+    --llist->size;
     pprefree(llist->pool, node);
 }

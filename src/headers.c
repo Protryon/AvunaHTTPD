@@ -22,7 +22,9 @@ int header_set(struct headers* headers, const char* name, const char* value) {
     for (size_t i = 0; i < headers->count; i++) {
         if (str_eq(headers->names[i], name)) {
             size_t vl = strlen(value) + 1;
-            headers->values[i] = headers->values[i] == NULL ? pmalloc(headers->pool, vl) : prealloc(headers->pool, headers->values[i], vl);
+            headers->values[i] =
+                headers->values[i] == NULL ? pmalloc(headers->pool, vl) : prealloc(headers->pool, headers->values[i],
+                                                                                   vl);
             memcpy(headers->values[i], value, vl);
             return 1;
         }
@@ -65,7 +67,7 @@ int header_setoradd(struct headers* headers, const char* name, const char* value
 }
 
 //modes are 0 for clear, 1 for append, 2 for weak, 3 for append/weak
-int header_parse(struct headers *headers, char *data, int mode, struct mempool* pool) {
+int header_parse(struct headers* headers, char* data, int mode, struct mempool* pool) {
     if ((mode & 1) == 0) {
         headers->names = NULL;
         headers->values = NULL;
@@ -97,7 +99,7 @@ int header_parse(struct headers *headers, char *data, int mode, struct mempool* 
     return 0;
 }
 
-char* header_serialize(struct headers *headers, size_t *len) {
+char* header_serialize(struct headers* headers, size_t* len) {
     *len = 0;
     if (headers->count == 0) {
         return NULL;

@@ -13,10 +13,10 @@
 #include <stdio.h>
 
 struct logsess {
-		pthread_mutex_t lmutex;
-		int pi;
-		FILE* access_fd;
-		FILE* error_fd;
+    pthread_mutex_t lmutex;
+    int pi;
+    FILE* access_fd;
+    FILE* error_fd;
 };
 
 void acclog(struct logsess* logsess, char* template, ...);

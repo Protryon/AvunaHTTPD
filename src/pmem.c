@@ -8,7 +8,8 @@
 #include "list.h"
 
 struct hook_entry {
-    void (*hook)(void* arg);
+    void (* hook)(void* arg);
+
     void* arg;
 };
 
@@ -29,8 +30,9 @@ void pfree(struct mempool* pool) {
         struct hook_entry* entry = pool->hooks->data[i];
         entry->hook(entry->arg);
     }
-    ITER_SET(pool->allocations) {
-        free(ptr_key);
+    ITER_SET(pool->allocations)
+                {
+                    free(ptr_key);
         ITER_SET_END();
     }
     free(pool);
@@ -92,7 +94,7 @@ void pprefree_strict(struct mempool* pool, void* ptr) {
 }
 
 
-void phook(struct mempool* pool, void (*hook)(void* arg), void* arg) {
+void phook(struct mempool* pool, void (* hook)(void* arg), void* arg) {
     struct hook_entry* entry = pmalloc(pool, sizeof(struct hook_entry));
     entry->hook = hook;
     entry->arg = arg;

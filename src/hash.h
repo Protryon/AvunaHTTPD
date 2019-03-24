@@ -44,9 +44,9 @@ struct hashmap* hashmap_new(size_t init_cap, struct mempool* pool);
 
 struct hashset* hashset_new(size_t init_cap, struct mempool* pool);
 
-void hashmap_free(struct hashmap *hashmap);
+void hashmap_free(struct hashmap* hashmap);
 
-void hashset_free(struct hashset *set);
+void hashset_free(struct hashset* set);
 
 void* hashmap_get(struct hashmap* hashmap, char* key);
 

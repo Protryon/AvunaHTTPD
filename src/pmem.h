@@ -27,7 +27,7 @@ void* pcalloc(struct mempool* pool, size_t size);
 
 void* prealloc(struct mempool* pool, void* ptr, size_t size);
 
-void* pxfer(struct mempool *from, struct mempool *to, void *ptr);
+void* pxfer(struct mempool* from, struct mempool* to, void* ptr);
 
 void* pclaim(struct mempool* pool, void* ptr);
 
@@ -37,7 +37,7 @@ void pprefree(struct mempool* pool, void* ptr);
 
 void pprefree_strict(struct mempool* pool, void* ptr);
 
-void phook(struct mempool* pool, void (*hook)(void* arg), void* arg);
+void phook(struct mempool* pool, void (* hook)(void* arg), void* arg);
 
 void pchild(struct mempool* parent, struct mempool* child);
 

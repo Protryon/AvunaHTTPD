@@ -28,9 +28,9 @@ struct llist* llist_new(struct mempool* pool);
 
 int llist_free(struct llist* list);
 
-struct llist_node* llist_prepend(struct llist* llist, void *data);
+struct llist_node* llist_prepend(struct llist* llist, void* data);
 
-struct llist_node* llist_append(struct llist* llist, void *data);
+struct llist_node* llist_append(struct llist* llist, void* data);
 
 struct llist_node* llist_after(struct llist* llist, struct llist_node* node, void* data);
 

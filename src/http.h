@@ -22,11 +22,11 @@
 const char* getMethod(int m);
 
 struct request_session {
-		struct work_param* worker;
-		struct conn* conn;
-		struct response* response;
-		struct request* request;
-		struct mempool* pool;
+    struct work_param* worker;
+    struct conn* conn;
+    struct response* response;
+    struct request* request;
+    struct mempool* pool;
 };
 
 #define STREAM_TYPE_INVALID -1
@@ -34,34 +34,34 @@ struct request_session {
 #define STREAM_TYPE_CHUNKED 1
 
 struct body {
-		char* mime_type;
-		size_t len;
-		unsigned char* data;
-		int stream_fd;
-		int stream_type;
+    char* mime_type;
+    size_t len;
+    unsigned char* data;
+    int stream_fd;
+    int stream_type;
 };
 
 struct request {
-		int method;
-		char* path;
-		char* version;
-		struct headers* headers;
-		struct body* body; // may be NULL
-		int add_to_cache;
-		struct vhost* vhost;
+    int method;
+    char* path;
+    char* version;
+    struct headers* headers;
+    struct body* body; // may be NULL
+    int add_to_cache;
+    struct vhost* vhost;
 };
 
-int parseRequest(struct request_session *rs, char *data, size_t maxPost);
+int parseRequest(struct request_session* rs, char* data, size_t maxPost);
 
 unsigned char* serializeRequest(struct request_session* rs, size_t* len);
 
 struct response {
-		char* version;
-		char* code;
-		struct headers* headers;
-		struct body* body; // may be NULL
-		int parsed;
-		struct scache* fromCache;
+    char* version;
+    char* code;
+    struct headers* headers;
+    struct body* body; // may be NULL
+    int parsed;
+    struct scache* fromCache;
 };
 
 int parseResponse(struct request_session* rs, char* data);

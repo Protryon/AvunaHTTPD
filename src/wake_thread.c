@@ -10,6 +10,7 @@
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
+
 void wake_thread(struct wake_thread_arg* arg) {
     size_t revolving_initial = 0;
     int onec = 1;
@@ -25,9 +26,11 @@ void wake_thread(struct wake_thread_arg* arg) {
         for (size_t i = initial; i < count; ++i) {
             struct work_param* param = arg->work_params->data[i];
             if (write(param->pipes[1], &onec, 1) < 1) {
-                errlog(param->server->logsess, "Failed to write to wakeup pipe! Connection may hang. %s", strerror(errno));
+                errlog(param->server->logsess, "Failed to write to wakeup pipe! Connection may hang. %s",
+                       strerror(errno));
             }
         }
     }
 }
+
 #pragma clang diagnostic pop
