@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include "xstring.h"
 #include "vhost.h"
-#include "util.h"
 
 int domeq(const char* dom1, const char* dom2) {
     if (str_eq_case(dom1, "@") || str_eq_case(dom1, "*")) return 1;

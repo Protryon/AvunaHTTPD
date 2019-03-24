@@ -4,8 +4,6 @@
 
 #include "wake_thread.h"
 #include "work.h"
-#include <unistd.h>
-#include <string.h>
 #include <errno.h>
 
 #pragma clang diagnostic push

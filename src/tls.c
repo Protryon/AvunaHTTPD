@@ -6,11 +6,7 @@
  */
 
 #include "tls.h"
-#include <openssl/ssl.h>
-#include <stdlib.h>
-#include "util.h"
 #include "globals.h"
-#include "pmem.h"
 
 struct cert* loadCert(const char* cert, const char* key, struct mempool* pool) {
     const SSL_METHOD* method = SSLv23_method();

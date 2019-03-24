@@ -1,5 +1,4 @@
 #include "override.h"
-#include "http.h"
 
 struct override* readOverride(char* data) {
 

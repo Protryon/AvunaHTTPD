@@ -4,8 +4,6 @@
 
 #include "pmem.h"
 #include "smem.h"
-#include "hash.h"
-#include "list.h"
 
 struct hook_entry {
     void (* hook)(void* arg);

@@ -6,12 +6,10 @@
  */
 #include <stdlib.h>
 #include <unistd.h>
-#include <stdio.h>
 #include "xstring.h"
 #include <linux/limits.h>
 #include <errno.h>
 #include <sys/stat.h>
-#include <stdio.h>
 
 void* xcopy(const void* ptr, size_t size, size_t expand, struct mempool* pool) {
     void* alloc = pmalloc(pool, size + expand);

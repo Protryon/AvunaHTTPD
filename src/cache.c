@@ -6,14 +6,6 @@
  */
 
 #include "cache.h"
-#include "xstring.h"
-#include <stdlib.h>
-#include "util.h"
-#include <pthread.h>
-#include "http.h"
-#include "pmem.h"
-#include "list.h"
-#include "hash.h"
 
 struct cache* cache_new(size_t max_size) {
     struct mempool* pool = mempool_new();

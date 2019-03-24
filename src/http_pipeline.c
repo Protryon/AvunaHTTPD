@@ -3,25 +3,17 @@
 //
 
 #include "http_pipeline.h"
-#include <unistd.h>
 #include <errno.h>
 #include <arpa/inet.h>
 #include <zlib.h>
 #include <fcntl.h>
 #include "xstring.h"
 #include "util.h"
-#include "pmem.h"
-#include "work.h"
-#include "vhost.h"
 #include "version.h"
 #include "mime.h"
 #include "fcgi_connection_manager.h"
 #include "fcgi.h"
-#include "hash.h"
-#include "pmem.h"
 #include "pmem_hooks.h"
-#include "accept.h"
-#include "server.h"
 
 char* escapehtml(struct mempool* pool, const char* orig) {
     size_t len = strlen(orig);

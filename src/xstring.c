@@ -8,7 +8,6 @@
 #include <ctype.h>
 #include <stdio.h>
 #include "pmem.h"
-#include "list.h"
 
 char* str_trim(char* str) {
     if (str == NULL) return NULL;

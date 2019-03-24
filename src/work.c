@@ -6,34 +6,14 @@
  */
 
 #include "work.h"
-#include "accept.h"
-#include "xstring.h"
 #include <errno.h>
-#include <sys/socket.h>
 #include <poll.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <pthread.h>
-#include "list.h"
 #include "util.h"
-#include "streams.h"
-#include <fcntl.h>
 #include <sys/ioctl.h>
-#include "http.h"
-#include "log.h"
-#include "time.h"
 #include <arpa/inet.h>
-#include <sys/mman.h>
-#include <openssl/ssl.h>
-#include <openssl/md5.h>
 #include "vhost.h"
-#include "queue.h"
-#include "http2.h"
-#include "pmem.h"
 #include "http_pipeline.h"
 #include "pmem_hooks.h"
-#include "smem.h"
-#include "llist.h"
 
 void closeConn(struct conn* conn) {
     pfree(conn->pool);

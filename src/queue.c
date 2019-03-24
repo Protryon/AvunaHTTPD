@@ -7,13 +7,8 @@
 
 #include "queue.h"
 
-#include <unistd.h>
 #include <errno.h>
-#include <pthread.h>
 #include "xstring.h"
-#include <stdlib.h>
-#include "util.h"
-#include "pmem.h"
 
 struct queue* queue_new(size_t capacity, int multithreaded, struct mempool* pool) {
     struct queue* queue = pmalloc(pool, sizeof(struct queue));

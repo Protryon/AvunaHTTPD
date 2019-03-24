@@ -6,13 +6,8 @@
  */
 
 #include "fcgi.h"
-#include <stdio.h>
-#include <sys/socket.h>
 #include <errno.h>
-#include <unistd.h>
 #include "xstring.h"
-#include "util.h"
-#include "pmem.h"
 
 int writeFCGIFrame(int fd, struct fcgiframe* fcgif) {
     unsigned char header[8];

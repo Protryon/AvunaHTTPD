@@ -5,10 +5,8 @@
  *      Author: root
  */
 #include "log.h"
-#include <stdio.h>
 #include <sys/time.h>
 #include "xstring.h"
-#include <pthread.h>
 #include <errno.h>
 #include <stdarg.h>
 

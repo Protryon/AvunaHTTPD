@@ -6,10 +6,8 @@
  */
 
 #include "list.h"
-#include <unistd.h>
 #include <errno.h>
 #include "xstring.h"
-#include "pmem.h"
 
 struct list* list_new(size_t initial_capacity, struct mempool* pool) {
     struct list* list = pmalloc(pool, sizeof(struct list));

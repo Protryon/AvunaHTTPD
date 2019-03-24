@@ -4,7 +4,6 @@
 #include "hash.h"
 #include <string.h>
 #include <stdlib.h>
-#include "pmem.h"
 
 uint64_t hashmap_hash(char* key, size_t size) {
     if (key == NULL) return 0;

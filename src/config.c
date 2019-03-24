@@ -14,7 +14,6 @@
 #include "config.h"
 #include "streams.h"
 #include "xstring.h"
-#include "pmem.h"
 
 struct config* loadConfig(const char* file) {
     if (file == NULL) {

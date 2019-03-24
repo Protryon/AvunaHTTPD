@@ -6,32 +6,8 @@
  */
 
 #include "http.h"
-#include "util.h"
 #include "xstring.h"
-#include "accept.h"
 #include <errno.h>
-#include "version.h"
-#include <stdio.h>
-#include "work.h"
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include "mime.h"
-#include <fcntl.h>
-#include <openssl/md5.h>
-#include <zlib.h>
-#include "cache.h"
-#include "fcgi.h"
-#include <netinet/in.h>
-#include "vhost.h"
-#include <stdint.h>
-#include <arpa/inet.h>
-#include "queue.h"
-#include "fcgi_connection_manager.h"
-#include "hash.h"
-#include "smem.h"
-#include "pmem.h"
-#include "headers.h"
 
 const char* getMethod(int m) {
     if (m == METHOD_GET) {

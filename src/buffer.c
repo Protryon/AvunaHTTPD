@@ -3,7 +3,6 @@
 //
 
 #include "buffer.h"
-#include "pmem.h"
 #include <string.h>
 
 void buffer_init(struct buffer* buffer, struct mempool* pool) {

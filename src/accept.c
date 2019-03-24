@@ -5,22 +5,12 @@
  *      Author: root
  */
 #include "accept.h"
-#include "util.h"
-#include <sys/socket.h>
 #include <errno.h>
-#include <stdio.h>
-#include "xstring.h"
 #include <netinet/tcp.h>
-#include <netinet/in.h>
 #include <fcntl.h>
-#include <stdlib.h>
 #include <poll.h>
-#include "work.h"
-#include <unistd.h>
-#include <openssl/ssl.h>
 #include "tls.h"
 #include "vhost.h"
-#include "pmem.h"
 #include "globals.h"
 #include "pmem_hooks.h"
 
