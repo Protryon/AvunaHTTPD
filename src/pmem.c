@@ -14,8 +14,6 @@ struct hook_entry {
 struct mempool* mempool_new() {
     struct mempool* pool = smalloc(sizeof(struct mempool));
     pool->allocations = hashset_new(16, NULL);
-    pclaim(pool, pool->allocations);
-    pclaim(pool, pool->allocations->buckets);
     pool->hooks = list_new(16, pool);
     return pool;
 }
@@ -28,11 +26,11 @@ void pfree(struct mempool* pool) {
         struct hook_entry* entry = pool->hooks->data[i];
         entry->hook(entry->arg);
     }
-    ITER_SET(pool->allocations)
-                {
-                    free(ptr_key);
+    ITER_SET(pool->allocations) {
+        free(ptr_key);
         ITER_SET_END();
     }
+    hashset_free(pool->allocations);
     free(pool);
 }
 
