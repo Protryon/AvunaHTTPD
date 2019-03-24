@@ -33,7 +33,7 @@ ${BUILD_DIR}/%.o: %.c
 	${CC} ${CFLAGS} -c $< -o ${BUILD_DIR}/$@
 
 clean:
-	- rm -rf ${BUILD_DIR} ${DEPFILE}s
+	- rm -rf ${BUILD_DIR} ${DEPFILE}
 
 dep: ${ALLSOURCE}
 	${CC} ${CFLAGSDEP} ${CSRC} >>${DEPFILE}

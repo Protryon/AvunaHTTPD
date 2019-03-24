@@ -548,6 +548,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 #ifndef DEBUG
+    int runn = 0;
     pid_t pid = 0;
 	const char* pid_file = getConfigValue(dm, "pid-file");
 	if (!access(pid_file, F_OK)) {
@@ -561,6 +562,7 @@ int main(int argc, char* argv[]) {
 			pid = strtol(pidr, NULL, 10);
 			int k = kill(pid, 0);
 			if (k == 0) {
+			    runn = 1;
             }
 		} else {
 			printf("Failed to read PID file! %s\n", strerror(errno));

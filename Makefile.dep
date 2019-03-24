@@ -97,3 +97,137 @@ http.o: src/http.c src/http.h src/accept.h src/config.h src/list.h \
  src/work.h src/log.h src/cache.h src/tls.h src/queue.h src/util.h \
  src/xstring.h src/version.h src/mime.h src/fcgi.h src/vhost.h
 fcgi.o: src/fcgi.c src/fcgi.h src/xstring.h src/util.h
+vhost.o: src/vhost.c src/xstring.h src/list.h src/pmem.h src/hash.h \
+ src/vhost.h src/cache.h src/tls.h src/util.h
+log.o: src/log.c src/log.h src/xstring.h src/list.h src/pmem.h src/hash.h
+mime.o: src/mime.c src/mime.h src/xstring.h src/list.h src/pmem.h \
+ src/hash.h src/streams.h src/util.h src/globals.h
+config.o: src/config.c src/util.h src/pmem.h src/hash.h src/list.h \
+ src/config.h src/streams.h src/xstring.h
+smem.o: src/smem.c src/smem.h
+queue.o: src/queue.c src/queue.h src/xstring.h src/list.h src/pmem.h \
+ src/hash.h src/util.h
+headers.o: src/headers.c src/headers.h src/xstring.h src/list.h \
+ src/pmem.h src/hash.h
+pmem_hooks.o: src/pmem_hooks.c src/pmem_hooks.h
+list.o: src/list.c src/list.h src/pmem.h src/hash.h src/xstring.h
+http2.o: src/http2.c
+pmem.o: src/pmem.c src/pmem.h src/hash.h src/list.h src/smem.h
+streams.o: src/streams.c
+override.o: src/override.c src/override.h src/http.h src/accept.h \
+ src/config.h src/hash.h src/pmem.h src/list.h src/work.h src/log.h \
+ src/cache.h src/server.h src/queue.h src/buffer.h src/headers.h
+fcgi_connection_manager.o: src/fcgi_connection_manager.c \
+ src/fcgi_connection_manager.h src/vhost.h src/cache.h src/pmem.h \
+ src/hash.h src/list.h src/tls.h src/log.h src/http.h src/accept.h \
+ src/config.h src/work.h src/server.h src/queue.h src/buffer.h \
+ src/headers.h
+accept.o: src/accept.c src/accept.h src/config.h src/hash.h src/pmem.h \
+ src/list.h src/work.h src/log.h src/cache.h src/server.h src/queue.h \
+ src/http.h src/headers.h src/buffer.h src/util.h src/xstring.h src/tls.h \
+ src/vhost.h src/globals.h src/pmem_hooks.h
+tls.o: src/tls.c src/tls.h src/pmem.h src/hash.h src/list.h src/util.h \
+ src/globals.h
+main.o: src/main.c src/config.h src/hash.h src/pmem.h src/list.h \
+ src/xstring.h src/version.h src/util.h src/streams.h src/accept.h \
+ src/work.h src/log.h src/cache.h src/server.h src/queue.h src/http.h \
+ src/headers.h src/buffer.h src/globals.h src/mime.h src/tls.h \
+ src/vhost.h src/smem.h src/pmem_hooks.h src/wake_thread.h
+hash.o: src/hash.c src/hash.h src/pmem.h src/list.h
+buffer.o: src/buffer.c src/buffer.h src/pmem.h src/hash.h src/list.h
+http_pipeline.o: src/http_pipeline.c src/http_pipeline.h src/vhost.h \
+ src/cache.h src/pmem.h src/hash.h src/list.h src/tls.h src/work.h \
+ src/accept.h src/config.h src/queue.h src/http.h src/headers.h \
+ src/server.h src/log.h src/buffer.h src/xstring.h src/util.h \
+ src/version.h src/mime.h src/fcgi_connection_manager.h src/fcgi.h \
+ src/pmem_hooks.h
+util.o: src/util.c src/xstring.h src/list.h src/pmem.h src/hash.h
+cache.o: src/cache.c src/cache.h src/pmem.h src/hash.h src/list.h \
+ src/xstring.h src/util.h src/http.h src/accept.h src/config.h src/work.h \
+ src/log.h src/server.h src/queue.h src/buffer.h src/headers.h
+server.o: src/server.c src/server.h src/list.h src/pmem.h src/hash.h \
+ src/queue.h src/log.h
+xstring.o: src/xstring.c src/pmem.h src/hash.h src/list.h
+wake_thread.o: src/wake_thread.c src/wake_thread.h src/list.h src/pmem.h \
+ src/hash.h src/server.h src/queue.h src/log.h src/work.h src/accept.h \
+ src/config.h src/http.h src/headers.h src/buffer.h src/cache.h
+llist.o: src/llist.c src/llist.h src/pmem.h src/hash.h src/list.h
+work.o: src/work.c src/work.h src/accept.h src/config.h src/hash.h \
+ src/pmem.h src/list.h src/queue.h src/http.h src/headers.h src/server.h \
+ src/log.h src/buffer.h src/cache.h src/xstring.h src/util.h \
+ src/streams.h src/vhost.h src/tls.h src/http2.h src/http_pipeline.h \
+ src/pmem_hooks.h src/smem.h src/llist.h
+http.o: src/http.c src/http.h src/accept.h src/config.h src/hash.h \
+ src/pmem.h src/list.h src/work.h src/log.h src/cache.h src/server.h \
+ src/queue.h src/buffer.h src/headers.h src/util.h src/xstring.h \
+ src/version.h src/mime.h src/fcgi.h src/vhost.h src/tls.h \
+ src/fcgi_connection_manager.h src/smem.h
+fcgi.o: src/fcgi.c src/fcgi.h src/pmem.h src/hash.h src/list.h \
+ src/xstring.h src/util.h
+vhost.o: src/vhost.c src/xstring.h src/list.h src/pmem.h src/hash.h \
+ src/vhost.h src/cache.h src/tls.h src/util.h
+log.o: src/log.c src/log.h src/xstring.h src/list.h src/pmem.h src/hash.h
+mime.o: src/mime.c src/mime.h src/xstring.h src/list.h src/pmem.h \
+ src/hash.h src/streams.h src/util.h src/globals.h
+config.o: src/config.c src/util.h src/pmem.h src/hash.h src/list.h \
+ src/config.h src/streams.h src/xstring.h
+smem.o: src/smem.c src/smem.h
+queue.o: src/queue.c src/queue.h src/xstring.h src/list.h src/pmem.h \
+ src/hash.h src/util.h
+headers.o: src/headers.c src/headers.h src/xstring.h src/list.h \
+ src/pmem.h src/hash.h
+pmem_hooks.o: src/pmem_hooks.c src/pmem_hooks.h
+list.o: src/list.c src/list.h src/pmem.h src/hash.h src/xstring.h
+http2.o: src/http2.c
+pmem.o: src/pmem.c src/pmem.h src/hash.h src/list.h src/smem.h
+streams.o: src/streams.c
+override.o: src/override.c src/override.h src/http.h src/accept.h \
+ src/config.h src/hash.h src/pmem.h src/list.h src/work.h src/log.h \
+ src/cache.h src/server.h src/queue.h src/buffer.h src/headers.h
+fcgi_connection_manager.o: src/fcgi_connection_manager.c \
+ src/fcgi_connection_manager.h src/vhost.h src/cache.h src/pmem.h \
+ src/hash.h src/list.h src/tls.h src/log.h src/http.h src/accept.h \
+ src/config.h src/work.h src/server.h src/queue.h src/buffer.h \
+ src/headers.h
+accept.o: src/accept.c src/accept.h src/config.h src/hash.h src/pmem.h \
+ src/list.h src/work.h src/log.h src/cache.h src/server.h src/queue.h \
+ src/http.h src/headers.h src/buffer.h src/util.h src/xstring.h src/tls.h \
+ src/vhost.h src/globals.h src/pmem_hooks.h
+tls.o: src/tls.c src/tls.h src/pmem.h src/hash.h src/list.h src/util.h \
+ src/globals.h
+main.o: src/main.c src/config.h src/hash.h src/pmem.h src/list.h \
+ src/xstring.h src/version.h src/util.h src/streams.h src/accept.h \
+ src/work.h src/log.h src/cache.h src/server.h src/queue.h src/http.h \
+ src/headers.h src/buffer.h src/globals.h src/mime.h src/tls.h \
+ src/vhost.h src/smem.h src/pmem_hooks.h src/wake_thread.h
+hash.o: src/hash.c src/hash.h src/pmem.h src/list.h
+buffer.o: src/buffer.c src/buffer.h src/pmem.h src/hash.h src/list.h
+http_pipeline.o: src/http_pipeline.c src/http_pipeline.h src/vhost.h \
+ src/cache.h src/pmem.h src/hash.h src/list.h src/tls.h src/work.h \
+ src/accept.h src/config.h src/queue.h src/http.h src/headers.h \
+ src/server.h src/log.h src/buffer.h src/xstring.h src/util.h \
+ src/version.h src/mime.h src/fcgi_connection_manager.h src/fcgi.h \
+ src/pmem_hooks.h
+util.o: src/util.c src/xstring.h src/list.h src/pmem.h src/hash.h
+cache.o: src/cache.c src/cache.h src/pmem.h src/hash.h src/list.h \
+ src/xstring.h src/util.h src/http.h src/accept.h src/config.h src/work.h \
+ src/log.h src/server.h src/queue.h src/buffer.h src/headers.h
+server.o: src/server.c src/server.h src/list.h src/pmem.h src/hash.h \
+ src/queue.h src/log.h
+xstring.o: src/xstring.c src/pmem.h src/hash.h src/list.h
+wake_thread.o: src/wake_thread.c src/wake_thread.h src/list.h src/pmem.h \
+ src/hash.h src/server.h src/queue.h src/log.h src/work.h src/accept.h \
+ src/config.h src/http.h src/headers.h src/buffer.h src/cache.h
+llist.o: src/llist.c src/llist.h src/pmem.h src/hash.h src/list.h
+work.o: src/work.c src/work.h src/accept.h src/config.h src/hash.h \
+ src/pmem.h src/list.h src/queue.h src/http.h src/headers.h src/server.h \
+ src/log.h src/buffer.h src/cache.h src/xstring.h src/util.h \
+ src/streams.h src/vhost.h src/tls.h src/http2.h src/http_pipeline.h \
+ src/pmem_hooks.h src/smem.h src/llist.h
+http.o: src/http.c src/http.h src/accept.h src/config.h src/hash.h \
+ src/pmem.h src/list.h src/work.h src/log.h src/cache.h src/server.h \
+ src/queue.h src/buffer.h src/headers.h src/util.h src/xstring.h \
+ src/version.h src/mime.h src/fcgi.h src/vhost.h src/tls.h \
+ src/fcgi_connection_manager.h src/smem.h
+fcgi.o: src/fcgi.c src/fcgi.h src/pmem.h src/hash.h src/list.h \
+ src/xstring.h src/util.h
