@@ -9,14 +9,15 @@
 #define TLS_H_
 
 #include <openssl/ssl.h>
+#include "pmem.h"
 
 struct cert {
 		SSL_CTX* ctx;
 		int isDummy;
 };
 
-struct cert* loadCert(const char* cert, const char* key);
+struct cert* loadCert(const char* cert, const char* key, struct mempool* pool);
 
-struct cert* dummyCert();
+struct cert* dummyCert(struct mempool* pool);
 
 #endif /* TLS_H_ */

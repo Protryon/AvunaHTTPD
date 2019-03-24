@@ -14,6 +14,7 @@
 #include "config.h"
 #include "streams.h"
 #include "xstring.h"
+#include "pmem.h"
 
 struct config* loadConfig(const char* file) {
 	if (file == NULL) {
@@ -30,21 +31,24 @@ struct config* loadConfig(const char* file) {
 	}
 	int fd = open(file, O_RDONLY);
 	if (fd < 0) return NULL;
-	struct config* ret = xmalloc(sizeof(struct config));
-	ret->node_count = 0;
-	ret->nodes = NULL;
+	struct mempool* pool = mempool_new();
+	struct config* cfg = pmalloc(pool, sizeof(struct config));
+	cfg->pool = pool;
+	cfg->allNodes = list_new(16, cfg->pool);
+	cfg->nodeListsByCat = hashmap_new(16, cfg->pool);
+	cfg->nodesByName = hashmap_new(16, cfg->pool);
 	char line[1024];
-	int l = 0;
-	struct cnode* cat = NULL;
+	ssize_t l = 0;
+	struct config_node* cur_node = NULL;
 	while (1) {
 		l = readLine(fd, line, 1024);
 		if (l < 0) break;
-		char* wl = trim(line);
+		char* wl = str_trim(line);
 		if (wl[0] == 0) continue;
 		char* comment = strchr(line, '#');
 		if (comment != NULL) {
 			comment[0] = 0;
-			wl = trim(line);
+			wl = str_trim(line);
 			if (wl[0] == 0) continue;
 		}
 		l = strlen(wl);
@@ -55,119 +59,51 @@ struct config* loadConfig(const char* file) {
 			if (id != NULL) {
 				id[0] = 0;
 				id++;
-				id = trim(id);
+				id = str_trim(id);
 			}
-			wl = trim(wl);
-			cat = xmalloc(sizeof(struct cnode));
-			if (ret->node_count == 0) {
-				ret->nodes = xmalloc(sizeof(struct cnode*));
-				ret->node_count = 1;
-			} else {
-				ret->node_count++;
-				ret->nodes = xrealloc(ret->nodes, sizeof(struct cnode*) * ret->node_count);
+			wl = str_trim(wl);
+			char* category = str_dup(wl, 0, cfg->pool);
+			cur_node = pmalloc(cfg->pool, sizeof(struct config_node));
+			list_add(cfg->allNodes, cur_node);
+			cur_node->map = hashmap_new(16, cfg->pool);
+			struct list* current_cat_list = hashmap_get(cfg->nodeListsByCat, category);
+			if (current_cat_list == NULL) {
+				current_cat_list = list_new(8, cfg->pool);
+				hashmap_put(cfg->nodeListsByCat, category, current_cat_list);
 			}
-			ret->nodes[ret->node_count - 1] = cat;
-			cat->keys = NULL;
-			cat->values = NULL;
-			cat->entries = 0;
-			if (streq_nocase(wl, "server")) {
-				cat->cat = CAT_SERVER;
-			} else if (streq_nocase(wl, "daemon")) {
-				cat->cat = CAT_DAEMON;
-			} else {
-				cat->cat = CAT_UNKNOWN;
-			}
+			list_add(current_cat_list, cur_node);
+			cur_node->category = category;
+
 			if (id == NULL) {
-				cat->id = NULL;
+				cur_node->name = NULL;
 			} else {
-				int idl = strlen(id) + 1;
-				cat->id = xmalloc(idl);
-				memcpy(cat->id, id, idl);
+				cur_node->name = str_dup(id, 0, cfg->pool);
+				hashmap_put(cfg->nodesByName, cur_node->name, cur_node);
 			}
 		} else {
 			char* value = strchr(wl, '=');
 			if (value == NULL) continue;
 			value[0] = 0;
 			value++;
-			value = trim(value);
-			wl = trim(wl);
-			int wll = strlen(wl);
-			int vl = strlen(value);
-			if (cat->entries == 0) {
-				cat->keys = xmalloc(sizeof(char*));
-				cat->values = xmalloc(sizeof(char*));
-				cat->entries = 1;
-			} else {
-				cat->keys = xrealloc(cat->keys, ++cat->entries * sizeof(char*));
-				cat->values = xrealloc(cat->values, cat->entries * sizeof(char*));
-			}
-			cat->keys[cat->entries - 1] = xmalloc(wll + 1);
-			cat->values[cat->entries - 1] = xmalloc(vl + 1);
-			memcpy(cat->keys[cat->entries - 1], wl, wll + 1);
-			memcpy(cat->values[cat->entries - 1], value, vl + 1);
+			value = str_trim(value);
+			wl = str_trim(wl);
+			hashmap_put(cur_node->map, str_dup(wl, 0, cfg->pool), str_dup(value, 0, cfg->pool));
 		}
 	}
 	close(fd);
-	return ret;
+	return cfg;
 }
 
-const char* getConfigValue(const struct cnode* cat, const char* name) {
-	if (cat == NULL || name == NULL || cat->entries == 0) return NULL;
-	for (int i = 0; i < cat->entries; i++) {
-		if (streq_nocase(cat->keys[i], name)) {
-			return cat->values[i];
-		}
-	}
-	return NULL;
+const char* getConfigValue(const struct config_node* cat, const char* name) {
+	if (cat == NULL || name == NULL) return NULL;
+	return (char*) hashmap_get(cat->map, name);
 }
 
-int hasConfigKey(const struct cnode* cat, const char* name) {
-	if (cat == NULL || name == NULL || cat->entries == 0) return 1;
-	for (int i = 0; i < cat->entries; i++) {
-		if (streq_nocase(cat->keys[i], name)) {
-			return 1;
-		}
+struct config_node* getUniqueByCat(const struct config* cfg, const char* cat) {
+	if (cfg == NULL || cat == NULL) return NULL;
+	struct list* cat_list = hashmap_get(cfg->nodeListsByCat, cat);
+	if (cat_list == NULL || cat_list->count == 0) {
+		return NULL;
 	}
-	return 0;
-}
-
-struct cnode* getCatByID(const struct config* cfg, const char* id) {
-	if (cfg == NULL || id == NULL || cfg->node_count == 0) return NULL;
-	for (int i = 0; i < cfg->node_count; i++) {
-		if (streq_nocase(cfg->nodes[i]->id, id)) {
-			return cfg->nodes[i];
-		}
-	}
-	return NULL;
-}
-
-struct cnode** getCatsByCat(const struct config* cfg, int cat, int* count) {
-	if (cfg == NULL || cat < CAT_UNKNOWN || cfg->node_count == 0) return NULL;
-	if (cat == CAT_UNKNOWN) return cfg->nodes;
-	int rs = 0;
-	struct cnode** ret = NULL;
-	for (int i = 0; i < cfg->node_count; i++) {
-		if (cfg->nodes[i]->cat == cat) {
-			if (rs == 0) {
-				rs = 1;
-				ret = xmalloc(sizeof(struct cnode**));
-			} else {
-				rs++;
-				ret = xrealloc(ret, sizeof(struct cnode**) * rs);
-			}
-			ret[rs - 1] = cfg->nodes[i];
-		}
-	}
-	*count = rs;
-	return ret;
-}
-
-struct cnode* getUniqueByCat(const struct config* cfg, int cat) {
-	if (cfg == NULL || cat <= CAT_UNKNOWN || cfg->node_count == 0) return NULL;
-	for (int i = 0; i < cfg->node_count; i++) {
-		if (cfg->nodes[i]->cat == cat && cfg->nodes[i]->id == NULL) {
-			return cfg->nodes[i];
-		}
-	}
-	return NULL;
+	return cat_list->data[0];
 }

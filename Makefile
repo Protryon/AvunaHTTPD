@@ -3,8 +3,8 @@ NOINCL = clean
 NEEDINCL = ${filter ${NOINCL}, ${MAKECMDGOALS}}
 
 CC = gcc
-CFLAGS = -std=gnu11
-CFLAGSDEP = -std=gnu11 -MM
+CFLAGS = -std=gnu11 -Wno-discarded-qualifiers
+CFLAGSDEP = ${CFLAGS} -MM
 
 EXECOUT = avuna-httpd
 SRCDIRS = src
@@ -33,7 +33,7 @@ ${BUILD_DIR}/%.o: %.c
 	${CC} ${CFLAGS} -c $< -o ${BUILD_DIR}/$@
 
 clean:
-	- rm -rf ${BUILD_DIR} ${DEPFILE}
+	- rm -rf ${BUILD_DIR} ${DEPFILE}s
 
 dep: ${ALLSOURCE}
 	${CC} ${CFLAGSDEP} ${CSRC} >>${DEPFILE}

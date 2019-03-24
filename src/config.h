@@ -8,33 +8,27 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-#define CAT_UNKNOWN -1
-#define CAT_SERVER 0
-#define CAT_DAEMON 1
+#include "hash.h"
+#include "list.h"
+#include "pmem.h"
 
-struct cnode {
-		int cat;
-		char* id;
-		int entries;
-		char** keys;
-		char** values;
+struct config_node {
+		char* category;
+		char* name;
+		struct hashmap* map;
 };
 
 struct config {
-		int node_count;
-		struct cnode** nodes;
+		struct mempool* pool;
+		struct list* allNodes;
+		struct hashmap* nodesByName;
+		struct hashmap* nodeListsByCat;
 };
 
 struct config* loadConfig(const char* file);
 
-const char* getConfigValue(const struct cnode* cat, const char* name);
+const char* getConfigValue(const struct config_node* cat, const char* name);
 
-int hasConfigKey(const struct cnode* cat, const char* name);
-
-struct cnode* getCatByID(const struct config* cfg, const char* name);
-
-struct cnode** getCatsByCat(const struct config* cfg, int cat, int* count);
-
-struct cnode* getUniqueByCat(const struct config* cfg, int cat);
+struct config_node* getUniqueByCat(const struct config* cfg, const char* cat);
 
 #endif /* CONFIG_H_ */

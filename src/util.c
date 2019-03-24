@@ -13,58 +13,10 @@
 #include <sys/stat.h>
 #include <stdio.h>
 
-void* xmalloc(size_t size) {
-	if (size > 10485760) {
-		printf("Big malloc %u!\n", size);
-	}
-	void* m = malloc(size);
-	if (m == NULL) {
-		printf("Out of Memory! @ malloc size %u\n", size);
-		exit(1);
-	}
-	return m;
-}
-
-void xfree(void* ptr) {
-	free(ptr);
-}
-
-void* xcalloc(size_t size) {
-	if (size > 10485760) {
-		printf("Big calloc %u!\n", size);
-	}
-	void* m = calloc(1, size);
-	if (m == NULL) {
-		printf("Out of Memory! @ calloc size %u\n", size);
-		exit(1);
-	}
-	return m;
-}
-
-void* xrealloc(void* ptr, size_t size) {
-	if (size == 0) {
-		xfree(ptr);
-		return NULL;
-	}
-	if (size > 10485760) {
-		printf("Big realloc %u!\n", size);
-	}
-	void* m = realloc(ptr, size);
-	if (m == NULL) {
-		printf("Out of Memory! @ realloc size %u\n", size);
-		exit(1);
-	}
-	return m;
-}
-
-void* xcopy(const void* ptr, size_t size, size_t expand) {
-	void* alloc = xmalloc(size + expand);
+void* xcopy(const void* ptr, size_t size, size_t expand, struct mempool* pool) {
+	void* alloc = pmalloc(pool, size + expand);
 	memcpy(alloc, ptr, size);
 	return alloc;
-}
-
-char* xstrdup(const char* str, size_t expand) {
-	return xcopy(str, strlen(str) + 1, expand);
 }
 
 int recur_mkdir(const char* path, mode_t mode) {

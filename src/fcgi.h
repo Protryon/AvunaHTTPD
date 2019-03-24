@@ -10,6 +10,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include "pmem.h"
 
 #define FCGI_VERSION_1 1
 #define FCGI_BEGIN_REQUEST 1
@@ -35,6 +36,6 @@ int writeFCGIFrame(int fd, struct fcgiframe* fcgif);
 
 int writeFCGIParam(int fd, int reqid, const char* name, const char* value);
 
-int readFCGIFrame(int fd, struct fcgiframe* fcgif);
+int readFCGIFrame(int fd, struct fcgiframe* fcgif, struct mempool* pool);
 
 #endif /* FCGI_H_ */

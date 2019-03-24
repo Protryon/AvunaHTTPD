@@ -8,24 +8,18 @@
 #ifndef WORK_H_
 #define WORK_H_
 
-#include "collection.h"
 #include "accept.h"
 #include "log.h"
 #include "cache.h"
+#include "server.h"
 
-#define PROTO_HTTP1 0;
-#define PROTO_HTTP2 1;
+#define PROTO_HTTP1 0
+#define PROTO_HTTP2 1
 
 struct work_param {
-		int i;
-		struct accept_param* ap;
-		struct collection* conns;
+		size_t i;
+		struct server_info* server;
 		int pipes[2];
-		struct logsess* logsess;
-		size_t vhosts_count;
-		struct vhost** vhosts;
-		int sport;
-		size_t maxPost;
 };
 
 void run_work(struct work_param* param);

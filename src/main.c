@@ -25,7 +25,7 @@
 #include <pthread.h>
 #include "accept.h"
 #include "globals.h"
-#include "collection.h"
+#include "list.h"
 #include "work.h"
 #include <sys/types.h>
 #include "mime.h"
@@ -34,15 +34,488 @@
 #include "tls.h"
 #include "http.h"
 #include "vhost.h"
+#include "smem.h"
 #include <sys/resource.h>
+#include "server.h"
+#include "pmem_hooks.h"
+#include "wake_thread.h"
+
+int load_vhost_htdocs(struct config_node* config_node, struct vhost* vhost) {
+    struct vhost_htdocs* htdocs = &vhost->sub.htdocs;
+    htdocs->index = list_new(8, vhost->pool);
+    htdocs->error_pages = hashmap_new(8, vhost->pool);
+    htdocs->enableGzip = 1;
+    htdocs->cache_types = list_new(8, vhost->pool);
+    htdocs->fcgis = hashmap_new(8, vhost->pool);
+    htdocs->maxAge = 604800;
+    htdocs->htdocs = getConfigValue(config_node, "htdocs");
+    if (htdocs->htdocs == NULL) {
+        errlog(delog, "No htdocs at vhost: %s, assuming '/var/www/html'.", config_node->name);
+        htdocs->htdocs = "/var/www/html/";
+    }
+    recur_mkdir(htdocs->htdocs, 0750);
+    htdocs->htdocs = realpath(htdocs->htdocs, NULL);
+    if (htdocs->htdocs == NULL) {
+        errlog(delog, "No htdocs at vhost %s, or does not exist and cannot be created.", config_node->name);
+        return 1;
+    }
+    size_t htdocs_length = strlen(htdocs->htdocs);
+    if (htdocs->htdocs[htdocs_length - 1] != '/') {
+        htdocs->htdocs = str_dup(htdocs->htdocs, ++htdocs_length + 1, vhost->pool);
+        htdocs->htdocs[htdocs_length - 1] = '/';
+        htdocs->htdocs[htdocs_length] = 0;
+    }
+    const char* temp = getConfigValue(config_node, "nohardlinks");
+    htdocs->nohardlinks = temp == NULL ? 1 : str_eq(temp, "true");
+    if (temp == NULL) {
+        errlog(delog, "No nohardlinks at vhost: %s, assuming 'true'", config_node->name);
+    }
+    temp = getConfigValue(config_node, "symlock");
+    htdocs->symlock = temp == NULL ? 1 : str_eq(temp, "true");
+    if (temp == NULL) {
+        errlog(delog, "No symlock at vhost: %s, assuming 'true'", config_node->name);
+    }
+    temp = getConfigValue(config_node, "scache");
+    htdocs->scacheEnabled = temp == NULL ? 1 : str_eq(temp, "true");
+    if (temp == NULL) {
+        errlog(delog, "No scache at vhost: %s, assuming 'true'", config_node->name);
+    }
+    temp = getConfigValue(config_node, "cache-maxage");
+    if (temp == NULL || !str_isunum(temp)) {
+        errlog(delog, "No cache-maxage at vhost: %s, assuming '604800'", config_node->name);
+        temp = "604800";
+    }
+    htdocs->maxAge = strtoul(temp, NULL, 10);
+    temp = getConfigValue(config_node, "maxSCache");
+    if (temp == NULL || !str_isunum(temp)) {
+        errlog(delog, "No maxSCache at vhost: %s, assuming '0'", config_node->name);
+        temp = "0";
+    }
+    htdocs->cache = cache_new(strtoul(temp, NULL, 10));
+    pchild(vhost->pool, htdocs->cache->pool);
+    temp = getConfigValue(config_node, "enable-gzip");
+    htdocs->enableGzip = temp == NULL ? 1 : str_eq(temp, "true");
+    if (temp == NULL) {
+        errlog(delog, "No enable-gzip at vhost: %s, assuming 'true'", config_node->name);
+    }
+    temp = getConfigValue(config_node, "index");
+    if (temp == NULL) {
+        errlog(delog, "No index at vhost: %s, assuming 'index.php, index.html, index.htm'", config_node->name);
+        temp = "index.php, index.html, index.htm";
+    }
+    char* temp2 = str_dup(temp, 0, vhost->pool);
+    str_split(temp2, ",", htdocs->index);
+    for (size_t i = 0; i < htdocs->index->count; ++i) {
+        htdocs->index->data[i] = str_trim(htdocs->index->data[i]);
+    }
+
+    temp = getConfigValue(config_node, "cache-types");
+    if (temp == NULL) {
+        errlog(delog, "No cache-types at vhost: %s, assuming 'text/css,application/javascript,image/*'", config_node->name);
+        temp = "text/css,application/javascript,image/*";
+    }
+    temp2 = str_dup(temp, 0, vhost->pool);
+    str_split(temp2, ",", htdocs->cache_types);
+    for (size_t i = 0; i < htdocs->cache_types->count; ++i) {
+        htdocs->cache_types->data[i] = str_trim(htdocs->cache_types->data[i]);
+    }
+
+    ITER_MAP(config_node->map) {
+        if (str_prefixes(str_key, "error-")) {
+            const char* en = str_key + 6;
+            if (!str_isunum(en)) {
+                errlog(delog, "Invalid error page specifier at vhost: %s", config_node->name);
+                continue;
+            }
+            hashmap_putptr(htdocs->error_pages, (void*) strtoul(en, NULL, 10), value);
+        }
+    } ITER_MAP_END();
+
+    temp = getConfigValue(config_node, "fcgis");
+    if (temp != NULL) {
+        temp2 = str_dup(temp, 0, vhost->pool);
+        struct list* fcgi_names = list_new(8, vhost->pool);
+        str_split(temp2, ",", fcgi_names);
+        for (size_t i = 0; i < fcgi_names->count; ++i) {
+            fcgi_names->data[i] = str_trim(fcgi_names->data[i]);
+            struct config_node* fcgi_node = hashmap_get(cfg->nodesByName, fcgi_names->data[i]);
+            if (fcgi_node == NULL || !str_eq_case(fcgi_node->category, "fcgi")) {
+                errlog(delog, "Could not find FCGI entry %s at vhost: %s", temp2, config_node->name);
+                continue;
+            }
+            const char* mode = getConfigValue(fcgi_node, "mode");
+            struct fcgi* fcgi = pmalloc(vhost->pool, sizeof(struct fcgi));
+            fcgi->mimes = NULL;
+            fcgi->req_id_counter = 0;
+            if (str_eq(mode, "tcp")) {
+                fcgi->addrlen = sizeof(struct sockaddr_in);
+                struct sockaddr_in* ina = pmalloc(vhost->pool, sizeof(struct sockaddr_in));
+                fcgi->addr = (struct sockaddr *) ina;
+                ina->sin_family = AF_INET;
+                const char* ip = getConfigValue(fcgi_node, "ip");
+                const char* port = getConfigValue(fcgi_node, "port");
+                if (ip == NULL || !inet_aton(ip, &ina->sin_addr)) {
+                    errlog(delog, "Invalid IP for FCGI node %s at vhost: %s", temp2, config_node->name);
+                    continue;
+                }
+                if (port == NULL || !str_isunum(port)) {
+                    errlog(delog, "Invalid Port for FCGI node %s at vhost: %s", temp2, config_node->name);
+                    continue;
+                }
+                ina->sin_port = htons((uint16_t) strtoul(port, NULL, 10));
+            } else if (str_eq(mode, "unix")) {
+                fcgi->addrlen = sizeof(struct sockaddr_un);
+                struct sockaddr_un* ina =pmalloc(vhost->pool, sizeof(struct sockaddr_un));
+                fcgi->addr = ina;
+                ina->sun_family = AF_LOCAL;
+                const char* file = getConfigValue(fcgi_node, "file");
+                if (file == NULL || strlen(file) >= 107) {
+                    errlog(delog, "Invalid Unix Socket for FCGI node %s at vhost: %s", temp2, config_node->name);
+                    continue;
+                }
+                memcpy(ina->sun_path, file, strlen(file) + 1);
+            } else {
+                errlog(delog, "Invalid mode for FCGI node %s at vhost: %s", temp2, config_node->name);
+                continue;
+            }
+            const char* mimes = getConfigValue(fcgi_node, "mime-types");
+            if (mimes != NULL) {
+                char* mimes_split = pclaim(vhost->pool, str_dup(mimes, 0, vhost->pool));
+                mimes_split = str_trim(mimes_split);
+                fcgi->mimes = list_new(8, vhost->pool);
+                str_split(mimes_split, ",", fcgi->mimes);
+                for (size_t j = 0; j < fcgi->mimes->count; ++j) {
+                    fcgi->mimes->data[i] = str_trim(fcgi->mimes->data[i]);
+                    hashmap_put(htdocs->fcgis, fcgi->mimes->data[i], fcgi);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+int load_vhost_rproxy(struct config_node* config_node, struct vhost* vhost) {
+    struct vhost_rproxy* rproxy = &vhost->sub.rproxy;
+    rproxy->enableGzip = 1;
+    rproxy->cache_types = list_new(8, vhost->pool);
+    rproxy->dynamic_types = hashset_new(8, vhost->pool);
+    rproxy->maxAge = 604800;
+    const char* forward_mode = getConfigValue(config_node, "forward-mode");
+    if (str_eq(forward_mode, "tcp")) {
+        rproxy->fwaddrlen = sizeof(struct sockaddr_in);
+        struct sockaddr_in* ina = pmalloc(vhost->pool, sizeof(struct sockaddr_in));
+        rproxy->fwaddr = ina;
+        ina->sin_family = AF_INET;
+        const char* forward_ip = getConfigValue(config_node, "forward-ip");
+        const char* forward_port = getConfigValue(config_node, "forward-port");
+        if (forward_ip == NULL || !inet_aton(forward_ip, &ina->sin_addr)) {
+            errlog(delog, "Invalid IP for Reverse Proxy vhost: %s", config_node->name);
+            return 1;
+        }
+        if (forward_port == NULL || !str_isunum(forward_port)) {
+            errlog(delog, "Invalid Port for Reverse Proxy vhost: %s", config_node->name);
+            return 1;
+        }
+        ina->sin_port = (uint16_t) strtoul(forward_port, NULL, 10);
+    } else if (str_eq(forward_mode, "unix")) {
+        rproxy->fwaddrlen = sizeof(struct sockaddr_un);
+        struct sockaddr_un* ina = pmalloc(vhost->pool, sizeof(struct sockaddr_un));
+        rproxy->fwaddr = ina;
+        ina->sun_family = AF_LOCAL;
+        const char* ffile = getConfigValue(config_node, "file");
+        if (ffile == NULL || strlen(ffile) >= 107) {
+            errlog(delog, "Invalid Unix Socket for Reverse Proxy vhost: %s", config_node->name);
+            return 1;
+        }
+        memcpy(ina->sun_path, ffile, strlen(ffile) + 1);
+    } else {
+        errlog(delog, "Invalid mode for Reverse Proxy vhost: %s", config_node->name);
+        return 1;
+    }
+    rproxy->headers = NULL;
+    ITER_MAP(config_node->map) {
+        if (str_prefixes(str_key, "header-")) {
+            const char* en = str_key + 7;
+            if (rproxy->headers == NULL) {
+                rproxy->headers = pcalloc(vhost->pool, sizeof(struct headers));
+                rproxy->headers->pool = vhost->pool;
+            }
+            header_add(rproxy->headers, en, value);
+        }
+    } ITER_MAP_END();
+
+    const char* temp = getConfigValue(config_node, "cache-types");
+    if (temp == NULL) {
+        errlog(delog, "No cache-types at vhost: %s, assuming 'text/css,application/`javascript,image/*'", config_node->name);
+        temp = "text/css,application/javascript,image/*";
+    }
+    char* temp2 = str_dup(temp, 0, vhost->pool);
+    str_split(temp2, ",", rproxy->cache_types);
+    for (size_t i = 0; i < rproxy->cache_types->count; ++i) {
+        rproxy->cache_types->data[i] = str_trim(rproxy->cache_types->data[i]);
+    }
+
+    temp = getConfigValue(config_node, "scache");
+    rproxy->scacheEnabled = (uint8_t) (temp == NULL ? 1 : str_eq(temp, "true"));
+    if (temp == NULL) {
+        errlog(delog, "No scache at vhost: %s, assuming 'true'", config_node->name);
+    }
+    temp = getConfigValue(config_node, "cache-maxage");
+    if (temp == NULL || !str_isunum(temp)) {
+        errlog(delog, "No cache-maxage at vhost: %s, assuming '604800'", config_node->name);
+        temp = "604800";
+    }
+    rproxy->maxAge = strtoul(temp, NULL, 10);
+    temp = getConfigValue(config_node, "maxSCache");
+    if (temp == NULL || !str_isunum(temp)) {
+        errlog(delog, "No maxSCache at vhost: %s, assuming '0'", config_node->name);
+        temp = "0";
+    }
+    rproxy->cache = cache_new(strtoul(temp, NULL, 10));
+    pchild(vhost->pool, rproxy->cache->pool);
+    temp = getConfigValue(config_node, "enable-gzip");
+    rproxy->enableGzip = (uint8_t) (temp == NULL ? 1 : str_eq(temp, "true"));
+    if (temp == NULL) {
+        errlog(delog, "No enable-gzip at vhost: %s, assuming 'true'", config_node->name);
+    }
+    temp = getConfigValue(config_node, "dynamic-types");
+    if (temp == NULL) {
+        errlog(delog, "No dynamic-types at vhost: %s, assuming 'application/x-php'", config_node->name);
+        temp = "application/x-php";
+    }
+    temp2 = str_dup(temp, 0, vhost->pool);
+    str_split_set(temp2, ",", rproxy->dynamic_types);
+    return 0;
+}
+
+int load_vhost(struct config_node* config_node, struct vhost* vhost) {
+    vhost->id = config_node->name;
+    vhost->hosts = list_new(8, vhost->pool);
+    const char* vht = getConfigValue(config_node, "type");
+    if (str_eq_case(vht, "htdocs")) {
+        vhost->type = VHOST_HTDOCS;
+    } else if (str_eq_case(vht, "reverse-proxy")) {
+        vhost->type = VHOST_RPROXY;
+    } else if (str_eq_case(vht, "redirect")) {
+        vhost->type = VHOST_REDIRECT;
+    } else if (str_eq_case(vht, "mount")) {
+        vhost->type = VHOST_MOUNT;
+    } else {
+        errlog(delog, "Invalid VHost Type: %s", vht);
+        return 1;
+    }
+    char* host_value = str_dup(getConfigValue(config_node, "host"), 0, vhost->pool);
+    str_split(host_value, ",", vhost->hosts);
+    for (size_t i = 0; i < vhost->hosts->count; ++i) {
+        vhost->hosts->data[i] = str_trim(vhost->hosts->data[i]);
+    }
+    const char* ssl_name = getConfigValue(config_node, "ssl");
+    if (ssl_name != NULL) {
+        struct config_node* ssl_node = hashmap_get(cfg->nodesByName, ssl_name);
+        if (ssl_node == NULL || !str_eq_case(ssl_node->category, "ssl")) {
+            errlog(delog, "Invalid SSL node! Node not found! '%s'", ssl_name);
+            goto post_ssl;
+        }
+        const char* cert = getConfigValue(ssl_node, "publicKey");
+        const char* key = getConfigValue(ssl_node, "privateKey");
+        if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
+            errlog(delog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
+            goto post_ssl;
+        }
+        vhost->ssl_cert = loadCert(cert, key, vhost->pool);
+        phook(vhost->pool, SSL_CTX_free, vhost->ssl_cert->ctx);
+    } else {
+        vhost->ssl_cert = NULL;
+    }
+    post_ssl:;
+
+    if (vhost->type == VHOST_HTDOCS && load_vhost_htdocs(config_node, vhost)) {
+        return 1;
+    } else if (vhost->type == VHOST_RPROXY && load_vhost_rproxy(config_node, vhost)) {
+        return 1;
+    } else if (vhost->type == VHOST_REDIRECT) {
+        struct vhost_redirect* redirect = &vhost->sub.redirect;
+        redirect->redir = getConfigValue(config_node, "redirect");
+        if (redirect->redir == NULL) {
+            errlog(delog, "No redirect at vhost: %s", config_node->name);
+            return 1;
+        }
+    } else if (vhost->type == VHOST_MOUNT) {
+        struct vhost_mount* mount = &vhost->sub.mount;
+        mount->mounts = list_new(8, vhost->pool);
+        ITER_MAP(config_node->map) {
+            if (str_prefixes_case(str_key, "/")) {
+                struct mountpoint* point = pmalloc(vhost->pool, sizeof(struct mountpoint));
+                point->path = str_key;
+                point->vhost = value;
+                list_add(mount->mounts, point);
+            }
+        } ITER_MAP_END();
+        const char* keep_prefix = getConfigValue(config_node, "keep-prefix");
+        if (keep_prefix == NULL) {
+            errlog(delog, "No keep-prefix at vhost: %s, assuming 'false'", config_node->name);
+            keep_prefix = "false";
+        }
+        mount->keep_prefix = str_eq(keep_prefix, "true");
+    }
+    return 0;
+}
+
+int load_binding(struct config_node* bind_node, struct server_binding* binding) {
+    const char* bind_mode = getConfigValue(bind_node, "bind-mode");
+    const char* bind_ip = NULL;
+    uint16_t port = 0;
+    const char* bind_file = NULL;
+    int namespace;
+    int bind_all = 0;
+    int use_ipv6 = 0;
+    if (str_eq_case(bind_mode, "tcp")) {
+        binding->binding_type = BINDING_TCP4;
+        bind_ip = getConfigValue(bind_node, "bind-ip");
+        if (bind_ip == NULL || str_eq_case(bind_ip, "0.0.0.0")) {
+            bind_all = 1;
+        }
+        use_ipv6 = bind_all || str_contains_case(bind_ip, ":");
+        if (use_ipv6) {
+            binding->binding_type = BINDING_TCP6;
+        }
+        const char* bind_port = getConfigValue(bind_node, "bind-port");
+        if (bind_port != NULL && !str_isunum(bind_port)) {
+            errlog(delog, "Invalid bind-port for binding: %s", bind_node->name);
+            return 1;
+        }
+        port = (uint16_t) (bind_port == NULL ? 80 : strtoul(bind_port, NULL, 10));
+        namespace = use_ipv6 ? PF_INET6 : PF_INET;
+    } else if (str_eq_case(bind_mode, "unix")) {
+        binding->binding_type = BINDING_UNIX;
+        bind_file = getConfigValue(bind_node, "bind-file");
+        namespace = PF_LOCAL;
+    } else {
+        errlog(delog, "Invalid bind-mode for binding: %s", bind_node->name);
+        return 1;
+    }
+
+    const char* mcc = getConfigValue(bind_node, "max-conn");
+    if (mcc != NULL && !str_isunum(mcc)) {
+        errlog(delog, "Invalid max-conn for binding: %s", bind_node->name);
+        return 1;
+    }
+    binding->conn_limit = (size_t) strtol(mcc, NULL, 10);
+
+    int server_fd = socket(namespace, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        errlog(delog, "Error creating socket for binding: %s, %s", bind_node->name, strerror(errno));
+        return 1;
+    }
+    phook(binding->pool, close_hook, (void*) server_fd);
+    int one = 1;
+    int zero = 0;
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one)) == -1) {
+        errlog(delog, "Error setting SO_REUSEADDR for binding: %s, %s", bind_node->name, strerror(errno));
+        return 1;
+    }
+    sock: ;
+
+    if (binding->binding_type == BINDING_TCP6) {
+        if (setsockopt(server_fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &zero, sizeof(zero)) == -1) {
+            errlog(delog, "Error unsetting IPV6_V6ONLY for binding: %s, %s", bind_node->name, strerror(errno));
+            return 1;
+        }
+        binding->binding.tcp6.sin6_flowinfo = 0;
+        binding->binding.tcp6.sin6_scope_id = 0;
+        binding->binding.tcp6.sin6_family = AF_INET6;
+        if (bind_all) binding->binding.tcp6.sin6_addr = in6addr_any;
+        else if (!inet_pton(AF_INET6, bind_ip, &(binding->binding.tcp6.sin6_addr))) {
+            errlog(delog, "Error binding socket for binding: %s, invalid bind-ip", bind_node->name);
+            return 1;
+        }
+        binding->binding.tcp6.sin6_port = htons(port);
+        if (bind(server_fd, (struct sockaddr *) &binding->binding.tcp6, sizeof(binding->binding.tcp6))) {
+            if (bind_all) {
+                binding->binding_type = BINDING_TCP4;
+                goto sock;
+            }
+            errlog(delog, "Error binding socket for binding: %s, %s", bind_node->name, strerror(errno));
+            return 1;
+        }
+    } else if (binding->binding_type == BINDING_TCP4) {
+        binding->binding.tcp4.sin_family = AF_INET;
+        if (bind_all) binding->binding.tcp4.sin_addr.s_addr = INADDR_ANY;
+        else if (!inet_aton(bind_ip, &(binding->binding.tcp4.sin_addr))) {
+            errlog(delog, "Error binding socket for binding: %s, invalid bind-ip", bind_node->name);
+            return 1;
+        }
+        binding->binding.tcp4.sin_port = htons(port);
+        if (bind(server_fd, (struct sockaddr*) &binding->binding.tcp4, sizeof(binding->binding.tcp4))) {
+            errlog(delog, "Error binding socket for binding: %s, %s", bind_node->name, strerror(errno));
+            return 1;
+        }
+    } else if (namespace == PF_LOCAL) {
+        strncpy(binding->binding.un.sun_path, bind_file, 108);
+        if (bind(server_fd, (struct sockaddr*) &binding->binding.un, sizeof(binding->binding.un))) {
+            errlog(delog, "Error binding socket for binding: %s, %s", bind_node->name, strerror(errno));
+            return 1;
+        }
+    } else {
+        errlog(delog, "Invalid family for binding: %s", bind_node->name);
+        return 1;
+    }
+    if (listen(server_fd, 50)) {
+        errlog(delog, "Error listening on socket for binding: %s, %s", bind_node->name, strerror(errno));
+        return 1;
+    }
+    if (fcntl(server_fd, F_SETFL, fcntl(server_fd, F_GETFL) | O_NONBLOCK) < 0) {
+        errlog(delog, "Error setting non-blocking for binding: %s, %s", bind_node->name, strerror(errno));
+        return 1;
+    }
+    binding->fd = server_fd;
+
+    binding->mode = 0;
+
+    const char* protocol = getConfigValue(bind_node, "protocol");
+    if (protocol == NULL || str_eq_case(protocol, "http/1.1")) {
+        binding->mode |= BINDING_MODE_HTTP2_UPGRADABLE;
+    } else if (str_eq_case(protocol, "http/2.0")) {
+        binding->mode |= BINDING_MODE_HTTP2_ONLY;
+    } else {
+        errlog(delog, "Invalid protocol for binding: %s, %s", bind_node->name, strerror(errno));
+        return 1;
+    }
+
+    const char* ssl_name = getConfigValue(bind_node, "ssl");
+    if (ssl_name != NULL) {
+        struct config_node* ssl_node = hashmap_get(cfg->nodesByName, ssl_name);
+        if (ssl_node == NULL || !str_eq_case(ssl_node->category, "ssl")) {
+            errlog(delog, "Invalid SSL node! Node not found! '%s'", ssl_name);
+            goto post_ssl;
+        }
+        const char* cert = getConfigValue(ssl_node, "publicKey");
+        const char* key = getConfigValue(ssl_node, "privateKey");
+        if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
+            errlog(delog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
+            goto post_ssl;
+        }
+        binding->ssl_cert = loadCert(cert, key, binding->pool);
+        phook(binding->pool, SSL_CTX_free, binding->ssl_cert->ctx);
+        binding->mode |= BINDING_MODE_HTTPS;
+    } else {
+        binding->ssl_cert = NULL;
+        binding->mode |= BINDING_MODE_PLAINTEXT;
+    }
+    post_ssl:;
+    return 0;
+}
 
 int main(int argc, char* argv[]) {
 	signal(SIGPIPE, SIG_IGN);
-	if (getuid() != 0 || getgid() != 0) {
+#ifndef DEBUG
+    if (getuid() != 0 || getgid() != 0) {
 		printf("Must run as root!\n");
 		return 1;
 	}
-	printf("Loading Avuna %s %s\n", DAEMON_NAME, VERSION);
+#endif
+    global_pool = mempool_new();
+    printf("Loading Avuna %s %s\n", DAEMON_NAME, VERSION);
 #ifdef DEBUG
 	printf("Running in Debug mode!\n");
 #endif
@@ -50,9 +523,8 @@ int main(int argc, char* argv[]) {
 	if (argc == 1) {
 		memcpy(cwd, "/etc/avuna/", 11);
 		cwd[11] = 0;
-		char* dn = (char*) xcopy(DAEMON_NAME, strlen(DAEMON_NAME) + 1, 0);
-		strcat(cwd, toLowerCase(dn));
-		xfree(dn);
+		char* dn = (char*) xcopy(DAEMON_NAME, strlen(DAEMON_NAME) + 1, 0, global_pool);
+		strcat(cwd, str_tolower(dn));
 	} else {
 		size_t l = strlen(argv[1]);
 		if (argv[1][l - 1] == '/') argv[1][--l] = 0;
@@ -70,13 +542,13 @@ int main(int argc, char* argv[]) {
 		printf("Error loading Config<%s>: %s\n", cwd, errno == EINVAL ? "File doesn't exist!" : strerror(errno));
 		return 1;
 	}
-	struct cnode* dm = getUniqueByCat(cfg, CAT_DAEMON);
+	struct config_node* dm = getUniqueByCat(cfg, "daemon");
 	if (dm == NULL) {
 		printf("[daemon] block does not exist in %s!\n", cwd);
 		return 1;
 	}
-	int runn = 0;
-	pid_t pid = 0;
+#ifndef DEBUG
+    pid_t pid = 0;
 	const char* pid_file = getConfigValue(dm, "pid-file");
 	if (!access(pid_file, F_OK)) {
 		int pidfd = open(pid_file, O_RDONLY);
@@ -86,18 +558,16 @@ int main(int argc, char* argv[]) {
 		}
 		char pidr[16];
 		if (readLine(pidfd, pidr, 16) >= 1) {
-			pid = atol(pidr);
+			pid = strtol(pidr, NULL, 10);
 			int k = kill(pid, 0);
 			if (k == 0) {
-				runn = 1;
-			}
+            }
 		} else {
 			printf("Failed to read PID file! %s\n", strerror(errno));
 			return 1;
 		}
 		close(pidfd);
 	}
-#ifndef DEBUG
 	if (runn) {
 		printf("Already running! PID = %i\n", pid);
 		exit(0);
@@ -129,14 +599,15 @@ int main(int argc, char* argv[]) {
 #else
 	printf("Daemonized! PID = %i\n", getpid());
 #endif
-	delog = xmalloc(sizeof(struct logsess));
+	delog = pmalloc(global_pool, sizeof(struct logsess));
 	delog->pi = 0;
 	delog->access_fd = NULL;
 	const char* el = getConfigValue(dm, "error-log");
 	delog->error_fd = el == NULL ? NULL : fopen(el, "a"); // fopen will return NULL on error, which works.
-	int pfpl = strlen(pid_file);
-	char* pfp = xcopy(pid_file, pfpl + 1, 0);
-	for (int i = pfpl - 1; i--; i >= 0) {
+#ifndef DEBUG
+	size_t pfpl = strlen(pid_file);
+	char* pfp = xcopy(pid_file, pfpl + 1, 0, global_pool);
+	for (ssize_t i = pfpl - 1; i--; i >= 0) {
 		if (pfp[i] == '/') {
 			pfp[i] = 0;
 			break;
@@ -146,25 +617,6 @@ int main(int argc, char* argv[]) {
 		errlog(delog, "Error making directories for PID file: %s.", strerror(errno));
 		return 1;
 	}
-	const char* rlt = getConfigValue(dm, "fd-limit");
-	if(rlt == NULL) {
-		errlog(delog, "No fd-limit in daemon config! Assuming 1024.");	
-	}
-	int fd_lim = rlt == NULL ? 1024 : atoi(rlt);
-	struct rlimit rlx;
-	rlx.rlim_cur = fd_lim;
-	rlx.rlim_max = fd_lim;
-	if(setrlimit(RLIMIT_NOFILE, &rlx) == -1) printf("Error setting resource limit: %s\n", strerror(errno));
-	const char* mtf = getConfigValue(dm, "mime-types");
-	if (mtf == NULL) {
-		errlog(delog, "No mime-types in daemon config!");
-		return 1;
-	}
-	if (access(mtf, R_OK) || loadMimes(mtf)) {
-		errlog(delog, "Cannot read or mime-types file does not exist: %s", mtf);
-		return 1;
-	}
-//TODO: chown group to de-escalated
 	FILE *pfd = fopen(pid_file, "w");
 	if (pfd == NULL) {
 		errlog(delog, "Error writing PID file: %s.", strerror(errno));
@@ -178,729 +630,206 @@ int main(int argc, char* argv[]) {
 		errlog(delog, "Error writing PID file: %s.", strerror(errno));
 		return 1;
 	}
+#endif
+	const char* rlt = getConfigValue(dm, "fd-limit");
+	if(rlt == NULL) {
+		errlog(delog, "No fd-limit in daemon config! Assuming 1024.");	
+	}
+	size_t fd_lim = rlt == NULL ? 1024 : strtoul(rlt, NULL, 10);
+	struct rlimit rlx;
+	rlx.rlim_cur = fd_lim;
+	rlx.rlim_max = fd_lim;
+	if(setrlimit(RLIMIT_NOFILE, &rlx) == -1) printf("Error setting resource limit: %s\n", strerror(errno));
+	const char* mtf = getConfigValue(dm, "mime-types");
+	if (mtf == NULL) {
+		errlog(delog, "No mime-types in daemon config!");
+		return 1;
+	}
+	if (access(mtf, R_OK) || loadMimes(mtf)) {
+		errlog(delog, "Cannot read or mime-types file does not exist: %s", mtf);
+		return 1;
+	}
 	(void) SSL_library_init();
 	OpenSSL_add_all_algorithms();
 	SSL_load_error_strings();
 	OPENSSL_config (NULL);
-	int servsl;
-	struct cnode** servs = getCatsByCat(cfg, CAT_SERVER, &servsl);
-	int sr = 0;
-	struct accept_param* aps[servsl];
-	for (int i = 0; i < servsl; i++) {
-		struct cnode* serv = servs[i];
-		const char* bind_mode = getConfigValue(serv, "bind-mode");
-		const char* bind_ip = NULL;
-		int port = -1;
-		const char* bind_file = NULL;
-		int namespace = -1;
-		int ba = 0;
-		int ip6 = 0;
-		if (streq(bind_mode, "tcp")) {
-			bind_ip = getConfigValue(serv, "bind-ip");
-			if (streq(bind_ip, "0.0.0.0")) {
-				ba = 1;
-			}
-			ip6 = ba || contains(bind_ip, ":");
-			const char* bind_port = getConfigValue(serv, "bind-port");
-			if (!strisunum(bind_port)) {
-				if (serv->id != NULL) errlog(delog, "Invalid bind-port for server: %s", serv->id);
-				else errlog(delog, "Invalid bind-port for server.");
-				continue;
-			}
-			port = atoi(bind_port);
-			namespace = ip6 ? PF_INET6 : PF_INET;;
-		} else if (streq(bind_mode, "unix")) {
-			bind_file = getConfigValue(serv, "bind-file");
-			namespace = PF_LOCAL;
-		} else {
-			if (serv->id != NULL) errlog(delog, "Invalid bind-mode for server: %s", serv->id);
-			else errlog(delog, "Invalid bind-mode for server.");
+
+	struct hashmap* binding_map = hashmap_new(16, global_pool);
+
+    struct list* binding_list = hashmap_get(cfg->nodeListsByCat, "binding");
+    for (int i = 0; i < binding_list->count; i++) {
+        struct config_node* bind_node = binding_list->data[i];
+        if (bind_node->name == NULL) {
+            errlog(delog, "All bind nodes must have names, skipping node.");
+            continue;
+        }
+        struct mempool* pool = mempool_new();
+        struct server_binding* binding = pmalloc(pool, sizeof(struct server_binding));
+        binding->pool = pool;
+
+        if (load_binding(bind_node, binding)) {
+            pfree(binding->pool);
+        } else {
+            hashmap_put(binding_map, bind_node->name, binding);
+        }
+    }
+
+    struct hashmap* vhost_map = hashmap_new(16, global_pool);
+
+    struct list* vhost_list = hashmap_get(cfg->nodeListsByCat, "vhost");
+    for (int i = 0; i < vhost_list->count; i++) {
+        struct config_node *vhost_node = vhost_list->data[i];
+        if (vhost_node->name == NULL) {
+            errlog(delog, "All vhost nodes must have names, skipping node.");
+            continue;
+        }
+
+        struct mempool* pool = mempool_new();
+        struct vhost* vhost = pmalloc(pool, sizeof(struct vhost));
+        vhost->pool = pool;
+        if(load_vhost(vhost_node, vhost)) {
+            pfree(pool);
+        } else {
+            hashmap_put(vhost_map, vhost_node->name, vhost);
+        }
+    }
+
+    struct list* server_list = hashmap_get(cfg->nodeListsByCat, "server");
+
+	struct list* server_infos = list_new(8, global_pool);
+
+	for (size_t i = 0; i < server_list->count; i++) {
+		struct config_node* serv = server_list->data[i];
+        if (serv->name == NULL) {
+            errlog(delog, "All server nodes must have names, skipping node.");
+            continue;
+        }
+        struct mempool* pool = mempool_new();
+        struct server_info* info = pmalloc(pool, sizeof(struct server_info));
+        info->id = serv->name;
+        info->pool = pool;
+        info->bindings = list_new(8, info->pool);
+        info->vhosts = list_new(16, info->pool);
+        info->prepared_connections = queue_new(0, 1, info->pool);
+        list_add(server_infos, info);
+        const char* bindings = getConfigValue(serv, "bindings");
+        struct list* binding_names = list_new(8, info->pool);
+        char bindings_dup[strlen(bindings) + 1];
+        strcpy(bindings_dup, bindings);
+        str_split(bindings_dup, ",", binding_names);
+
+        for (size_t j = 0; j < binding_names->count; ++j) {
+            char* name_trimmed = str_trim(binding_names->data[j]);
+            struct server_binding* data = hashmap_get(binding_map, name_trimmed);
+            if (data == NULL) {
+                errlog(delog, "Invalid binding name for server: %s, %s", serv->name, name_trimmed);
+                continue;
+            }
+            list_add(info->bindings, data);
+        }
+
+        const char* vhosts = getConfigValue(serv, "vhosts");
+        struct list* vhost_names = list_new(8, info->pool);
+        char vhosts_dup[strlen(vhosts) + 1];
+        strcpy(vhosts_dup, vhosts);
+        str_split(vhosts_dup, ",", vhost_names);
+
+        for (size_t j = 0; j < vhost_names->count; ++j) {
+            char* name_trimmed = str_trim(vhost_names->data[j]);
+            struct vhost* data = hashmap_get(vhost_map, name_trimmed);
+            if (data == NULL) {
+                errlog(delog, "Invalid vhost name for server: %s, %s", serv->name, name_trimmed);
+                continue;
+            }
+            list_add(info->vhosts, data);
+        }
+
+        const char* tcc = getConfigValue(serv, "threads");
+		if (!str_isunum(tcc)) {
+			errlog(delog, "Invalid threads for server: %s", serv->name);
 			continue;
 		}
-		const char* tcc = getConfigValue(serv, "threads");
-		if (!strisunum(tcc)) {
-			if (serv->id != NULL) errlog(delog, "Invalid threads for server: %s", serv->id);
-			else errlog(delog, "Invalid threads for server.");
+		ssize_t tc = strtoul(tcc, NULL, 10);
+		if (tc < 1 || tc > 128) {
+			errlog(delog, "Invalid threads for server: %s, must be greater than 1 and less than 128.\n", serv->name);
 			continue;
 		}
-		int tc = atoi(tcc);
-		if (tc < 1) {
-			if (serv->id != NULL) errlog(delog, "Invalid threads for server: %s, must be greater than 1.\n", serv->id);
-			else errlog(delog, "Invalid threads for server, must be greater than 1.\n");
-			continue;
-		}
-		const char* mcc = getConfigValue(serv, "max-conn");
-		if (!strisunum(mcc)) {
-			if (serv->id != NULL) errlog(delog, "Invalid max-conn for server: %s", serv->id);
-			else errlog(delog, "Invalid max-conn for server.");
-			continue;
-		}
-		int mc = atoi(mcc);
-		const char* mpc = getConfigValue(serv, "max-post");
-		if (!strisunum(mpc)) {
-			if (serv->id != NULL) errlog(delog, "Invalid max-post for server: %s", serv->id);
-			else errlog(delog, "Invalid max-post for server.");
-			continue;
-		}
-		long int mp = atol(mpc);
-		sock: ;
-		int sfd = socket(namespace, SOCK_STREAM, 0);
-		if (sfd < 0) {
-			if (serv->id != NULL) errlog(delog, "Error creating socket for server: %s, %s", serv->id, strerror(errno));
-			else errlog(delog, "Error creating socket for server, %s", strerror(errno));
-			continue;
-		}
-		int one = 1;
-		int zero = 0;
-		if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one)) == -1) {
-			if (serv->id != NULL) errlog(delog, "Error setting SO_REUSEADDR for server: %s, %s", serv->id, strerror(errno));
-			else errlog(delog, "Error setting SO_REUSEADDR for server, %s", strerror(errno));
-			close (sfd);
-			continue;
-		}
-		if (namespace == PF_INET || namespace == PF_INET6) {
-			if (ip6) {
-				if (setsockopt(sfd, IPPROTO_IPV6, IPV6_V6ONLY, (void*) &zero, sizeof(zero)) == -1) {
-					if (serv->id != NULL) errlog(delog, "Error unsetting IPV6_V6ONLY for server: %s, %s", serv->id, strerror(errno));
-					else errlog(delog, "Error unsetting IPV6_V6ONLY for server, %s", strerror(errno));
-					close (sfd);
-					continue;
-				}
-				struct sockaddr_in6 bip;
-				bip.sin6_flowinfo = 0;
-				bip.sin6_scope_id = 0;
-				bip.sin6_family = AF_INET6;
-				if (ba) bip.sin6_addr = in6addr_any;
-				else if (!inet_pton(AF_INET6, bind_ip, &(bip.sin6_addr))) {
-					close (sfd);
-					if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, invalid bind-ip", serv->id);
-					else errlog(delog, "Error binding socket for server, invalid bind-ip");
-					continue;
-				}
-				bip.sin6_port = htons(port);
-				if (bind(sfd, (struct sockaddr*) &bip, sizeof(bip))) {
-					close (sfd);
-					if (ba) {
-						namespace = PF_INET;
-						ip6 = 0;
-						goto sock;
-					}
-					if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, %s", serv->id, strerror(errno));
-					else errlog(delog, "Error binding socket for server, %s\n", strerror(errno));
-					continue;
-				}
-			} else {
-				struct sockaddr_in bip;
-				bip.sin_family = AF_INET;
-				if (!inet_aton(bind_ip, &(bip.sin_addr))) {
-					close (sfd);
-					if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, invalid bind-ip", serv->id);
-					else errlog(delog, "Error binding socket for server, invalid bind-ip");
-					continue;
-				}
-				bip.sin_port = htons(port);
-				if (bind(sfd, (struct sockaddr*) &bip, sizeof(bip))) {
-					if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, %s", serv->id, strerror(errno));
-					else errlog(delog, "Error binding socket for server, %s\n", strerror(errno));
-					close (sfd);
-					continue;
-				}
-			}
-		} else if (namespace == PF_LOCAL) {
-			struct sockaddr_un uip;
-			strncpy(uip.sun_path, bind_file, 108);
-			if (bind(sfd, (struct sockaddr*) &uip, sizeof(uip))) {
-				if (serv->id != NULL) errlog(delog, "Error binding socket for server: %s, %s", serv->id, strerror(errno));
-				else errlog(delog, "Error binding socket for server, %s", strerror(errno));
-				close (sfd);
-				continue;
-			}
-		} else {
-			if (serv->id != NULL) errlog(delog, "Invalid family for server: %s", serv->id);
-			else errlog(delog, "Invalid family for server");
-			close (sfd);
-			continue;
-		}
-		if (listen(sfd, 50)) {
-			if (serv->id != NULL) errlog(delog, "Error listening on socket for server: %s, %s", serv->id, strerror(errno));
-			else errlog(delog, "Error listening on socket for server, %s", strerror(errno));
-			close (sfd);
-			continue;
-		}
-		if (fcntl(sfd, F_SETFL, fcntl(sfd, F_GETFL) | O_NONBLOCK) < 0) {
-			if (serv->id != NULL) errlog(delog, "Error setting non-blocking for server: %s, %s", serv->id, strerror(errno));
-			else errlog(delog, "Error setting non-blocking for server, %s", strerror(errno));
-			close (sfd);
-			continue;
-		}
-		struct logsess* slog = xmalloc(sizeof(struct logsess));
+		info->max_worker_count = (uint16_t) tc;
+        char* maxPostStr = getConfigValue(serv, "max-post");
+        if (maxPostStr == NULL || !str_isunum(maxPostStr)) {
+            errlog(delog, "No max-post at server: %s, assuming '0'", serv->name);
+            maxPostStr = "0";
+        }
+        info->max_post = strtoul(maxPostStr, NULL, 10);
+
+		struct logsess* slog = pmalloc(info->pool, sizeof(struct logsess));
 		slog->pi = 0;
 		const char* lal = getConfigValue(serv, "access-log");
 		slog->access_fd = lal == NULL ? NULL : fopen(lal, "a");
 		const char* lel = getConfigValue(serv, "error-log");
 		slog->error_fd = lel == NULL ? NULL : fopen(lel, "a");
-		const char* sssl = getConfigValue(serv, "ssl");
-		if (serv->id != NULL) acclog(slog, "Server %s listening for connections!", serv->id);
-		else acclog(slog, "Server listening for connections!");
-		struct accept_param* ap = xmalloc(sizeof(struct accept_param));
-		if (sssl != NULL) {
-			struct cnode* ssln = getCatByID(cfg, sssl);
-			if (ssln == NULL) {
-				errlog(slog, "Invalid SSL node! Node not found!");
-				goto pssl;
-			}
-			const char* cert = getConfigValue(ssln, "publicKey");
-			const char* key = getConfigValue(ssln, "privateKey");
-			if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
-				errlog(slog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
-				goto pssl;
-			}
-			ap->cert = loadCert(cert, key);
-		} else {
-			ap->cert = NULL;
-		}
-		pssl: ap->port = port;
-		ap->server_fd = sfd;
-		ap->config = serv;
-		ap->works_count = tc;
-		ap->logsess = slog;
-		int vhc = 0;
-		struct vhost** vohs = NULL;
-		char* ovh = xstrdup(getConfigValue(serv, "vhosts"), 0);
-		char* oovh = ovh;
-		char* np = NULL;
-		while ((np = strchr(ovh, ',')) != NULL || strlen(ovh) > 0) {
-			if (np != NULL) {
-				np[0] = 0;
-				np++;
-			}
-			ovh = trim(ovh);
-			struct cnode* vcn = getCatByID(cfg, ovh);
-			if (vcn == NULL) {
-				errlog(slog, "Could not find VHost: %s", ovh);
-				goto cont_vh;
-			}
-			vhc++;
-			if (vohs == NULL) {
-				vohs = xmalloc(sizeof(struct vhost*));
-			} else {
-				vohs = xrealloc(vohs, sizeof(struct vhost*) * vhc);
-			}
-			vohs[vhc - 1] = xmalloc(sizeof(struct vhost));
-			struct vhost* cv = vohs[vhc - 1];
-			cv->id = vcn->id;
-			cv->hosts = NULL;
-			const char* vht = getConfigValue(vcn, "type");
-			if (streq(vht, "htdocs")) {
-				cv->type = VHOST_HTDOCS;
-			} else if (streq(vht, "reverse-proxy")) {
-				cv->type = VHOST_RPROXY;
-			} else if (streq(vht, "redirect")) {
-				cv->type = VHOST_REDIRECT;
-			} else if (streq(vht, "mount")) {
-				cv->type = VHOST_MOUNT;
-			} else {
-				errlog(slog, "Invalid VHost Type: %s", vht);
-				xfree(cv);
-				vohs[vhc - 1] = NULL;
-				vhc--;
-				goto cont_vh;
-			}
-			char* hnv = xstrdup(getConfigValue(vcn, "host"), 0);
-			char* nph = NULL;
-			while ((nph = strchr(hnv, ',')) != NULL || strlen(hnv) > 0) {
-				if (nph != NULL) {
-					nph[0] = 0;
-					nph++;
-				}
-				hnv = trim(hnv);
-				if (streq(hnv, "*")) {
-					cv->host_count = 0;
-					free(hnv);
-					break;
-				}
-				if (cv->hosts == NULL) {
-					cv->hosts = xmalloc(sizeof(char*));
-					cv->host_count = 1;
-				} else {
-					cv->hosts = xrealloc(cv->hosts, sizeof(char*) * ++cv->host_count);
-				}
-				cv->hosts[cv->host_count - 1] = hnv;
-				hnv = nph == NULL ? hnv + strlen(hnv) : nph;
-			}
-			sssl = getConfigValue(vcn, "ssl");
-			if (sssl != NULL) {
-				struct cnode* ssln = getCatByID(cfg, sssl);
-				if (ssln == NULL) {
-					errlog(slog, "Invalid SSL node! Node not found!");
-					goto pssl;
-				}
-				const char* cert = getConfigValue(ssln, "publicKey");
-				const char* key = getConfigValue(ssln, "privateKey");
-				if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
-					errlog(slog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
-					goto pssl;
-				}
-				cv->cert = loadCert(cert, key);
-				if (ap->cert == NULL) ap->cert = dummyCert();
-			} else {
-				cv->cert = NULL;
-			}
-			if (cv->type == VHOST_HTDOCS) {
-				struct vhost_htdocs* vhb = &cv->sub.htdocs;
-				vhb->index = NULL;
-				vhb->errpages = NULL;
-				vhb->enableGzip = 1;
-				vhb->cacheTypes = NULL;
-				vhb->cacheType_count = 0;
-				vhb->maxAge = 604800;
-				vhb->cache.scache_size = 0;
-				vhb->cache.scaches = NULL;
-				if (pthread_rwlock_init(&vhb->cache.scachelock, NULL)) {
-					errlog(slog, "Error initializing scachelock! %s", strerror(errno));
-				}
-				vhb->htdocs = getConfigValue(vcn, "htdocs");
-				if (vhb->htdocs == NULL) {
-					errlog(slog, "No htdocs at vhost: %s, assuming default", vcn->id);
-					vhb->htdocs = "/var/www/html/";
-				}
-				vhb->htdocs = realpath(vhb->htdocs, NULL);
-				if (vhb->htdocs == NULL) {
-					recur_mkdir("/var/www/html/", 0750);
-					vhb->htdocs = "/var/www/html/";
-					vhb->htdocs = realpath(vhb->htdocs, NULL);
-				}
-				if (vhb->htdocs == NULL) {
-					errlog(slog, "No htdocs at vhost %s, or does not exist and cannot be created.", vcn->id);
-					xfree(cv);
-					vohs = xrealloc(vohs, sizeof(struct vhost*) * --vhc);
-					goto cont_vh;
-				}
-				size_t htl = strlen(vhb->htdocs);
-				if (vhb->htdocs[htl - 1] != '/') {
-					vhb->htdocs = xrealloc(vhb->htdocs, ++htl + 1);
-					vhb->htdocs[htl - 1] = '/';
-					vhb->htdocs[htl] = 0;
-				}
-				recur_mkdir(vhb->htdocs, 0750);
-				const char* nhl = getConfigValue(vcn, "nohardlinks");
-				vhb->nohardlinks = nhl == NULL ? 1 : streq_nocase(nhl, "true");
-				if (nhl == NULL) {
-					errlog(slog, "No nohardlinks at vhost: %s, assuming default", vcn->id);
-				}
-				nhl = getConfigValue(vcn, "symlock");
-				vhb->symlock = nhl == NULL ? 1 : streq_nocase(nhl, "true");
-				if (nhl == NULL) {
-					errlog(slog, "No symlock at vhost: %s, assuming default", vcn->id);
-				}
-				nhl = getConfigValue(vcn, "scache");
-				vhb->scacheEnabled = nhl == NULL ? 1 : streq_nocase(nhl, "true");
-				if (nhl == NULL) {
-					errlog(slog, "No scache at vhost: %s, assuming default", vcn->id);
-				}
-				nhl = getConfigValue(vcn, "cache-maxage");
-				if (nhl == NULL || !strisunum(nhl)) {
-					errlog(slog, "No cache-maxage at vhost: %s, assuming default", vcn->id);
-					nhl = "604800";
-				}
-				vhb->maxAge = atol(nhl);
-				nhl = getConfigValue(vcn, "maxSCache");
-				if (nhl == NULL || !strisunum(nhl)) {
-					errlog(slog, "No maxSCache at vhost: %s, assuming default", vcn->id);
-					nhl = "0";
-				}
-				vhb->maxCache = atol(nhl);
-				nhl = getConfigValue(vcn, "enable-gzip");
-				vhb->enableGzip = nhl == NULL ? 1 : streq_nocase(nhl, "true");
-				if (nhl == NULL) {
-					errlog(slog, "No enable-gzip at vhost: %s, assuming default", vcn->id);
-				}
-				const char* ic = getConfigValue(vcn, "index");
-				if (ic == NULL) {
-					errlog(slog, "No index at vhost: %s, assuming default", vcn->id);
-					ic = "index.php, index.html, index.htm";
-				}
-				char* ivh = xstrdup(ic, 0);
-				char* npi = NULL;
-				while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
-					if (npi != NULL) {
-						npi[0] = 0;
-						npi++;
-					}
-					ivh = trim(ivh);
-					if (vhb->index == NULL) {
-						vhb->index = xmalloc(sizeof(char*));
-						vhb->index_count = 1;
-					} else {
-						vhb->index = xrealloc(vhb->index, sizeof(char*) * ++vhb->index_count);
-					}
-					vhb->index[vhb->index_count - 1] = ivh;
-					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
-				}
-				ic = getConfigValue(vcn, "cache-types");
-				if (ic == NULL) {
-					errlog(slog, "No cache-types at vhost: %s, assuming default", vcn->id);
-					ic = "text/css,application/javascript,image/*";
-				}
-				ivh = xstrdup(ic, 0);
-				while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
-					if (npi != NULL) {
-						npi[0] = 0;
-						npi++;
-					}
-					ivh = trim(ivh);
-					if (vhb->cacheTypes == NULL) {
-						vhb->cacheTypes = xmalloc(sizeof(char*));
-						vhb->cacheType_count = 1;
-					} else {
-						vhb->cacheTypes = xrealloc(vhb->cacheTypes, sizeof(char*) * ++vhb->cacheType_count);
-					}
-					vhb->cacheTypes[vhb->cacheType_count - 1] = ivh;
-					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
-				}
-				vhb->errpage_count = 0;
-				vhb->errpages = NULL;
-				for (int i = 0; i < vcn->entries; i++) {
-					if (startsWith_nocase(vcn->keys[i], "error-")) {
-						const char* en = vcn->keys[i] + 6;
-						if (!strisunum(en)) {
-							errlog(slog, "Invalid error page specifier at vhost: %s", vcn->id);
-							continue;
-						}
-						struct errpage* ep = xmalloc(sizeof(struct errpage));
-						ep->code = strtol(en, NULL, 10);
-						ep->page = vcn->values[i];
-						if (vhb->errpages == NULL) {
-							vhb->errpages = xmalloc(sizeof(struct errpage*));
-							vhb->errpage_count = 1;
-						} else {
-							vhb->errpages = xrealloc(vhb->errpages, sizeof(struct errpage*) * ++vhb->errpage_count);
-						}
-						vhb->errpages[vhb->errpage_count - 1] = ep;
-					}
-				}
-				vhb->fcgis = NULL;
-				vhb->fcgi_count = 0;
-				ic = getConfigValue(vcn, "fcgis");
-				if (ic != NULL) {
-					ivh = xstrdup(ic, 0);
-					while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
-						if (npi != NULL) {
-							npi[0] = 0;
-							npi++;
-						}
-						ivh = trim(ivh);
-						struct cnode* fcgin = getCatByID(cfg, ivh);
-						if (fcgin == NULL) {
-							errlog(slog, "Could not find FCGI entry %s at vhost: %s", ivh, vcn->id);
-							goto icc;
-						}
-						const char* fmode = getConfigValue(fcgin, "mode");
-						struct fcgi* fcgi = xmalloc(sizeof(struct fcgi));
-						fcgi->mimes = NULL;
-						fcgi->gc = 0;
-						if (streq_nocase(fmode, "tcp")) {
-							fcgi->addrlen = sizeof(struct sockaddr_in);
-							struct sockaddr_in* ina = xmalloc(sizeof(struct sockaddr_in));
-							fcgi->addr = ina;
-							ina->sin_family = AF_INET;
-							const char* fip = getConfigValue(fcgin, "ip");
-							const char* fport = getConfigValue(fcgin, "port");
-							if (fip == NULL || !inet_aton(fip, &ina->sin_addr)) {
-								errlog(slog, "Invalid IP for FCGI node %s at vhost: %s", ivh, vcn->id);
-								xfree(fcgi);
-								xfree(ina);
-								goto icc;
-							}
-							if (fport == NULL || !strisunum(fport)) {
-								errlog(slog, "Invalid Port for FCGI node %s at vhost: %s", ivh, vcn->id);
-								xfree(fcgi);
-								xfree(ina);
-								goto icc;
-							}
-							ina->sin_port = htons(atoi(fport));
-						} else if (streq_nocase(fmode, "unix")) {
-							fcgi->addrlen = sizeof(struct sockaddr_un);
-							struct sockaddr_un* ina = xmalloc(sizeof(struct sockaddr_un));
-							fcgi->addr = ina;
-							ina->sun_family = AF_LOCAL;
-							const char* ffile = getConfigValue(fcgin, "file");
-							if (ffile == NULL || strlen(ffile) >= 107) {
-								errlog(slog, "Invalid Unix Socket for FCGI node %s at vhost: %s", ivh, vcn->id);
-								xfree(fcgi);
-								xfree(ina);
-								goto icc;
-							}
-							memcpy(ina->sun_path, ffile, strlen(ffile) + 1);
-						} else {
-							errlog(slog, "Invalid mode for FCGI node %s at vhost: %s", ivh, vcn->id);
-							xfree(fcgi);
-							goto icc;
-						}
-						const char* ic2 = getConfigValue(fcgin, "mime-types");
-						if (ic2 != NULL) {
-							char* ivh2 = xstrdup(ic2, 0);
-							char* npi2 = NULL;
-							while ((npi2 = strchr(ivh2, ',')) != NULL || strlen(ivh2) > 0) {
-								if (npi2 != NULL) {
-									npi2[0] = 0;
-									npi2++;
-								}
-								ivh2 = trim(ivh2);
-								if (fcgi->mimes == NULL) {
-									fcgi->mimes = xmalloc(sizeof(char*));
-									fcgi->mime_count = 1;
-								} else {
-									fcgi->mimes = xrealloc(fcgi->mimes, sizeof(char*) * ++fcgi->mime_count);
-								}
-								fcgi->mimes[fcgi->mime_count - 1] = ivh2;
-								ivh2 = npi2 == NULL ? ivh2 + strlen(ivh2) : npi2;
-							}
-						}
-						if (vhb->fcgis == NULL) {
-							vhb->fcgis = xmalloc(sizeof(struct fcgi*));
-							vhb->fcgi_count = 1;
-						} else {
-							vhb->fcgis = xrealloc(vhb->fcgis, sizeof(struct fcgi*) * ++vhb->fcgi_count);
-						}
-						vhb->fcgis[vhb->fcgi_count - 1] = fcgi;
-						icc: ivh = npi == NULL ? ivh + strlen(ivh) : npi;
-					}
-				}
-				vhb->fcgifds = xmalloc(sizeof(int*) * tc);
-				for (int i = 0; i < tc; i++) {
-					vhb->fcgifds[i] = xmalloc(sizeof(int) * vhb->fcgi_count);
-					for (int f = 0; f < vhb->fcgi_count; f++) {
-						struct fcgi* fcgi = vhb->fcgis[f];
-						/*int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
-						 if (fd < 0) {
-						 errlog(slog, "Error creating socket for FCGI Server! %s", strerror(errno));
-						 vhb->fcgifds[i][f] = -1;
-						 continue;
-						 }
-						 if (connect(fd, fcgi->addr, fcgi->addrlen)) {
-						 errlog(slog, "Error connecting socket to FCGI Server! %s", strerror(errno));
-						 vhb->fcgifds[i][f] = -1;
-						 close(fd);
-						 continue;
-						 }*/
-						vhb->fcgifds[i][f] = -1;
-						//TODO: perhaps it is worth getting FCGI_MAX_CONNS, FCGI_MAX_REQS, most impls do not multiplex, so we won't bother
-					}
-				}
-			} else if (cv->type == VHOST_RPROXY) {
-				struct vhost_rproxy* vhb = &cv->sub.rproxy;
-				vhb->cache.scache_size = 0;
-				vhb->cache.scaches = NULL;
-				vhb->enableGzip = 1;
-				vhb->cacheTypes = NULL;
-				vhb->cacheType_count = 0;
-				vhb->maxAge = 604800;
-				if (pthread_rwlock_init(&vhb->cache.scachelock, NULL)) {
-					errlog(slog, "Error initializing scachelock! %s", strerror(errno));
-				}
-				const char* fmode = getConfigValue(vcn, "forward-mode");
-				if (streq_nocase(fmode, "tcp")) {
-					vhb->fwaddrlen = sizeof(struct sockaddr_in);
-					struct sockaddr_in* ina = xmalloc(sizeof(struct sockaddr_in));
-					vhb->fwaddr = ina;
-					ina->sin_family = AF_INET;
-					const char* fip = getConfigValue(vcn, "forward-ip");
-					const char* fport = getConfigValue(vcn, "forward-port");
-					if (fip == NULL || !inet_aton(fip, &ina->sin_addr)) {
-						errlog(slog, "Invalid IP for Reverse Proxy vhost: %s", vcn->id);
-						xfree(ina);
-						goto cont_vh;
-					}
-					if (fport == NULL || !strisunum(fport)) {
-						errlog(slog, "Invalid Port for Reverse Proxy vhost: %s", vcn->id);
-						xfree(ina);
-						goto cont_vh;
-					}
-					ina->sin_port = htons(atoi(fport));
-				} else if (streq_nocase(fmode, "unix")) {
-					vhb->fwaddrlen = sizeof(struct sockaddr_un);
-					struct sockaddr_un* ina = xmalloc(sizeof(struct sockaddr_un));
-					vhb->fwaddr = ina;
-					ina->sun_family = AF_LOCAL;
-					const char* ffile = getConfigValue(vcn, "file");
-					if (ffile == NULL || strlen(ffile) >= 107) {
-						errlog(slog, "Invalid Unix Socket for Reverse Proxy vhost: %s", vcn->id);
-						xfree(ina);
-						goto cont_vh;
-					}
-					memcpy(ina->sun_path, ffile, strlen(ffile) + 1);
-				} else {
-					errlog(slog, "Invalid mode for Reverse Proxy vhost: %s", vcn->id);
-					goto cont_vh;
-				}
-				vhb->headers = NULL;
-				for (int i = 0; i < vcn->entries; i++) {
-					if (startsWith_nocase(vcn->keys[i], "header-")) {
-						const char* en = vcn->keys[i] + 7;
-						if (vhb->headers == NULL) {
-							vhb->headers = xmalloc(sizeof(struct headers));
-							vhb->headers->count = 0;
-							vhb->headers->names = NULL;
-							vhb->headers->values = NULL;
-						}
-						header_add(vhb->headers, en, vcn->values[i]);
-					}
-				}
-				const char* ic = getConfigValue(vcn, "cache-types");
-				if (ic == NULL) {
-					errlog(slog, "No cache-types at vhost: %s, assuming default", vcn->id);
-					ic = "text/css,application/javascript,image/*";
-				}
-				char* ivh = xstrdup(ic, 0);
-				char* npi = NULL;
-				vhb->cacheTypes = NULL;
-				while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
-					if (npi != NULL) {
-						npi[0] = 0;
-						npi++;
-					}
-					ivh = trim(ivh);
-					if (vhb->cacheTypes == NULL) {
-						vhb->cacheTypes = xmalloc(sizeof(char*));
-						vhb->cacheType_count = 1;
-					} else {
-						vhb->cacheTypes = xrealloc(vhb->cacheTypes, sizeof(char*) * ++vhb->cacheType_count);
-					}
-					vhb->cacheTypes[vhb->cacheType_count - 1] = ivh;
-					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
-				}
-				const char* nhl = getConfigValue(vcn, "scache");
-				vhb->scacheEnabled = nhl == NULL ? 1 : streq_nocase(nhl, "true");
-				if (nhl == NULL) {
-					errlog(slog, "No scache at vhost: %s, assuming default", vcn->id);
-				}
-				nhl = getConfigValue(vcn, "cache-maxage");
-				if (nhl == NULL || !strisunum(nhl)) {
-					errlog(slog, "No cache-maxage at vhost: %s, assuming default", vcn->id);
-					nhl = "604800";
-				}
-				vhb->maxAge = atol(nhl);
-				nhl = getConfigValue(vcn, "maxSCache");
-				if (nhl == NULL || !strisunum(nhl)) {
-					errlog(slog, "No maxSCache at vhost: %s, assuming default", vcn->id);
-					nhl = "0";
-				}
-				vhb->maxCache = atol(nhl);
-				nhl = getConfigValue(vcn, "enable-gzip");
-				vhb->enableGzip = nhl == NULL ? 1 : streq_nocase(nhl, "true");
-				if (nhl == NULL) {
-					errlog(slog, "No enable-gzip at vhost: %s, assuming default", vcn->id);
-				}
-				ic = getConfigValue(vcn, "dynamic-types");
-				if (ic == NULL) {
-					errlog(slog, "No dynamic-types at vhost: %s, assuming default", vcn->id);
-					ic = "application/x-php";
-				}
-				ivh = xstrdup(ic, 0);
-				npi = NULL;
-				vhb->dmimes = NULL;
-				while ((npi = strchr(ivh, ',')) != NULL || strlen(ivh) > 0) {
-					if (npi != NULL) {
-						npi[0] = 0;
-						npi++;
-					}
-					ivh = trim(ivh);
-					if (vhb->dmimes == NULL) {
-						vhb->dmimes = xmalloc(sizeof(char*));
-						vhb->dmime_count = 1;
-					} else {
-						vhb->dmimes = xrealloc(vhb->dmimes, sizeof(char*) * ++vhb->dmime_count);
-					}
-					vhb->dmimes[vhb->dmime_count - 1] = ivh;
-					ivh = npi == NULL ? ivh + strlen(ivh) : npi;
-				}
-			} else if (cv->type == VHOST_REDIRECT) {
-				struct vhost_redirect* vhb = &cv->sub.redirect;
-				vhb->redir = getConfigValue(vcn, "redirect");
-				if (vhb->redir == NULL) {
-					errlog(slog, "No redirect at vhost: %s", vcn->id);
-					if (cv->hosts != NULL) xfree(cv->hosts);
-					xfree(hnv);
-					xfree(cv);
-					vohs[vhc - 1] = NULL;
-					vhc--;
-					goto cont_vh;
-				}
-			} else if (cv->type == VHOST_MOUNT) {
-				struct vhost_mount* vhb = &cv->sub.mount;
-				vhb->vhms = NULL;
-				vhb->vhm_count = 0;
-				for (int i = 0; i < vcn->entries; i++) {
-					if (startsWith(vcn->keys[i], "/")) {
-						if (vhb->vhms == NULL) {
-							vhb->vhms = xmalloc(sizeof(struct vhmount));
-							vhb->vhm_count = 1;
-						} else {
-							vhb->vhms = xrealloc(vhb->vhms, sizeof(struct vhmount) * ++vhb->vhm_count);
-						}
-						vhb->vhms[vhb->vhm_count - 1].path = vcn->keys[i];
-						vhb->vhms[vhb->vhm_count - 1].vh = vcn->values[i];
-					}
-				}
-				const char* keep_prefix = getConfigValue(vcn, "keep-prefix");
-				if (keep_prefix == NULL) {
-					errlog(slog, "No keep-prefix at vhost: %s, assuming default", vcn->id);
-					keep_prefix = "false";
-				}
-				vhb->keep_prefix = streq_nocase(keep_prefix, "true");
-			}
-			cont_vh: ovh = np == NULL ? ovh + strlen(ovh) : np;
-		}
-		xfree(oovh);
-		ap->works = xmalloc(sizeof(struct work_param*) * tc);
-		for (int x = 0; x < tc; x++) {
-			struct work_param* wp = xmalloc(sizeof(struct work_param));
-			wp->conns = new_collection(mc < 1 ? 0 : mc / tc, sizeof(struct conn*));
-			wp->ap = ap;
-			wp->logsess = slog;
-			wp->vhosts = vohs;
-			wp->vhosts_count = vhc;
-			wp->i = x;
-			wp->sport = port;
-			wp->maxPost = mp;
-			ap->works[x] = wp;
-		}
-		aps[i] = ap;
-		sr++;
+		acclog(slog, "Server %s listening for connections!", serv->name);
+		info->logsess = slog;
 	}
+
 	const char* uids = getConfigValue(dm, "uid");
 	const char* gids = getConfigValue(dm, "gid");
-	uid_t uid = uids == NULL ? 0 : atol(uids);
-	uid_t gid = gids == NULL ? 0 : atol(gids);
-	if (gid > 0) {
-		if (setgid(gid) != 0) {
-			errlog(delog, "Failed to setgid! %s", strerror(errno));
-		}
+	uid_t uid = uids == NULL ? 0 : strtoul(uids, NULL, 10);
+	uid_t gid = gids == NULL ? 0 : strtoul(gids, NULL, 10);
+	if (gid > 0 && setgid(gid) != 0) {
+	    errlog(delog, "Failed to setgid! %s", strerror(errno));
 	}
-	if (uid > 0) {
-		if (setuid(uid) != 0) {
-			errlog(delog, "Failed to setuid! %s", strerror(errno));
-		}
+	if (uid > 0 && setuid(uid) != 0) {
+	    errlog(delog, "Failed to setuid! %s", strerror(errno));
 	}
 	acclog(delog, "Running as UID = %u, GID = %u, starting workers.", getuid(), getgid());
-	for (int i = 0; i < servsl; i++) {
-		pthread_t pt;
-		for (int x = 0; x < aps[i]->works_count; x++) {
-			int c = pthread_create(&pt, NULL, (void *) run_work, aps[i]->works[x]);
-			if (c != 0) {
-				if (servs[i]->id != NULL) errlog(delog, "Error creating thread: pthread errno = %i, this will cause occasional connection hanging @ %s server.", c, servs[i]->id);
-				else errlog(delog, "Error creating thread: pthread errno = %i, this will cause occasional connection hanging.", c);
-			}
-		}
-		int c = pthread_create(&pt, NULL, (void *) run_accept, aps[i]);
-		if (c != 0) {
-			if (servs[i]->id != NULL) errlog(delog, "Error creating thread: pthread errno = %i, server %s is shutting down.", c, servs[i]->id);
-			else errlog(delog, "Error creating thread: pthread errno = %i, server is shutting down.", c);
-			close(aps[i]->server_fd);
-		}
-	}
-	while (sr > 0)
+	for (size_t i = 0; i < server_infos->count; ++i) {
+	    struct server_info* server = server_infos->data[i];
+        for (size_t j = 0; j < server->bindings->count; ++j) {
+            struct accept_param *param = pmalloc(server->pool, sizeof(struct accept_param));
+            param->server = server;
+            param->binding = server->bindings->data[j];
+            pthread_t pt;
+            int pthread_err = pthread_create(&pt, NULL, (void *) run_accept, param);
+            if (pthread_err != 0) {
+                errlog(delog, "Error creating accept thread: pthread errno = %i.", pthread_err);
+                continue;
+            }
+        }
+
+        struct list* works = list_new(server->max_worker_count, server->pool);
+
+        for (size_t j = 0; j< server->max_worker_count; ++j) {
+            struct work_param* param = pmalloc(server->pool, sizeof(struct work_param));
+            param->i = j;
+            param->server = server;
+            param->pipes[0] = -1;
+            param->pipes[1] = -1;
+            pthread_t pt;
+            int pthread_err = pthread_create(&pt, NULL, (void *) run_work, param);
+            if (pthread_err != 0) {
+                errlog(delog, "Error creating work thread: pthread errno = %i.", pthread_err);
+                continue;
+            }
+            list_add(works, param);
+        }
+
+        struct wake_thread_arg* wt_arg = pmalloc(server->pool, sizeof(struct wake_thread_arg));
+        wt_arg->work_params = works;
+        wt_arg->server = server;
+
+        pthread_t pt;
+        int pthread_err = pthread_create(&pt, NULL, (void *) wake_thread, wt_arg);
+        if (pthread_err != 0) {
+            errlog(delog, "Error creating work thread: pthread errno = %i.", pthread_err);
+            continue;
+        }
+
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
+	while (1)
 		sleep(1);
+#pragma clang diagnostic pop
 	return 0;
 }

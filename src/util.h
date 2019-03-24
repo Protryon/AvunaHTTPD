@@ -10,18 +10,9 @@
 
 #include <sys/stat.h>
 #include <stdlib.h>
+#include "pmem.h"
 
-void* xmalloc(size_t size);
-
-void xfree(void* ptr);
-
-void* xcalloc(size_t size);
-
-void* xrealloc(void* ptr, size_t size);
-
-void* xcopy(void* ptr, size_t size, size_t expand);
-
-char* xstrdup(const char* str, size_t expand);
+void* xcopy(const void* ptr, size_t size, size_t expand, struct mempool* pool);
 
 int recur_mkdir(const char* path, mode_t mode);
 

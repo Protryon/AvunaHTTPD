@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include "xstring.h"
 #include "util.h"
+#include "pmem.h"
 
 int writeFCGIFrame(int fd, struct fcgiframe* fcgif) {
 	unsigned char header[8];
@@ -23,9 +24,9 @@ int writeFCGIFrame(int fd, struct fcgiframe* fcgif) {
 	header[5] = fcgif->len & 0x00FF;
 	header[6] = 0;
 	header[7] = 0;
-	int w = 0;
+	ssize_t w = 0;
 	while (w < 8) {
-		int x = write(fd, header + w, 8 - w);
+        ssize_t x = write(fd, header + w, 8 - w);
 		if (x < 0) return -1;
 		else if (x == 0) {
 			errno = ECONNRESET;
@@ -35,7 +36,7 @@ int writeFCGIFrame(int fd, struct fcgiframe* fcgif) {
 	}
 	w = 0;
 	while (w < fcgif->len) {
-		int x = write(fd, fcgif->data + w, fcgif->len - w);
+		ssize_t x = write(fd, fcgif->data + w, fcgif->len - w);
 		if (x < 0) return -1;
 		else if (x == 0) {
 			errno = ECONNRESET;
@@ -43,12 +44,10 @@ int writeFCGIFrame(int fd, struct fcgiframe* fcgif) {
 		}
 		w += x;
 	}
-	//printf("write %i: %i <%i>\n", fd, fcgif->type, fcgif->len);
 	return 0;
 }
 
 int writeFCGIParam(int fd, int reqid, const char* name, const char* value) {
-	//printf("fcgi param     %s=%s\n", name, value);
 	struct fcgiframe fcgif;
 	fcgif.type = FCGI_PARAMS;
 	fcgif.reqID = reqid;
@@ -82,11 +81,11 @@ int writeFCGIParam(int fd, int reqid, const char* name, const char* value) {
 	return writeFCGIFrame(fd, &fcgif);
 }
 
-int readFCGIFrame(int fd, struct fcgiframe* fcgif) {
+int readFCGIFrame(int fd, struct fcgiframe* fcgif, struct mempool* pool) {
 	unsigned char header[8];
-	int r = 0;
+    ssize_t r = 0;
 	while (r < 8) {
-		int x = read(fd, header + r, 8 - r);
+        ssize_t x = read(fd, header + r, 8 - r);
 		if (x < 0) return -1;
 		else if (x == 0) {
 			errno = ECONNRESET;
@@ -102,11 +101,11 @@ int readFCGIFrame(int fd, struct fcgiframe* fcgif) {
 	fcgif->len = (header[4] << 8) + header[5];
 	unsigned char padding = header[6];
 	//7 = reserved
-	fcgif->data = xmalloc(fcgif->len + 1);
+	fcgif->data = pmalloc(pool, fcgif->len + 1);
 	((char*) fcgif->data)[fcgif->len] = 0;
 	r = 0;
 	while (r < fcgif->len) {
-		int x = read(fd, fcgif->data + r, fcgif->len - r);
+		ssize_t x = read(fd, fcgif->data + r, fcgif->len - r);
 		if (x < 0) return -1;
 		else if (x == 0) {
 			errno = ECONNRESET;
@@ -117,7 +116,7 @@ int readFCGIFrame(int fd, struct fcgiframe* fcgif) {
 	r = 0;
 	unsigned char pbuf[padding];
 	while (r < padding) {
-		int x = read(fd, pbuf + r, padding - r);
+        ssize_t x = read(fd, pbuf + r, padding - r);
 		if (x < 0) return -1;
 		else if (x == 0) {
 			errno = ECONNRESET;
@@ -125,6 +124,5 @@ int readFCGIFrame(int fd, struct fcgiframe* fcgif) {
 		}
 		r += x;
 	}
-	//printf("read %i: %i <%i>\n", fd, fcgif->type, fcgif->len);
 	return 0;
 }

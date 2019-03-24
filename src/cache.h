@@ -10,31 +10,35 @@
 
 #include <stdlib.h>
 #include <pthread.h>
+#include "pmem.h"
+#include "list.h"
+#include "hash.h"
 
 #define CE_NONE 0
 #define CE_GZIP 1
 
 struct scache {
-		char* rp;
-		int ce;
+		char* request_path;
+		int content_encoding;
 		char etag[35];
 		char* code;
 		struct headers* headers;
 		struct body* body;
+		size_t size;
+		struct mempool* pool;
 };
 
 struct cache {
-		struct scache** scaches;
-		size_t scache_size;
+		struct mempool* pool;
+		struct hashmap* entries; // request_path -> list of scache
 		pthread_rwlock_t scachelock;
+		size_t max_size;
 };
 
-struct scache* getSCache(struct cache* cache, char* rp, int ce);
+struct cache* cache_new(size_t max_size);
 
-int addSCache(struct cache* cache, struct scache* scache);
+struct scache* cache_get(struct cache* cache, char* request_path, int content_encoding);
 
-void delSCache(struct cache* cache, struct scache* scache);
-
-size_t getCacheSize(struct cache* cache);
+void cache_add(struct cache* cache, struct scache* scache);
 
 #endif /* CACHE_H_ */

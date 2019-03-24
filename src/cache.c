@@ -11,47 +11,47 @@
 #include "util.h"
 #include <pthread.h>
 #include "http.h"
-struct scache* getSCache(struct cache* cache, char* rp, int ce) {
+#include "pmem.h"
+#include "list.h"
+#include "hash.h"
+
+struct cache* cache_new(size_t max_size) {
+	struct mempool* pool = mempool_new();
+	struct cache* cache = pmalloc(pool, sizeof(struct cache));
+	cache->pool = pool;
+	cache->max_size = max_size;
+	pthread_rwlock_init(&cache->scachelock, NULL);
+    phook(pool, pthread_rwlock_destroy, &cache->scachelock);
+    cache->entries = hashmap_new(128, pool);
+	return cache;
+}
+
+struct scache* cache_get(struct cache* cache, char* request_path, int content_encoding) {
 	pthread_rwlock_rdlock(&cache->scachelock);
-	for (int i = 0; i < cache->scache_size; i++) {
-		if (cache->scaches[i] != NULL && streq(cache->scaches[i]->rp, rp) && (ce == 1 || (ce == cache->scaches[i]->ce))) {
-			struct scache* sc = cache->scaches[i];
+	struct list* local_list = hashmap_get(cache->entries, request_path);
+	if (local_list == NULL) {
+		pthread_rwlock_unlock(&cache->scachelock);
+		return NULL;
+	}
+	for (size_t i = 0; i < local_list->count; ++i) {
+		struct scache* scache = local_list->data[i];
+		if ((content_encoding == 1 || (content_encoding == scache->content_encoding))) {
 			pthread_rwlock_unlock(&cache->scachelock);
-			return sc;
+			return scache;
 		}
 	}
 	pthread_rwlock_unlock(&cache->scachelock);
 	return NULL;
 }
 
-int addSCache(struct cache* cache, struct scache* scache) {
+void cache_add(struct cache* cache, struct scache* scache) {
 	pthread_rwlock_wrlock(&cache->scachelock);
-	if (cache->scaches == NULL) {
-		cache->scaches = xmalloc(sizeof(struct scache*));
-		cache->scache_size = 1;
-	} else {
-		cache->scaches = xrealloc(cache->scaches, sizeof(struct scache*) * ++cache->scache_size);
+	struct list* local_list = hashmap_get(cache->entries, scache->request_path);
+	if (local_list == NULL) {
+		local_list = list_new(8, cache->pool);
+		hashmap_put(cache->entries, scache->request_path, local_list);
 	}
-	cache->scaches[cache->scache_size - 1] = scache;
-	pthread_rwlock_unlock(&cache->scachelock);
-	return 0;
-}
-
-void delSCache(struct cache* cache, struct scache* scache) {
-	pthread_rwlock_wrlock(&cache->scachelock);
-	if (cache->scaches == NULL) return;
-	for (int i = 0; i < cache->scache_size; i++) {
-		if (cache->scaches[i] == scache) {
-			cache->scaches[i] = NULL;
-		}
-	}
+	list_add(local_list, scache);
 	pthread_rwlock_unlock(&cache->scachelock);
 }
 
-size_t getCacheSize(struct cache* cache) {
-	size_t cs = 64 + (sizeof(struct scache) * (cache->scache_size + 256));
-	for (int i = 0; i < cache->scache_size; i++) {
-		if (cache->scaches[i]->body != NULL) cs += cache->scaches[i]->body->len;
-	}
-	return cs;
-}

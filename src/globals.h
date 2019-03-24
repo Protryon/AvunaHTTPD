@@ -8,9 +8,11 @@
 #ifndef GLOBALS_H_
 #define GLOBALS_H_
 
+#include <unistd.h>
+#include "pmem.h"
+
 struct config* cfg;
 struct logsess* delog;
-size_t mime_count;
-struct mime** mimes;
+struct mempool* global_pool;
 
 #endif /* GLOBALS_H_ */

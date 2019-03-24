@@ -9,7 +9,7 @@ void freeOverride(struct override* override) {
 
 }
 
-void parseOverride(struct override* override, struct reqsess* reqsess) {
+void parseOverride(struct override* override, struct request_session* reqsess) {
 
 }
 

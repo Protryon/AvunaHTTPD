@@ -10,11 +10,7 @@
 
 #include <unistd.h>
 
-struct mime {
-		char* type;
-		size_t ext_count;
-		char** exts;
-};
+struct hashmap* mime_map;
 
 int loadMimes(const char* file);
 

@@ -18,56 +18,32 @@ int loadMimes(const char* file) {
 	int fd = open(file, O_RDONLY);
 	if (fd < 0) return -1;
 	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-	mimes = NULL;
-	mime_count = 0;
+	mime_map = hashmap_new(128, global_pool);
 	char line[1024];
-	int h = 0;
-	while ((h = readLine(fd, line, 1024)) >= 0) {
-		char* tl = trim(line);
+	while (readLine(fd, line, 1024) >= 0) {
+		char* tl = str_trim(line);
 		char* nl = NULL;
 		int x = 0;
-		struct mime* cm = xmalloc(sizeof(struct mime));
-		cm->ext_count = 0;
-		cm->exts = NULL;
+		char* type = NULL;
 		while ((nl = strchr(tl, ' ')) != NULL || strlen(tl) > 0) {
 			if (nl != NULL) {
 				nl[0] = 0;
 				nl++;
 			}
+			char* new_tl = str_dup(tl, 0, global_pool);
 			if (x++ == 0) {
-				cm->type = xstrdup(tl, 0);
+				type = new_tl;
 			} else {
-				if (cm->exts == NULL) {
-					cm->exts = xmalloc(sizeof(char*));
-					cm->ext_count = 1;
-				} else {
-					cm->exts = xrealloc(cm->exts, sizeof(char*) * ++cm->ext_count);
-				}
-				cm->exts[cm->ext_count - 1] = xstrdup(tl, 0);
+				hashmap_put(mime_map, new_tl, type);
 			}
 			tl = nl == NULL ? tl + strlen(tl) : nl;
 		}
-		if (mimes == NULL) {
-			mimes = xmalloc(sizeof(struct mime*));
-			mime_count = 1;
-		} else {
-			mimes = xrealloc(mimes, sizeof(struct mime*) * ++mime_count);
-		}
-		mimes[mime_count - 1] = cm;
 	}
 	close(fd);
 	return 0;
 }
 
 char* getMimeForExt(char* ext) {
-	if (ext == NULL || mimes == NULL) return NULL;
-	for (int i = 0; i < mime_count; i++) {
-		struct mime* mime = mimes[i];
-		for (int x = 0; x < mime->ext_count; x++) {
-			if (streq_nocase(mime->exts[x], ext)) {
-				return mime->type;
-			}
-		}
-	}
-	return NULL;
+	if (ext == NULL) return NULL;
+	return hashmap_get(mime_map, ext);
 }

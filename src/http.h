@@ -5,11 +5,14 @@
  *      Author: root
  */
 
-#include <stdlib.h>
-#include "accept.h"
 
 #ifndef HTTP_H_
 #define HTTP_H_
+
+#include <stdlib.h>
+#include "accept.h"
+#include "pmem.h"
+#include "headers.h"
 
 #define METHOD_UNK -1
 #define METHOD_GET 0
@@ -18,40 +21,16 @@
 
 const char* getMethod(int m);
 
-char* escapehtml(const char* orig);
-
-struct headers {
-		int count;
-		char** names;
-		char** values;
-};
-
-struct reqsess {
+struct request_session {
 		struct work_param* wp;
 		struct conn* sender;
 		struct response* response;
 		struct request* request;
+		struct mempool* pool;
 };
-
-const char* header_get(const struct headers* headers, const char* name);
-
-int header_set(struct headers* headers, const char* name, const char* value);
-
-int header_add(struct headers* headers, const char* name, const char* value);
-
-int header_tryadd(struct headers* headers, const char* name, const char* value);
-
-int header_setoradd(struct headers* headers, const char* name, const char* value);
-
-int parseHeaders(struct headers* headers, char* data, int mode);
-
-char* serializeHeaders(struct headers* headers, size_t* len);
-
-void freeHeaders(struct headers* headers);
 
 struct body {
 		char* mime_type;
-		int freeMime;
 		size_t len;
 		unsigned char* data;
 		int stream_fd;
@@ -68,9 +47,9 @@ struct request {
 		struct vhost* vhost;
 };
 
-int parseRequest(struct request* request, char* data, size_t maxPost);
+int parseRequest(struct request_session *rs, char *data, size_t maxPost);
 
-unsigned char* serializeRequest(struct reqsess* rs, size_t* len);
+unsigned char* serializeRequest(struct request_session* rs, size_t* len);
 
 struct response {
 		char* version;
@@ -81,12 +60,9 @@ struct response {
 		struct scache* fromCache;
 };
 
-int parseResponse(struct reqsess* rs, char* data);
+int parseResponse(struct request_session* rs, char* data);
 
-unsigned char* serializeResponse(struct reqsess* rs, size_t* len);
+unsigned char* serializeResponse(struct request_session* rs, size_t* len);
 
-int generateDefaultErrorPage(struct reqsess* rs, struct vhost* vh, const char* msg);
-
-int generateResponse(struct reqsess* rs);
 
 #endif /* HTTP_H_ */

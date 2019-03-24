@@ -10,8 +10,9 @@
 #include <stdlib.h>
 #include "util.h"
 #include "globals.h"
+#include "pmem.h"
 
-struct cert* loadCert(const char* cert, const char* key) {
+struct cert* loadCert(const char* cert, const char* key, struct mempool* pool) {
 	const SSL_METHOD* method = SSLv23_method();
 	SSL_CTX* ctx = SSL_CTX_new(method);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
@@ -24,17 +25,17 @@ struct cert* loadCert(const char* cert, const char* key) {
 	if (!SSL_CTX_check_private_key(ctx)) {
 		return NULL;
 	}
-	struct cert* oc = xmalloc(sizeof(struct cert));
+	struct cert* oc = pmalloc(pool, sizeof(struct cert));
 	oc->isDummy = 0;
 	oc->ctx = ctx;
 	return oc;
 }
 
-struct cert* dummyCert() {
+struct cert* dummyCert(struct mempool* pool) {
 	const SSL_METHOD* method = SSLv23_method();
 	SSL_CTX* ctx = SSL_CTX_new(method);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
-	struct cert* oc = xmalloc(sizeof(struct cert));
+	struct cert* oc = pmalloc(pool, sizeof(struct cert));
 	oc->ctx = ctx;
 	oc->isDummy = 1;
 	return oc;
