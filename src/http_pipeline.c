@@ -143,6 +143,107 @@ void init_response(struct request_session* rs) {
     rs->request->vhost = vhost;
 }
 
+int check_cache(struct request_session* rs) {
+    struct vhost* vhost = rs->request->vhost;
+    struct scache* osc = cache_get(vhost->sub.htdocs.cache, rs->request->path,
+                                   str_contains(header_get(rs->request->headers, "Accept-Encoding"), "gzip"));
+    if (osc != NULL) {
+        rs->response->body = osc->body;
+        rs->request->add_to_cache = 1;
+        rs->response->headers = osc->headers;
+        rs->response->code = osc->code;
+        if (rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL &&
+            rs->response->code[0] == '2') {
+            if (str_eq_case(osc->etag, header_get(rs->request->headers, "If-None-Match"))) {
+                rs->response->code = "304 Not Modified";
+                rs->response->body = NULL;
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
+void check_client_cache(struct request_session* rs) {
+    struct vhost* vhost = rs->request->vhost;
+    if (vhost->sub.htdocs.maxAge > 0 && rs->response->body != NULL) {
+        int cache_found = 0;
+        for (size_t i = 0; i < vhost->sub.htdocs.cache_types->count; i++) {
+            if (str_eq(vhost->sub.htdocs.cache_types->data[i], rs->response->body->mime_type)) {
+                cache_found = 1;
+                break;
+            } else if (str_suffixes_case(vhost->sub.htdocs.cache_types->data[i], "/*")) {
+                char* nct = str_dup(vhost->sub.htdocs.cache_types->data[i], 0, rs->pool);
+                nct[strlen(nct) - 1] = 0;
+                if (str_prefixes_case(rs->response->body->mime_type, nct)) {
+                    cache_found = 1;
+                    break;
+                }
+            }
+        }
+
+        char ccbuf[64];
+        memcpy(ccbuf, "max-age=", 8);
+        int snr = snprintf(ccbuf + 8, 18, "%lu", vhost->sub.htdocs.maxAge);
+        if (cache_found) {
+            memcpy(ccbuf + 8 + snr, ", no-cache", 11);
+        } else {
+            ccbuf[8 + snr] = 0;
+        }
+        header_add(rs->response->headers, "Cache-Control", ccbuf);
+    }
+}
+
+int maybe_gzip(struct request_session* rs) {
+    const char* cce = header_get(rs->response->headers, "Content-Encoding");
+    int wgz = str_eq_case(cce, "gzip");
+    if (rs->response->body != NULL && rs->response->body->len > 1024 && cce == NULL) {
+        const char* accenc = header_get(rs->request->headers, "Accept-Encoding");
+        if (str_contains(accenc, "gzip")) {
+            z_stream strm;
+            strm.zalloc = Z_NULL;
+            strm.zfree = Z_NULL;
+            strm.opaque = Z_NULL;
+            int dr = 0;
+            if ((dr = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY)) !=
+                Z_OK) { // TODO: configurable level?
+                errlog(rs->worker->server->logsess, "Error with zlib defaultInit: %i", dr);
+                return wgz;
+            }
+            strm.avail_in = rs->response->body->len;
+            strm.next_in = rs->response->body->data;
+            void* cdata = pmalloc(rs->pool, 16384);
+            size_t ts = 0;
+            size_t cc = 16384;
+            strm.avail_out = cc - ts;
+            strm.next_out = cdata + ts;
+            do {
+                strm.avail_out = cc - ts;
+                strm.next_out = cdata + ts;
+                dr = deflate(&strm, Z_FINISH);
+                ts = strm.total_out;
+                if (ts >= cc - 8192) {
+                    cc = ts + 16384;
+                    cdata = prealloc(rs->pool, cdata, cc);
+                }
+                if (dr == Z_STREAM_ERROR) {
+                    errlog(rs->worker->server->logsess, "Stream error with zlib deflate");
+                    deflateEnd(&strm);
+                    return wgz;
+                }
+            } while (strm.avail_out == 0);
+            deflateEnd(&strm);
+            cdata = prealloc(rs->pool, cdata, ts); // shrink
+            rs->response->body->data = cdata;
+            rs->response->body->len = ts;
+            header_add(rs->response->headers, "Content-Encoding", "gzip");
+            header_add(rs->response->headers, "Vary", "Accept-Encoding");
+            wgz = 1;
+        }
+    }
+    return wgz;
+}
+
 void handle_vhost_htdocs(struct request_session* rs) {
     struct vhost* vhost = rs->request->vhost;
     char* extraPath = NULL;
@@ -159,21 +260,8 @@ void handle_vhost_htdocs(struct request_session* rs) {
     if (ttp != NULL) ttp[0] = 0;
     char* rtp = NULL;
     if (vhost->sub.htdocs.scacheEnabled) {
-        struct scache* osc = cache_get(vhost->sub.htdocs.cache, rs->request->path,
-                                       str_contains(header_get(rs->request->headers, "Accept-Encoding"), "gzip"));
-        if (osc != NULL) {
-            rs->response->body = osc->body;
-            rs->request->add_to_cache = 1;
-            rs->response->headers = osc->headers;
-            rs->response->code = osc->code;
-            if (rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL &&
-                rs->response->code[0] == '2') {
-                if (str_eq_case(osc->etag, header_get(rs->request->headers, "If-None-Match"))) {
-                    rs->response->code = "304 Not Modified";
-                    rs->response->body = NULL;
-                }
-            }
-            goto pcacheadd;
+        if (check_cache(rs)) {
+            return;
         }
     }
     if (pl < 1 || rs->request->path[0] != '/') {
@@ -664,32 +752,8 @@ void handle_vhost_htdocs(struct request_session* rs) {
         }
     }
     if (isStatic) {
-        if (vhost->sub.htdocs.maxAge > 0 && rs->response->body != NULL) {
-            int cache_found = 0;
-            for (size_t i = 0; i < vhost->sub.htdocs.cache_types->count; i++) {
-                if (str_eq(vhost->sub.htdocs.cache_types->data[i], rs->response->body->mime_type)) {
-                    cache_found = 1;
-                    break;
-                } else if (str_suffixes_case(vhost->sub.htdocs.cache_types->data[i], "/*")) {
-                    char* nct = str_dup(vhost->sub.htdocs.cache_types->data[i], 0, rs->pool);
-                    nct[strlen(nct) - 1] = 0;
-                    if (str_prefixes_case(rs->response->body->mime_type, nct)) {
-                        cache_found = 1;
-                        break;
-                    }
-                }
-            }
+        check_client_cache(rs);
 
-            char ccbuf[64];
-            memcpy(ccbuf, "max-age=", 8);
-            int snr = snprintf(ccbuf + 8, 18, "%lu", vhost->sub.htdocs.maxAge);
-            if (cache_found) {
-                memcpy(ccbuf + 8 + snr, ", no-cache", 11);
-            } else {
-                ccbuf[8 + snr] = 0;
-            }
-            header_add(rs->response->headers, "Cache-Control", ccbuf);
-        }
         int ffd = open(rtp, O_RDONLY);
         if (ffd < 0) {
             errlog(rs->worker->server->logsess, "Failed to open file %s! %s", rtp, strerror(errno));
@@ -745,52 +809,9 @@ void handle_vhost_htdocs(struct request_session* rs) {
             }
         }
     }
-    const char* cce = header_get(rs->response->headers, "Content-Encoding");
-    int wgz = str_eq_case(cce, "gzip");
-    if (rs->response->body != NULL && rs->response->body->len > 1024 && cce == NULL) {
-        const char* accenc = header_get(rs->request->headers, "Accept-Encoding");
-        if (str_contains(accenc, "gzip")) {
-            z_stream strm;
-            strm.zalloc = Z_NULL;
-            strm.zfree = Z_NULL;
-            strm.opaque = Z_NULL;
-            int dr = 0;
-            if ((dr = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY)) !=
-                Z_OK) { // TODO: configurable level?
-                errlog(rs->worker->server->logsess, "Error with zlib defaultInit: %i", dr);
-                goto pgzip;
-            }
-            strm.avail_in = rs->response->body->len;
-            strm.next_in = rs->response->body->data;
-            void* cdata = pmalloc(rs->pool, 16384);
-            size_t ts = 0;
-            size_t cc = 16384;
-            strm.avail_out = cc - ts;
-            strm.next_out = cdata + ts;
-            do {
-                strm.avail_out = cc - ts;
-                strm.next_out = cdata + ts;
-                dr = deflate(&strm, Z_FINISH);
-                ts = strm.total_out;
-                if (ts >= cc - 8192) {
-                    cc = ts + 16384;
-                    cdata = prealloc(rs->pool, cdata, cc);
-                }
-                if (dr == Z_STREAM_ERROR) {
-                    errlog(rs->worker->server->logsess, "Stream error with zlib deflate");
-                    goto pgzip;
-                }
-            } while (strm.avail_out == 0);
-            deflateEnd(&strm);
-            cdata = prealloc(rs->pool, cdata, ts); // shrink
-            rs->response->body->data = cdata;
-            rs->response->body->len = ts;
-            header_add(rs->response->headers, "Content-Encoding", "gzip");
-            header_add(rs->response->headers, "Vary", "Accept-Encoding");
-            wgz = 1;
-        }
-    }
-    pgzip:;
+
+    int was_gzipped = maybe_gzip(rs);
+
     if (isStatic && vhost->sub.htdocs.scacheEnabled &&
         (vhost->sub.htdocs.maxCache <= 0 || vhost->sub.htdocs.maxCache < vhost->sub.htdocs.cache->max_size)) {
         struct mempool* scpool = mempool_new();
@@ -800,7 +821,7 @@ void handle_vhost_htdocs(struct request_session* rs) {
         sc->body = pxfer(rs->pool, sc->pool, rs->response->body);
         pxfer(rs->pool, sc->pool, sc->body->data);
         pxfer(rs->pool, sc->pool, sc->body->mime_type);
-        sc->content_encoding = wgz;
+        sc->content_encoding = was_gzipped;
         sc->code = pxfer(rs->pool, sc->pool, rs->response->code);
         if (rs->response->body != NULL)
             header_setoradd(rs->response->headers, "Content-Type", rs->response->body->mime_type);
@@ -818,7 +839,6 @@ void handle_vhost_htdocs(struct request_session* rs) {
         sc->request_path = pxfer(rs->pool, sc->pool, rs->request->path);
         if (!hetag) {
             if (rs->response->body == NULL) {
-                hetag = 1;
                 etag[0] = '\"';
                 memset(etag + 1, '0', 32);
                 etag[33] = '\"';
@@ -829,7 +849,6 @@ void handle_vhost_htdocs(struct request_session* rs) {
                 MD5_Update(&md5ctx, rs->response->body->data, rs->response->body->len);
                 unsigned char rawmd5[16];
                 MD5_Final(rawmd5, &md5ctx);
-                hetag = 1;
                 etag[34] = 0;
                 etag[0] = '\"';
                 for (int i = 0; i < 16; i++) {
@@ -847,13 +866,11 @@ void handle_vhost_htdocs(struct request_session* rs) {
             rs->response->code = "304 Not Modified";
         }
     }
-    pcacheadd:;
     //TODO: Chunked
 }
 
 void handle_vhost_rproxy(struct request_session* rs) {
     struct vhost* vhost = rs->request->vhost;
-    char* extraPath = NULL;
     int isStatic = 1;
     size_t htdl = 0;
     size_t pl = strlen(rs->request->path);
@@ -865,21 +882,8 @@ void handle_vhost_rproxy(struct request_session* rs) {
     ttp = strchr(tp, '?');
     if (ttp != NULL) ttp[0] = 0;
     if (vhost->sub.htdocs.scacheEnabled) {
-        struct scache* osc = cache_get(vhost->sub.htdocs.cache, rs->request->path,
-                                       str_contains(header_get(rs->request->headers, "Accept-Encoding"), "gzip"));
-        if (osc != NULL) {
-            rs->response->body = osc->body;
-            rs->request->add_to_cache = 1;
-            rs->response->headers = osc->headers;
-            rs->response->code = osc->code;
-            if (rs->response->body != NULL && rs->response->body->len > 0 && rs->response->code != NULL &&
-                rs->response->code[0] == '2') {
-                if (str_eq_case(osc->etag, header_get(rs->request->headers, "If-None-Match"))) {
-                    rs->response->code = "304 Not Modified";
-                    rs->response->body = NULL;
-                }
-            }
-            goto pcacheadd;
+        if(check_cache(rs)) {
+            return;
         }
     }
     if (pl < 1 || rs->request->path[0] != '/') {
@@ -962,95 +966,20 @@ void handle_vhost_rproxy(struct request_session* rs) {
     memcpy(rs2, rs, sizeof(struct request_session));
     queue_push(rs->conn->fw_queue, rs2);
 
-    if (isStatic) {
-        if (vhost->sub.htdocs.maxAge > 0 && rs->response->body != NULL) {
-            int cache_found = 0;
-            for (size_t i = 0; i < vhost->sub.htdocs.cache_types->count; i++) {
-                if (str_eq(vhost->sub.htdocs.cache_types->data[i], rs->response->body->mime_type)) {
-                    cache_found = 1;
-                    break;
-                } else if (str_suffixes_case(vhost->sub.htdocs.cache_types->data[i], "/*")) {
-                    char* nct = str_dup(vhost->sub.htdocs.cache_types->data[i], 0, rs->pool);
-                    nct[strlen(nct) - 1] = 0;
-                    if (str_prefixes_case(rs->response->body->mime_type, nct)) {
-                        cache_found = 1;
-                        break;
-                    }
-                }
-            }
-
-            char ccbuf[64];
-            memcpy(ccbuf, "max-age=", 8);
-            int snr = snprintf(ccbuf + 8, 18, "%lu", vhost->sub.htdocs.maxAge);
-            if (cache_found) {
-                memcpy(ccbuf + 8 + snr, ", no-cache", 11);
-            } else {
-                ccbuf[8 + snr] = 0;
-            }
-            header_add(rs->response->headers, "Cache-Control", ccbuf);
-        }
-    }
+    check_client_cache(rs);
 
     //TODO: CGI
     //TODO: SCGI
     //TODO: SO-CGI
     //TODO: SSI
     epage:;
-    char etag[35];
-    int hetag = 0;
-    int nm = 0;
 
-    const char* cce = header_get(rs->response->headers, "Content-Encoding");
-    int wgz = str_eq_case(cce, "gzip");
-    if (rs->response->body != NULL && rs->response->body->len > 1024 && cce == NULL) {
-        const char* accenc = header_get(rs->request->headers, "Accept-Encoding");
-        if (str_contains(accenc, "gzip")) {
-            z_stream strm;
-            strm.zalloc = Z_NULL;
-            strm.zfree = Z_NULL;
-            strm.opaque = Z_NULL;
-            int dr = 0;
-            if ((dr = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY)) !=
-                Z_OK) { // TODO: configurable level?
-                errlog(rs->worker->server->logsess, "Error with zlib defaultInit: %i", dr);
-                goto pgzip;
-            }
-            strm.avail_in = rs->response->body->len;
-            strm.next_in = rs->response->body->data;
-            void* cdata = pmalloc(rs->pool, 16384);
-            size_t ts = 0;
-            size_t cc = 16384;
-            strm.avail_out = cc - ts;
-            strm.next_out = cdata + ts;
-            do {
-                strm.avail_out = cc - ts;
-                strm.next_out = cdata + ts;
-                dr = deflate(&strm, Z_FINISH);
-                ts = strm.total_out;
-                if (ts >= cc - 8192) {
-                    cc = ts + 16384;
-                    cdata = prealloc(rs->pool, cdata, cc);
-                }
-                if (dr == Z_STREAM_ERROR) {
-                    errlog(rs->worker->server->logsess, "Stream error with zlib deflate");
-                    goto pgzip;
-                }
-            } while (strm.avail_out == 0);
-            deflateEnd(&strm);
-            cdata = prealloc(rs->pool, cdata, ts); // shrink
-            rs->response->body->data = cdata;
-            rs->response->body->len = ts;
-            header_add(rs->response->headers, "Content-Encoding", "gzip");
-            header_add(rs->response->headers, "Vary", "Accept-Encoding");
-            wgz = 1;
-        }
-    }
-    pgzip:;
+    maybe_gzip(rs);
+
     if (isStatic && vhost->sub.htdocs.scacheEnabled &&
         (vhost->sub.htdocs.maxCache <= 0 || vhost->sub.htdocs.maxCache < vhost->sub.htdocs.cache->max_size)) {
             rs->request->add_to_cache = 1;
     }
-    pcacheadd:;
     //TODO: Chunked
 }
 
