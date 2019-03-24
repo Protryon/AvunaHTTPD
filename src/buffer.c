@@ -28,16 +28,16 @@ void buffer_skip(struct buffer* buffer, size_t size) {
     buffer->size -= size;
     while (node != NULL && size > 0) {
         struct buffer_entry* entry = node->data;
-        if (entry->size >= size) {
+        if (entry->size <= size) {
             size -= entry->size;
             struct llist_node* next = node->next;
             pprefree_strict(buffer->pool, entry->data_root);
             llist_del(buffer->buffers, node);
             node = next;
         } else {
-            size = 0;
             entry->data += size;
             entry->size -= size;
+            size = 0;
             node = NULL;
         }
     }
@@ -52,7 +52,7 @@ size_t buffer_pop(struct buffer* buffer, size_t size, uint8_t* data) {
     size_t index = 0;
     while (node != NULL && size > 0) {
         struct buffer_entry* entry = node->data;
-        if (entry->size >= size) {
+        if (entry->size <= size) {
             size -= entry->size;
             memcpy(data + index, entry->data, entry->size);
             index += entry->size;
@@ -63,9 +63,9 @@ size_t buffer_pop(struct buffer* buffer, size_t size, uint8_t* data) {
         } else {
             memcpy(data + index, entry->data, size);
             index += size;
-            size = 0;
             entry->data += size;
             entry->size -= size;
+            size = 0;
             node = NULL;
         }
     }

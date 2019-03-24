@@ -78,12 +78,12 @@ struct uconn {
 };
 
 int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* read_buf, size_t read_buf_len) {
-    reqp:;
     struct sub_conn* sconn = conn->conn;
     struct sub_conn* active_conn = ct == 0 ? conn->conn :
                                    ct == 1 ? conn->forward_conn : NULL;
 
     buffer_push(&active_conn->read_buffer, read_buf, read_buf_len);
+    reqp:;
 
     if (ct == 0 && conn->currently_posting != NULL && conn->post_left > 0) {
         if (sconn->read_buffer.size >= conn->post_left) {
@@ -99,6 +99,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* rea
                 pfree(conn->currently_posting->pool);
                 conn->currently_posting = NULL;
             }
+            goto pc;
         } else goto pc;
     }
 

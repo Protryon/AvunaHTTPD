@@ -12,7 +12,6 @@
 void* __smem_default_oom_callback(size_t size, void* cptr, int type) {
     printf("OOM!\n");
     exit(EXIT_FAILURE);
-    return NULL;
 }
 
 void* (* __smem_oom_callback)(size_t size, void* cptr, int type) = (void*) __smem_default_oom_callback;
