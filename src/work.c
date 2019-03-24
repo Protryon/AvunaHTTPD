@@ -183,7 +183,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* rea
 							new_scache->etag[33] = '\"';
 						}
 						header_setoradd(fwd_response->headers, "ETag", new_scache->etag);
-						cache_add(&conn->forwarding_request->request->vhost->sub.rproxy.cache, new_scache);
+						cache_add(conn->forwarding_request->request->vhost->sub.rproxy.cache, new_scache);
                         fwd_response->fromCache = new_scache;
 					} else {
 						conn->forwarding_request->request->add_to_cache = 0;

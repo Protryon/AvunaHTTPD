@@ -49,6 +49,7 @@ size_t buffer_pop(struct buffer* buffer, size_t size, uint8_t* data) {
     if (size > buffer->size) {
         size = buffer->size;
     }
+    buffer->size -= size;
     size_t index = 0;
     while (node != NULL && size > 0) {
         struct buffer_entry* entry = node->data;

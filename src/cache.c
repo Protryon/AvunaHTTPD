@@ -31,7 +31,7 @@ struct scache* cache_get(struct cache* cache, char* request_path, int content_en
 	struct list* local_list = hashmap_get(cache->entries, request_path);
 	if (local_list == NULL) {
 		pthread_rwlock_unlock(&cache->scachelock);
-		return NULL;
+        return NULL;
 	}
 	for (size_t i = 0; i < local_list->count; ++i) {
 		struct scache* scache = local_list->data[i];
