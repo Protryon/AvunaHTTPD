@@ -196,7 +196,7 @@ unsigned char* serializeResponse(struct request_session* rs, size_t* len) {
 	char* headers = header_serialize(rs->response->headers, &hl);
 	*len += hl;
 	if (rs->response->body != NULL && rs->response->body->stream_type < 0) *len += rs->response->body->len;
-	unsigned char* ret = pmalloc(rs->pool, *len);
+	unsigned char* ret = pmalloc(rs->conn->pool, *len);
 	size_t wr = 0;
 	memcpy(ret, rs->response->version, vl);
 	wr += vl;

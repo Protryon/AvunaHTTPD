@@ -42,7 +42,6 @@ struct sub_conn {
 	int tls_handshaked;
 	SSL* tls_session;
 	struct buffer read_buffer;
-	size_t read_buffer_checked;
 	struct buffer write_buffer;
 	int tls_next_direction;
 };

@@ -69,10 +69,7 @@ void sendReqsess(struct request_session* rs, struct timespec* stt) {
 			errlog(param->server->logsess, "Invalid IP Address: %s", strerror(errno));
 		}
 		acclog(param->server->logsess, "%s %s %s/%s%s returned %s took: %f ms", mip, getMethod(req->method), param->server->id, req->vhost->id, req->path, resp->code, msp);
-		buffer_ensure_capacity(&conn->conn->write_buffer, response_length);
-        uint8_t* loc = conn->conn->write_buffer.buffer + conn->conn->write_buffer.size;
-		memcpy(loc, serialized_response, response_length);
-		conn->conn->write_buffer.size += response_length;
+		buffer_push(&conn->conn->write_buffer, serialized_response, response_length);
 	} else {
 		conn->forward_conn = NULL;
 	}
@@ -97,18 +94,20 @@ struct uconn {
 		struct conn* conn;
 };
 
-int handleRead(struct conn* conn, int ct, struct work_param* param) {
+int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* read_buf, size_t read_buf_len) {
 	reqp: ;
 	struct sub_conn* sconn = conn->conn;
+	struct sub_conn* active_conn = ct == 0 ? conn->conn :
+								   ct == 1 ? conn->forward_conn : NULL;
+
+	buffer_push(&active_conn->read_buffer, read_buf, read_buf_len);
+
 	if (ct == 0 && conn->currently_posting != NULL && conn->post_left > 0) {
 		if (sconn->read_buffer.size >= conn->post_left) {
 			struct timespec stt;
 			clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
-			memcpy(conn->currently_posting->request->body->data + conn->currently_posting->request->body->len - conn->post_left, sconn->read_buffer.buffer, conn->post_left);
 			size_t os = sconn->read_buffer.size;
-			sconn->read_buffer.size -= conn->post_left;
-			sconn->read_buffer_checked = 0;
-			memmove(sconn->read_buffer.buffer, sconn->read_buffer.buffer + conn->post_left, sconn->read_buffer.size);
+			buffer_pop(&sconn->read_buffer, conn->post_left, conn->currently_posting->request->body->data + conn->currently_posting->request->body->len - conn->post_left);
 			conn->post_left -= os;
 			if (conn->post_left == 0) {
 				handleRequest(&stt, conn->currently_posting);
@@ -117,38 +116,32 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 			}
 		} else goto pc;
 	}
-	static unsigned char newlines[4] = { 0x0D, 0x0A, 0x0D, 0x0A };
-	int ml = 0;
-	struct sub_conn* active_conn = ct == 0 ? conn->conn :
-			ct == 1 ? conn->forward_conn : NULL;
-	uint8_t* readBuffer = active_conn->read_buffer.buffer;
+
 	sin: ;
 	if (ct == 1 && conn->stream_type >= 0) {
 		int se = 0;
 		if (conn->stream_type == STREAM_TYPE_RAW) {
-			size_t fw_buffer_size = active_conn->read_buffer.size;
 			if (conn->forwarding_request->response->fromCache != NULL) {
 				if (conn->stream_md5 == NULL) {
 					conn->stream_md5 = pmalloc(conn->pool, sizeof(MD5_CTX));
 					MD5_Init(conn->stream_md5);
 				}
-				MD5_Update(conn->stream_md5, readBuffer, fw_buffer_size);
+				ITER_LLIST(active_conn->read_buffer.buffers, value) {
+					struct buffer_entry* entry = value;
+					MD5_Update(conn->stream_md5, entry->data, entry->size);
+					ITER_LLIST_END();
+				}
 			}
-			buffer_ensure_capacity(&sconn->write_buffer, fw_buffer_size);
+
+			uint8_t* total_read = pmalloc(conn->forwarding_request->pool, active_conn->read_buffer.size);
+			size_t read_size = buffer_pop(&active_conn->read_buffer, active_conn->read_buffer.size, total_read);
+
 			if (conn->forwarding_request->request->add_to_cache) {
-			    buffer_ensure_capacity(&conn->cache_buffer, fw_buffer_size);
-				memcpy(conn->cache_buffer.buffer + conn->cache_buffer.size, readBuffer, fw_buffer_size);
-                conn->cache_buffer.size += fw_buffer_size;
+				buffer_push(&conn->cache_buffer, total_read, read_size);
 			}
-			memcpy(sconn->write_buffer.buffer + sconn->write_buffer.size, readBuffer, fw_buffer_size);
-            sconn->write_buffer.size += fw_buffer_size;
-			size_t new_size = active_conn->read_buffer.size - fw_buffer_size;
-			if (new_size > 0) {
-				memmove(active_conn->read_buffer.buffer, active_conn->read_buffer.buffer + fw_buffer_size, new_size);
-			}
-			active_conn->read_buffer.size -= fw_buffer_size;
-			conn->streamed += fw_buffer_size;
-			active_conn->read_buffer_checked = 0;
+			buffer_push(&sconn->write_buffer, total_read, read_size);
+
+			conn->streamed += active_conn->read_buffer.size;
 			if (conn->streamed >= conn->stream_len) {
                 struct response* fwd_response = conn->forwarding_request->response;
                 if (conn->forwarding_request->request->add_to_cache) {
@@ -162,8 +155,8 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 						if (fwd_response->body == NULL) {
                             fwd_response->body = pmalloc(conn->pool, sizeof(struct body));
 						}
-                        fwd_response->body->len = buffer_consume(&conn->cache_buffer, &fwd_response->body->data);
-						pclaim(conn->forwarding_request->pool, fwd_response->body->data);
+						fwd_response->body->data = pmalloc(conn->forwarding_request->pool, conn->cache_buffer.size);
+                        fwd_response->body->len = buffer_pop(&conn->cache_buffer, conn->cache_buffer.size, fwd_response->body->data);
                         fwd_response->body->stream_type = STREAM_TYPE_INVALID;
                         fwd_response->body->stream_fd = -1;
                         fwd_response->body->mime_type = content_type;
@@ -216,9 +209,45 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 		if (!se) goto pc;
 	}
 
+	size_t ml = 0;
+	static unsigned char newlines[4] = { 0x0D, 0x0A, 0x0D, 0x0A };
 
-	for (size_t checking_index = active_conn->read_buffer_checked; checking_index < active_conn->read_buffer.size; ++checking_index) {
-		if (readBuffer[checking_index] == newlines[ml]) {
+	if (active_conn->read_buffer.size < read_buf_len) {
+	    size_t shrink = active_conn->read_buffer.size - read_buf_len;
+        read_buf += shrink;
+        read_buf_len -= shrink;
+	}
+
+	struct llist_node* read_tail = active_conn->read_buffer.buffers->tail;
+	if (read_tail != NULL) {
+		struct buffer_entry* entry = read_tail->data;
+		if (entry->data == read_buf) {
+			if (read_tail->prev == NULL) { // could be popped above
+				goto post_precheck;
+			}
+			entry = read_tail->prev->data;
+		}
+		ssize_t checking_index = entry->size - 3;
+		if (checking_index < 0)
+			checking_index = 0;
+		for (; checking_index < entry->size; ++checking_index) {
+			char c = ((char*) entry->data)[checking_index];
+			if (c == newlines[ml]) {
+				ml++;
+				if (ml == 4) {
+					errlog(param->server->logsess, "Invalid state! This should never happen.");
+				}
+			} else if (c == newlines[0])
+				ml = 1;
+			else
+				ml = 0;
+		}
+	}
+	post_precheck:;
+
+	for (size_t checking_index = 0; checking_index < read_buf_len; ++checking_index) {
+		char c = read_buf[checking_index];
+		if (c == newlines[ml]) {
 			ml++;
 			if (ml == 4) {
 				struct request_session* rs = NULL;
@@ -230,13 +259,11 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 					req_pool = mempool_new();
 					pchild(conn->pool, req_pool);
 				}
-				unsigned char* request_headers = pmalloc(req_pool, checking_index + 2);
-				memcpy(request_headers, readBuffer, checking_index + 1);
-				request_headers[checking_index + 1] = 0;
-				active_conn->read_buffer.size -= checking_index + 1;
-				active_conn->read_buffer_checked = 0;
+				size_t req_size = active_conn->read_buffer.size + checking_index + 1 - read_buf_len;
+				unsigned char* request_headers = pmalloc(req_pool, req_size + 1);
+				buffer_pop(&active_conn->read_buffer, req_size, request_headers);
+				request_headers[req_size] = 0;
 
-				memmove(readBuffer, readBuffer + checking_index + 1, active_conn->read_buffer.size);
 				struct timespec stt;
 				clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
 
@@ -285,13 +312,12 @@ int handleRead(struct conn* conn, int ct, struct work_param* param) {
 					}
 				}
 			}
-		} else ml = 0;
+		} else if (c == newlines[0])
+			ml = 1;
+		else
+			ml = 0;
 	}
-	pc:
-	if (conn->conn->read_buffer.size >= 10)
-		conn->conn->read_buffer_checked = conn->conn->read_buffer.size - 10;
-	else
-		conn->conn->read_buffer_checked = 0;
+	pc: ;
 	return 0;
 }
 /*
@@ -626,13 +652,12 @@ void run_work(struct work_param* param) {
 				} else {
 					ioctl(poll_fds[i].fd, FIONREAD, &tr);
 				}
-				buffer_ensure_capacity(&sconn->read_buffer, tr);
-				uint8_t* loc = sconn->read_buffer.buffer + sconn->read_buffer.size;
+				void* read_buf = pmalloc(conn->pool, tr);
 				ssize_t r = 0;
 				if (tr == 0) { // nothing to read, but wont block.
 					ssize_t x = 0;
 					if (sconn->tls) {
-						x = SSL_read(sconn->tls_session, loc + r, tr - r);
+						x = SSL_read(sconn->tls_session, read_buf + r, tr - r);
 						if (x <= 0) {
 							int serr = SSL_get_error(sconn->tls_session, x);
 							if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) continue;
@@ -641,16 +666,12 @@ void run_work(struct work_param* param) {
 							}
 							closeConn(conn);
                             continue;
-                        } else {
-							sconn->read_buffer.size += x;
-						}
+                        }
 					} else {
-						x = read(poll_fds[i].fd, loc + r, tr - r);
+						x = read(poll_fds[i].fd, read_buf + r, tr - r);
 						if (x <= 0) {
 							closeConn(conn);
                             continue;
-						} else {
-							sconn->read_buffer.size += x;
 						}
 					}
 					r += x;
@@ -658,7 +679,7 @@ void run_work(struct work_param* param) {
 				while (r < tr) {
 					ssize_t x = 0;
 					if (sconn->tls) {
-						x = SSL_read(sconn->tls_session, loc + r, tr - r);
+						x = SSL_read(sconn->tls_session, read_buf + r, tr - r);
 						if (x <= 0) {
 							int serr = SSL_get_error(sconn->tls_session, x);
 							if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) goto cont;
@@ -667,41 +688,56 @@ void run_work(struct work_param* param) {
 							}
 							closeConn(conn);
 							goto cont;
-						} else {
-							sconn->read_buffer.size += x;
 						}
+						r += x;
 						if (ftr) break;
 					} else {
-						x = read(poll_fds[i].fd, loc + r, tr - r);
+						x = read(poll_fds[i].fd, read_buf + r, tr - r);
 						if (x <= 0) {
 							closeConn(conn);
 							goto cont;
-						} else {
-							sconn->read_buffer.size += x;
 						}
 					}
 					r += x;
 				}
 				int p = 0;
-				if (conn->proto == 0) p = handleRead(conn, connection_type, param);
+				if (conn->proto == 0) p = handleRead(conn, connection_type, param, read_buf, r);
 				// else if (conn->proto == 1) p = handleRead2(conn, connection_type, param);
 				if (p == 1) {
                     continue;
 				}
 			}
-			if ((revents & POLLOUT) == POLLOUT && conn != NULL) {
-				ssize_t mtr = sconn->tls ? SSL_write(sconn->tls_session, sconn->write_buffer.buffer, sconn->write_buffer.size) : write(poll_fds[i].fd, sconn->write_buffer.buffer, sconn->write_buffer.size);
-				int serr = (sconn->tls && mtr < 0) ? SSL_get_error(sconn->tls_session, mtr) : 0;
-				if (mtr < 0 && (sconn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) && serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) : errno != EAGAIN)) { // use error queue?
-					closeConn(conn);
-                    continue;
-				} else if (mtr < 0) {
-                    continue;
-				} else if (mtr < sconn->write_buffer.size) {
-					memmove(sconn->write_buffer.buffer, sconn->write_buffer.buffer + mtr, sconn->write_buffer.size - mtr);
-                    sconn->write_buffer.size -= mtr;
-				} else {
-                    sconn->write_buffer.size = 0;
+			if ((revents & POLLOUT) == POLLOUT) {
+				ITER_LLIST(sconn->write_buffer.buffers, value) {
+					skip_into:;
+					struct buffer_entry* entry = value;
+					ssize_t mtr = sconn->tls ?
+						SSL_write(sconn->tls_session, entry->data, entry->size) :
+						write(poll_fds[i].fd, entry->data, entry->size);
+					int serr = (sconn->tls && mtr < 0) ? SSL_get_error(sconn->tls_session, mtr) : 0;
+					if (mtr < 0 && (sconn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) && serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) : errno != EAGAIN)) { // use error queue?
+						closeConn(conn);
+						goto cont;
+					} else if (mtr < 0) {
+						goto cont;
+					} else if (mtr < entry->size) {
+						entry->data += mtr;
+						entry->size -= mtr;
+						sconn->write_buffer.size -= mtr;
+						break;
+					} else {
+						sconn->write_buffer.size -= mtr;
+						pprefree_strict(sconn->write_buffer.pool, entry->data_root);
+						struct llist_node* next = node->next;
+						llist_del(sconn->write_buffer.buffers, node);
+						node = next;
+						if (node == NULL) {
+							break;
+						} else {
+							goto skip_into;
+						}
+					}
+					ITER_LLIST_END();
 				}
 			}
 		    cont:;

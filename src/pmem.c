@@ -84,6 +84,13 @@ void pprefree(struct mempool* pool, void* ptr) {
     free(ptr);
 }
 
+void pprefree_strict(struct mempool* pool, void* ptr) {
+    if (pool != NULL && ptr != NULL && hashset_hasptr(pool->allocations, ptr)) {
+        hashset_remptr(pool->allocations, ptr);
+        free(ptr);
+    }
+}
+
 
 void phook(struct mempool* pool, void (*hook)(void* arg), void* arg) {
     struct hook_entry* entry = pmalloc(pool, sizeof(struct hook_entry));

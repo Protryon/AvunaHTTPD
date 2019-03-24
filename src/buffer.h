@@ -8,20 +8,26 @@
 #include <stdint.h>
 #include "pmem.h"
 #include <stdlib.h>
+#include "llist.h"
 
 struct buffer { // TODO: linked list of fixed arrays instead
     struct mempool* pool;
-    uint8_t* buffer;
+    struct llist* buffers;
     size_t size;
-    size_t capacity;
 };
 
-void buffer_init(struct buffer* buffer, struct mempool* pool, size_t capacity);
+struct buffer_entry {
+    void* data_root;
+    void* data;
+    size_t size;
+};
 
-void buffer_ensure_total_capacity(struct buffer* buffer, size_t capacity);
+void buffer_init(struct buffer* buffer, struct mempool* pool);
 
-void buffer_ensure_capacity(struct buffer* buffer, size_t capacity);
+void buffer_push(struct buffer* buffer, void* data, size_t size);
 
-size_t buffer_consume(struct buffer* buffer, uint8_t** data);
+void buffer_skip(struct buffer* buffer, size_t size);
+
+size_t buffer_pop(struct buffer* buffer, size_t size, uint8_t* data);
 
 #endif //AVUNA_HTTPD_BUFFER_H

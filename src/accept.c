@@ -81,8 +81,8 @@ void run_accept(struct accept_param* param) {
 		conn->pool = pool;
 		conn->conn = pcalloc(pool, sizeof(struct sub_conn));
 		conn->forward_conn = NULL;
-		buffer_init(&conn->conn->read_buffer, pool, 0);
-		buffer_init(&conn->conn->write_buffer, pool, 0);
+		buffer_init(&conn->conn->read_buffer, conn->pool);
+		buffer_init(&conn->conn->write_buffer, conn->pool);
 		conn->conn->tls = ssl;
 		if (ssl) {
 			conn->conn->tls_session = SSL_new(param->binding->ssl_cert->ctx);
@@ -93,7 +93,8 @@ void run_accept(struct accept_param* param) {
 
 		conn->stream_type = STREAM_TYPE_INVALID;
 		conn->stream_fd = -1;
-		buffer_init(&conn->cache_buffer, pool, 0);
+		buffer_init(&conn->cache_buffer, conn->pool);
+
 		conn->proto = (param->binding->mode & BINDING_MODE_HTTP2_ONLY != 0) && (param->binding->mode & BINDING_MODE_HTTP11_ONLY == 0) ? PROTO_HTTP2 : PROTO_HTTP1;
 		conn->nextStream = 2;
 		if (poll(&spfd, 1, -1) < 0) {

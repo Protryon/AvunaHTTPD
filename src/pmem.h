@@ -35,6 +35,8 @@ void* punclaim(struct mempool* pool, void* ptr);
 
 void pprefree(struct mempool* pool, void* ptr);
 
+void pprefree_strict(struct mempool* pool, void* ptr);
+
 void phook(struct mempool* pool, void (*hook)(void* arg), void* arg);
 
 void pchild(struct mempool* parent, struct mempool* child);

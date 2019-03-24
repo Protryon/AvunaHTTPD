@@ -355,7 +355,7 @@ int generateResponse(struct request_session* rs) {
             if (rs->conn->forward_conn == NULL) {
                 rs->conn->forward_conn = pcalloc(rs->pool, sizeof(struct sub_conn));
                 rs->conn->forward_conn->fd = -1;
-                buffer_init(&rs->conn->forward_conn->read_buffer, rs->pool, 0);
+                buffer_init(&rs->conn->forward_conn->read_buffer, rs->conn->pool);
                 //todo: TLS
             }
             resrp: ;
