@@ -31,6 +31,8 @@ struct llist_node* llist_prepend(struct llist* llist, void *data) {
     if (llist->head == NULL) {
         llist->head = node;
         llist->tail = node;
+    } else {
+        llist->head->prev = node;
     }
     llist->head = node;
     ++llist->size;
@@ -43,6 +45,8 @@ struct llist_node* llist_append(struct llist* llist, void *data) {
     if (llist->tail == NULL) {
         llist->head = node;
         llist->tail = node;
+    } else {
+        llist->tail->next = node;
     }
     llist->tail = node;
     ++llist->size;

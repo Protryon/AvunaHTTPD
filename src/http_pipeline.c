@@ -549,16 +549,12 @@ int generateResponse(struct request_session* rs) {
                     const char* name = rs->request->headers->names[i];
                     if (str_eq(name, "Accept-Encoding")) continue;
                     const char* value = rs->request->headers->values[i];
-                    size_t nl = strlen(name);
-                    char nname[nl + 6];
-                    nname[0] = 'H';
-                    nname[1] = 'T';
-                    nname[2] = 'T';
-                    nname[3] = 'P';
-                    nname[4] = '_';
-                    memcpy(nname + 5, name, nl + 1);
-                    nl += 5;
-                    for (int x = 5; x < nl; x++) {
+                    size_t name_length = strlen(name);
+                    char* nname = pmalloc(rs->pool, name_length + 6);
+                    memcpy(nname, "HTTP_", 5);
+                    memcpy(nname + 5, name, name_length + 1);
+                    name_length += 5;
+                    for (int x = 5; x < name_length; x++) {
                         if (nname[x] >= 'a' && nname[x] <= 'z') nname[x] -= ' ';
                         else if (nname[x] == '-') nname[x] = '_';
                     }
@@ -569,7 +565,6 @@ int generateResponse(struct request_session* rs) {
                     ITER_MAP_END();
                 }
 
-                //TODO: deallocate fcgi_params
                 ff.type = FCGI_PARAMS;
                 ff.len = 0;
                 ff.data = NULL;
@@ -663,11 +658,12 @@ int generateResponse(struct request_session* rs) {
 
                         if (hd == 1 && ff.type == FCGI_STDOUT) {
                             hd = 2;
-                            struct headers hdrs;
-                            header_parse(&hdrs, hdd, 0, rs->pool);
-                            for (int i = 0; i < hdrs.count; i++) {
-                                const char* name = hdrs.names[i];
-                                const char* value = hdrs.values[i];
+                            struct headers* hdrs = pcalloc(rs->pool, sizeof(struct headers));
+                            hdrs->pool = rs->pool;
+                            header_parse(hdrs, hdd, 0, rs->pool);
+                            for (int i = 0; i < hdrs->count; i++) {
+                                const char* name = hdrs->names[i];
+                                const char* value = hdrs->values[i];
                                 if (str_eq(name, "Content-Type")) {
                                     ct = value;
                                 } else if (str_eq(name, "Status")) {

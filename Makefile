@@ -15,7 +15,9 @@ OBJS = ${CSRC:.c=.o}
 OBJS_BUILD = ${OBJS:%=${BUILD_DIR}/%}
 LIBS = -lssl -lcrypto -lz -lpthread
 
-debug: CFLAGS += -g -O0
+all: debug
+
+debug: CFLAGS += -g -O0 -DDEBUG
 debug: ${DEPFILE} ${EXECOUT}
 
 prod: CFLAGS += -O3
