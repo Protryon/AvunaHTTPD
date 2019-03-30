@@ -12,6 +12,7 @@ include_directories(src)
 file(GLOB httpd_src
     "src/*.h"
     "src/*.c"
+    "include/avuna/*.h"
 )
 
 add_executable(avuna-httpd ${httpd_src})
