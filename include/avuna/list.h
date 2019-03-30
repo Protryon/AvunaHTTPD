@@ -8,8 +8,8 @@
 #ifndef LIST_H_
 #define LIST_H_
 
+#include <avuna/pmem.h>
 #include <unistd.h>
-#include "pmem.h"
 
 struct list {
     size_t size;

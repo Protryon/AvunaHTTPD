@@ -5,6 +5,7 @@
  *      Author: root
  */
 
+#include <avuna/streams.h>
 #include <stdio.h>
 #include <unistd.h>
 

@@ -4,9 +4,10 @@
  *  Created on: Nov 17, 2015
  *      Author: root
  */
+#include <avuna/util.h>
+#include <avuna/string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include "xstring.h"
 #include <linux/limits.h>
 #include <errno.h>
 #include <sys/stat.h>

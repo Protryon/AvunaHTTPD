@@ -9,6 +9,7 @@
 #define HTTP2_H_
 
 #include <stdint.h>
+#include <unistd.h>
 
 #define FRAME_DATA_ID 0
 #define FRAME_HEADERS_ID 1

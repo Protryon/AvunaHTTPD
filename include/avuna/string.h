@@ -8,11 +8,11 @@
 #ifndef XSTRING_H_
 #define XSTRING_H_
 
+#include <avuna/pmem.h>
+#include <avuna/list.h>
+#include <avuna/hash.h>
 #include <string.h>
 #include <stdlib.h>
-#include "list.h"
-#include "hash.h"
-#include "pmem.h"
 
 char* str_trim(char* str);
 

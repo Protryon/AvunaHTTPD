@@ -5,8 +5,8 @@
 #ifndef AVUNA_HTTPD_WAKE_THREAD_H
 #define AVUNA_HTTPD_WAKE_THREAD_H
 
-#include "list.h"
-#include "server.h"
+#include <avuna/list.h>
+#include <avuna/server.h>
 
 struct wake_thread_arg {
     struct list* work_params;

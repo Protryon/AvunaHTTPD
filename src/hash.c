@@ -1,7 +1,7 @@
 
+#include <avuna/hash.h>
 #include <stdint.h>
 #include <unistd.h>
-#include "hash.h"
 #include <string.h>
 #include <stdlib.h>
 

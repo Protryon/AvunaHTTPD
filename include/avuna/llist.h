@@ -8,8 +8,8 @@
 #ifndef LLIST_H_
 #define LLIST_H_
 
+#include <avuna/pmem.h>
 #include <unistd.h>
-#include "pmem.h"
 
 struct llist_node {
     void* data;

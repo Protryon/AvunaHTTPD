@@ -8,9 +8,9 @@
 #ifndef UTIL_H_
 #define UTIL_H_
 
+#include <avuna/pmem.h>
 #include <sys/stat.h>
 #include <stdlib.h>
-#include "pmem.h"
 
 void* xcopy(const void* ptr, size_t size, size_t expand, struct mempool* pool);
 

@@ -13,10 +13,10 @@
 #define VHOST_REDIRECT 2
 #define VHOST_MOUNT 3
 
-#include "cache.h"
+#include <avuna/cache.h>
 #include <sys/socket.h>
 #include <stdint.h>
-#include "tls.h"
+#include <avuna/tls.h>
 
 struct errpage {
     uint16_t code;

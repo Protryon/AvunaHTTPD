@@ -8,10 +8,8 @@
 #ifndef WORK_H_
 #define WORK_H_
 
-#include "accept.h"
-#include "log.h"
-#include "cache.h"
-#include "server.h"
+#include <avuna/server.h>
+#include <stdlib.h>
 
 #define PROTO_HTTP1 0
 #define PROTO_HTTP2 1

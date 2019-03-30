@@ -8,9 +8,9 @@
 #ifndef TLS_H_
 #define TLS_H_
 
+#include <avuna/pmem.h>
 #include <openssl/ssl.h>
-#include "pmem.h"
-
+=
 struct cert {
     SSL_CTX* ctx;
     int isDummy;

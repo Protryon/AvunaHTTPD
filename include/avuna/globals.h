@@ -8,8 +8,9 @@
 #ifndef GLOBALS_H_
 #define GLOBALS_H_
 
-#include <unistd.h>
-#include "pmem.h"
+#include <avuna/pmem.h>
+#include <avuna/config.h>
+#include <avuna/log.h>
 
 struct config* cfg;
 struct logsess* delog;

@@ -6,20 +6,9 @@
  */
 
 #include "http.h"
-#include "xstring.h"
+#include <avuna/http.h>
+#include <avuna/string.h>
 #include <errno.h>
-
-const char* getMethod(int m) {
-    if (m == METHOD_GET) {
-        return "GET";
-    } else if (m == METHOD_POST) {
-        return "POST";
-    } else if (m == METHOD_HEAD) {
-        return "HEAD";
-    } else {
-        return "UNKNOWN";
-    }
-}
 
 int parseRequest(struct request_session* rs, char* data, size_t maxPost) {
     struct request* req = rs->request;

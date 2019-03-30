@@ -5,9 +5,10 @@
  *      Author: root
  */
 
-#include "list.h"
+#include <avuna/list.h>
+#include <avuna/pmem.h>
 #include <errno.h>
-#include "xstring.h"
+#include <stdlib.h>
 
 struct list* list_new(size_t initial_capacity, struct mempool* pool) {
     struct list* list = pmalloc(pool, sizeof(struct list));

@@ -5,6 +5,7 @@
 #ifndef AVUNA_HTTPD_HEADERS_H
 #define AVUNA_HTTPD_HEADERS_H
 
+#include <avuna/pmem.h>
 #include <stdlib.h>
 
 // we don't use a hashmap as order is not entirely irrelevant

@@ -2,8 +2,8 @@
 // Created by p on 2/10/19.
 //
 
-#include "headers.h"
-#include "xstring.h"
+#include <avuna/headers.h>
+#include <avuna/string.h>
 
 
 const char* header_get(const struct headers* headers, const char* name) {

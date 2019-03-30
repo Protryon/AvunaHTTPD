@@ -8,7 +8,10 @@
 #ifndef OQUEUE_H_
 #define OQUEUE_H_
 
+#include <avuna/pmem.h>
 #include <pthread.h>
+#include <stdlib.h>
+#include <time.h>
 
 struct queue {
     size_t size;

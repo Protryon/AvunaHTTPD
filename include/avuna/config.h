@@ -8,9 +8,9 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-#include "hash.h"
-#include "list.h"
-#include "pmem.h"
+#include <avuna/pmem.h>
+#include <avuna/hash.h>
+#include <avuna/list.h>
 
 struct config_node {
     char* category;

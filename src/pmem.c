@@ -2,7 +2,8 @@
 // Created by p on 2/10/19.
 //
 
-#include "pmem.h"
+#include <avuna/pmem.h>
+#include <avuna/hash.h>
 #include "smem.h"
 
 struct hook_entry {

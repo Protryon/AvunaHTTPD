@@ -10,8 +10,8 @@
 
 #include <stdlib.h>
 
-ssize_t readLine(int fd, char* line, ssize_t len);
+ssize_t readLine(int fd, char* line, size_t len);
 
-ssize_t writeLine(int fd, char* line, ssize_t len);
+ssize_t writeLine(int fd, char* line, size_t len);
 
 #endif /* STREAMS_H_ */

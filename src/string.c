@@ -1,13 +1,14 @@
 /*
- * xstring.c
+ * string.c
  *
  *  Created on: Nov 17, 2015
  *      Author: root
  */
+#include <avuna/pmem.h>
+#include <avuna/string.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
-#include "pmem.h"
 
 char* str_trim(char* str) {
     if (str == NULL) return NULL;

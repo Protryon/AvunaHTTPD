@@ -5,10 +5,9 @@
  *      Author: root
  */
 
-#include "queue.h"
-
+#include <avuna/queue.h>
+#include <avuna/string.h>
 #include <errno.h>
-#include "xstring.h"
 
 struct queue* queue_new(size_t capacity, int multithreaded, struct mempool* pool) {
     struct queue* queue = pmalloc(pool, sizeof(struct queue));

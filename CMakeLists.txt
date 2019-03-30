@@ -7,7 +7,7 @@ set(CMAKE_C_STANDARD 11)
 
 set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wno-discarded-qualifiers -DDEBUG")
 
-include_directories(src)
+include_directories(src include/)
 
 file(GLOB httpd_src
     "src/*.h"

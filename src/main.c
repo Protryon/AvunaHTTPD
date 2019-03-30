@@ -5,13 +5,21 @@
  *      Author: root
  */
 
+#include "accept.h"
+#include "work.h"
+#include "wake_thread.h"
+#include <avuna/config.h>
+#include <avuna/string.h>
+#include <avuna/version.h>
+#include <avuna/util.h>
+#include <avuna/globals.h>
+#include <avuna/mime.h>
+#include <avuna/tls.h>
+#include <avuna/vhost.h>
+#include <avuna/pmem_hooks.h>
 #include <unistd.h>
 #include <stdio.h>
-#include "config.h"
 #include <errno.h>
-#include "xstring.h"
-#include "version.h"
-#include "util.h"
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -19,15 +27,8 @@
 #include <sys/un.h>
 #include <arpa/inet.h>
 #include <pthread.h>
-#include "accept.h"
-#include "globals.h"
-#include "mime.h"
 #include <openssl/conf.h>
-#include "tls.h"
-#include "vhost.h"
 #include <sys/resource.h>
-#include "pmem_hooks.h"
-#include "wake_thread.h"
 
 int load_vhost_htdocs(struct config_node* config_node, struct vhost* vhost) {
     struct vhost_htdocs* htdocs = &vhost->sub.htdocs;

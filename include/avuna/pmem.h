@@ -8,8 +8,8 @@
 
 // this memory pool is a lie, this is just allocation tracking for lazy deallocation -- not preallocation
 
-#include "hash.h"
-#include "list.h"
+#include <avuna/hash.h>
+#include <avuna/list.h>
 
 // single thread access only!
 struct mempool {

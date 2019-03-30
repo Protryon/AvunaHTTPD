@@ -1,9 +1,9 @@
 #ifndef __HASH_H__
 #define __HASH_H__
 
+#include <avuna/pmem.h>
 #include <stdint.h>
 #include <unistd.h>
-#include "pmem.h"
 
 struct hashmap_bucket_entry {
     uint64_t umod_hash;

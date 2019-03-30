@@ -10,59 +10,11 @@
 #define HTTP_H_
 
 #include <stdlib.h>
-#include "accept.h"
-#include "pmem.h"
-#include "headers.h"
-
-#define METHOD_UNK -1
-#define METHOD_GET 0
-#define METHOD_POST 1
-#define METHOD_HEAD 2
-
-const char* getMethod(int m);
-
-struct request_session {
-    struct work_param* worker;
-    struct conn* conn;
-    struct response* response;
-    struct request* request;
-    struct mempool* pool;
-};
-
-#define STREAM_TYPE_INVALID -1
-#define STREAM_TYPE_RAW 0
-#define STREAM_TYPE_CHUNKED 1
-
-struct body {
-    char* mime_type;
-    size_t len;
-    unsigned char* data;
-    int stream_fd;
-    int stream_type;
-};
-
-struct request {
-    int method;
-    char* path;
-    char* version;
-    struct headers* headers;
-    struct body* body; // may be NULL
-    int add_to_cache;
-    struct vhost* vhost;
-};
+#include <avuna/http.h>
 
 int parseRequest(struct request_session* rs, char* data, size_t maxPost);
 
 unsigned char* serializeRequest(struct request_session* rs, size_t* len);
-
-struct response {
-    char* version;
-    char* code;
-    struct headers* headers;
-    struct body* body; // may be NULL
-    int parsed;
-    struct scache* fromCache;
-};
 
 int parseResponse(struct request_session* rs, char* data);
 

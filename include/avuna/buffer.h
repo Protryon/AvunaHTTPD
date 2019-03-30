@@ -5,10 +5,10 @@
 #ifndef AVUNA_HTTPD_BUFFER_H
 #define AVUNA_HTTPD_BUFFER_H
 
+#include <avuna/pmem.h>
+#include <avuna/llist.h>
 #include <stdint.h>
-#include "pmem.h"
 #include <stdlib.h>
-#include "llist.h"
 
 struct buffer { // TODO: linked list of fixed arrays instead
     struct mempool* pool;

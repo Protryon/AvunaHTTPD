@@ -5,11 +5,11 @@
 #ifndef AVUNA_HTTPD_PROVIDER_H
 #define AVUNA_HTTPD_PROVIDER_H
 
+#include <avuna/pmem.h>
+#include <avuna/http.h>
+#include <avuna/hash.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include "http.h"
-#include "hash.h"
-#include "pmem.h"
 
 struct hashmap* available_provider_types; // name -> struct provider* (name/extra is NULL)
 

@@ -9,6 +9,7 @@
 #define MIME_H_
 
 #include <unistd.h>
+#include <avuna/hash.h>
 
 struct hashmap* mime_map;
 

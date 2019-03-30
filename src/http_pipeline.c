@@ -3,17 +3,17 @@
 //
 
 #include "http_pipeline.h"
+#include <avuna/string.h>
+#include <avuna/util.h>
+#include <avuna/version.h>
+#include <avuna/mime.h>
+//#include "../modules/fcgi/src/fcgi_connection_manager.h"
+//#include "../modules/fcgi/src/fcgi.h"
+#include <avuna/pmem_hooks.h>
 #include <errno.h>
 #include <arpa/inet.h>
 #include <zlib.h>
 #include <fcntl.h>
-#include "xstring.h"
-#include "util.h"
-#include "version.h"
-#include "mime.h"
-#include "fcgi_connection_manager.h"
-#include "fcgi.h"
-#include "pmem_hooks.h"
 
 char* escapehtml(struct mempool* pool, const char* orig) {
     size_t len = strlen(orig);

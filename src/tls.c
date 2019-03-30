@@ -5,8 +5,7 @@
  *      Author: root
  */
 
-#include "tls.h"
-#include "globals.h"
+#include <avuna/tls.h>
 
 struct cert* loadCert(const char* cert, const char* key, struct mempool* pool) {
     const SSL_METHOD* method = SSLv23_method();

@@ -6,14 +6,17 @@
  */
 
 #include "work.h"
-#include <errno.h>
-#include <poll.h>
-#include "util.h"
-#include <sys/ioctl.h>
-#include <arpa/inet.h>
 #include "vhost.h"
 #include "http_pipeline.h"
-#include "pmem_hooks.h"
+#include <avuna/util.h>
+#include <avuna/vhost.h>
+#include <avuna/http.h>
+#include <avuna/pmem.h>
+#include <avuna/pmem_hooks.h>
+#include <errno.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <arpa/inet.h>
 
 void closeConn(struct conn* conn) {
     pfree(conn->pool);

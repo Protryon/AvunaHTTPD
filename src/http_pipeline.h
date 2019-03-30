@@ -5,7 +5,7 @@
 #ifndef AVUNA_HTTPD_HTTP_PIPELINE_H
 #define AVUNA_HTTPD_HTTP_PIPELINE_H
 
-#include "vhost.h"
+#include <avuna/vhost.h>
 #include "work.h"
 
 void generateDefaultErrorPage(struct request_session* rs, struct vhost* vh, const char* msg);

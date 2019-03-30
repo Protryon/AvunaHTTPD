@@ -5,14 +5,14 @@
 #ifndef AVUNA_HTTPD_VHOST_H
 #define AVUNA_HTTPD_VHOST_H
 
-#include "cache.h"
+#include <avuna/pmem.h>
+#include <avuna/cache.h>
+#include <avuna/tls.h>
+#include <avuna/list.h>
+#include <avuna/http.h>
+#include <avuna/config.h>
 #include <sys/socket.h>
 #include <stdint.h>
-#include "tls.h"
-#include "list.h"
-#include "pmem.h"
-#include "http.h"
-#include "config.h"
 
 struct hashmap* registered_vhost_types;
 

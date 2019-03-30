@@ -5,14 +5,15 @@
  *      Author: root
  */
 #include "accept.h"
+#include <avuna/connection.h>
+#include <avuna/tls.h>
+#include <avuna/vhost.h>
+#include <avuna/globals.h>
+#include <avuna/pmem_hooks.h>
 #include <errno.h>
 #include <netinet/tcp.h>
 #include <fcntl.h>
 #include <poll.h>
-#include "tls.h"
-#include "vhost.h"
-#include "globals.h"
-#include "pmem_hooks.h"
 
 int accept_sni_callback(SSL* ssl, int* ad, struct accept_param* param) {
     if (ssl == NULL || param == NULL) return SSL_TLSEXT_ERR_NOACK;

@@ -4,6 +4,9 @@
 
 #include "wake_thread.h"
 #include "work.h"
+#include <avuna/queue.h>
+#include <avuna/log.h>
+#include <unistd.h>
 #include <errno.h>
 
 #pragma clang diagnostic push

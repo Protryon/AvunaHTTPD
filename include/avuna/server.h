@@ -5,12 +5,13 @@
 #ifndef AVUNA_HTTPD_SERVER_H
 #define AVUNA_HTTPD_SERVER_H
 
+#include <avuna/pmem.h>
+#include <avuna/list.h>
+#include <avuna/queue.h>
+#include <avuna/log.h>
 #include <netinet/in.h>
 #include <sys/un.h>
-#include "list.h"
 #include <stdint.h>
-#include "queue.h"
-#include "log.h"
 
 #define BINDING_TCP4 0
 #define BINDING_TCP6 1

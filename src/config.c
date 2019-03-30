@@ -5,15 +5,14 @@
  *      Author: root
  */
 
+#include <avuna/config.h>
+#include <avuna/string.h>
+#include <avuna/streams.h>
+#include <avuna/util.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-
-#include "util.h"
-#include "config.h"
-#include "streams.h"
-#include "xstring.h"
 
 struct config* loadConfig(const char* file) {
     if (file == NULL) {

@@ -7,7 +7,7 @@ CFLAGS = -std=gnu11 -Wno-discarded-qualifiers
 CFLAGSDEP = ${CFLAGS} -MM
 
 EXECOUT = avuna-httpd
-SRCDIRS = src
+SRCDIRS = src include
 SOURCELIST = ${foreach MOD, ${SRCDIRS}, ${wildcard ${MOD}/*.h ${MOD}/*.c}}
 CSRC = ${filter %.c,${SOURCELIST}}
 BUILD_DIR = build

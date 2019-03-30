@@ -4,11 +4,12 @@
  *  Created on: Nov 22, 2015
  *      Author: root
  */
-#include "log.h"
+#include <avuna/log.h>
+#include <avuna/string.h>
 #include <sys/time.h>
-#include "xstring.h"
 #include <errno.h>
 #include <stdarg.h>
+#include <pthread.h>
 
 void acclog(struct logsess* logsess, char* template, ...) {
     if (!logsess->pi) {

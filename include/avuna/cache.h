@@ -8,14 +8,11 @@
 #ifndef CACHE_H_
 #define CACHE_H_
 
+#include <avuna/pmem.h>
+#include <avuna/list.h>
+#include <avuna/hash.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include "pmem.h"
-#include "list.h"
-#include "hash.h"
-
-#define CE_NONE 0
-#define CE_GZIP 1
 
 struct scache {
     char* request_path;

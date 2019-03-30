@@ -5,11 +5,11 @@
  *      Author: root
  */
 
-#include "mime.h"
-#include "xstring.h"
+#include <avuna/mime.h>
+#include <avuna/string.h>
+#include <avuna/globals.h>
+#include <avuna/streams.h>
 #include <fcntl.h>
-#include "streams.h"
-#include "globals.h"
 
 int loadMimes(const char* file) {
     int fd = open(file, O_RDONLY);

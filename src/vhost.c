@@ -5,9 +5,10 @@
  *      Author: root
  */
 
-#include <stdlib.h>
-#include "xstring.h"
 #include "vhost.h"
+#include <avuna/vhost.h>
+#include <avuna/string.h>
+#include <stdlib.h>
 
 int domeq(const char* dom1, const char* dom2) {
     if (str_eq_case(dom1, "@") || str_eq_case(dom1, "*")) return 1;

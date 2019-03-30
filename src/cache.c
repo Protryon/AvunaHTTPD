@@ -5,7 +5,7 @@
  *      Author: root
  */
 
-#include "cache.h"
+#include <avuna/cache.h>
 
 struct cache* cache_new(size_t max_size) {
     struct mempool* pool = mempool_new();

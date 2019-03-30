@@ -2,7 +2,7 @@
 // Created by p on 2/26/19.
 //
 
-#include "buffer.h"
+#include <avuna/buffer.h>
 #include <string.h>
 
 void buffer_init(struct buffer* buffer, struct mempool* pool) {

@@ -5,11 +5,12 @@
 #ifndef AVUNA_HTTPD_MODULE_H
 #define AVUNA_HTTPD_MODULE_H
 
+#include <avuna/pmem.h>
+#include <avuna/hash.h>
+#include <avuna/config.h>
 #include <stdint.h>
-#include "pmem.h"
-#include "config.h"
 
-struct hashmap* modules;
+struct hashmap* loaded_modules;
 
 // modules add providers, provider types, and vhost types
 struct module {
