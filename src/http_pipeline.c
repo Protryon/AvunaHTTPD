@@ -44,42 +44,6 @@ void init_response(struct request_session* rs) {
 }
 
 
-void handle_vhost_redirect(struct request_session* rs) {
-    struct vhost* vhost = rs->request->vhost;
-    rs->response->code = "302 Found";
-    header_add(rs->response->headers, "Location", vhost->sub.redirect.redir);
-}
-
-void handle_vhost_mount(struct request_session* rs) {
-    struct vhost* vhost = rs->request->vhost;
-    struct vhost_mount* vhm = &vhost->sub.mount;
-    char* oid = vhost->id;
-    vhost = NULL;
-    for (int i = 0; i < vhm->mounts->count; i++) {
-        struct mountpoint* mount = vhm->mounts->data[i];
-        if (str_prefixes_case(rs->request->path, mount->path)) {
-            for (size_t x = 0; x < rs->worker->server->vhosts->count; x++) {
-                struct vhost* iter_vhost = rs->worker->server->vhosts->data[x];
-                if (str_eq(mount->vhost, iter_vhost->id) && !str_eq(iter_vhost->id, oid)) {
-                    if (!vhm->keep_prefix) {
-                        size_t vhpls = strlen(mount->path);
-                        char* tmpp = str_dup(rs->request->path, 0, rs->pool);
-                        char* tmpp2 = tmpp + vhpls;
-                        if (tmpp2[0] != '/') {
-                            tmpp2--;
-                            tmpp2[0] = '/';
-                        }
-                        rs->request->path = tmpp2;
-                    }
-                    vhost = iter_vhost;
-                    rs->request->vhost = vhost;
-                    break;
-                }
-            }
-            if (vhost != NULL) break;
-        }
-    }
-}
 
 int generateResponse(struct request_session* rs) {
     init_response(rs);

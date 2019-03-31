@@ -11,10 +11,10 @@ struct vhost_reverse_proxy {
     struct vhost_htbase base;
     struct sockaddr* forward_address;
     socklen_t forward_address_length;
-    char* forward_prefix_path;
+    char* forward_prefix_path; // TODO: use
     struct headers* appended_headers;
     struct hashset* dynamic_types;
-    int xforwarded_header;
+    int xforwarded_header; // TODO: use
 };
 
 

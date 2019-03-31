@@ -15,7 +15,6 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include "../../../src/vhost.h"
 
 
 void handle_vhost_htdocs(struct request_session* rs) {
@@ -380,7 +379,7 @@ void handle_vhost_htdocs(struct request_session* rs) {
             } else {
                 MD5_CTX md5ctx;
                 MD5_Init(&md5ctx);
-                MD5_Update(&md5ctx, rs->response->body->data, rs->response->body->len);
+                MD5_Update(&md5ctx, rs->response->body->data, rs->response->body->data.data.size);
                 unsigned char rawmd5[16];
                 MD5_Final(rawmd5, &md5ctx);
                 etag[34] = 0;

@@ -18,24 +18,6 @@
 #include <stdint.h>
 #include <avuna/tls.h>
 
-struct errpage {
-    uint16_t code;
-    char* page;
-};
-
-struct vhost_redirect {
-    char* redir;
-};
-
-struct mountpoint {
-    char* path;
-    char* vhost;
-};
-
-struct vhost_mount {
-    struct list* mounts;
-    uint8_t keep_prefix;
-};
 
 
 struct vhost {

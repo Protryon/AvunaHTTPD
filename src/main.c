@@ -77,11 +77,6 @@ int load_vhost(struct config_node* config_node, struct vhost* vhost) {
         return 1;
     } else if (vhost->type == VHOST_REDIRECT) {
         struct vhost_redirect* redirect = &vhost->sub.redirect;
-        redirect->redir = getConfigValue(config_node, "redirect");
-        if (redirect->redir == NULL) {
-            errlog(delog, "No redirect at vhost: %s", config_node->name);
-            return 1;
-        }
     } else if (vhost->type == VHOST_MOUNT) {
         struct vhost_mount* mount = &vhost->sub.mount;
         mount->mounts = list_new(8, vhost->pool);
