@@ -37,6 +37,7 @@ struct conn {
         struct sockaddr_in tcp4;
     } addr;
     struct server_binding* incoming_binding;
+    struct server_info* server;
     struct sub_conn* conn;
     struct sub_conn* forward_conn;
     size_t post_left;

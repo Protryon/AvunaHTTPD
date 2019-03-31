@@ -6,8 +6,9 @@
  */
 
 #include "fcgi.h"
+#include <avuna/string.h>
 #include <errno.h>
-#include "xstring.h"
+
 
 int writeFCGIFrame(int fd, struct fcgiframe* fcgif) {
     unsigned char header[8];

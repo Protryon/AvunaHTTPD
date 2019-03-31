@@ -17,7 +17,7 @@ struct module {
     struct mempool* pool;
     char* name;
     void* extra;
-    void (*initialize)(struct module* module, struct config_node* node);
+    void (*initialize)(struct module* module);
     void (*uninitialize)(struct module* module);
 };
 

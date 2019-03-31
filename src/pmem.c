@@ -112,10 +112,30 @@ void _punhook_parent(struct _mempool_pair* pair) {
     }
 }
 
+void _prehook_child(struct mempool* child, struct mempool* new_parent) {
+    for (size_t i = 0; i < child->hooks->count; ++i) {
+        struct hook_entry* entry = (struct hook_entry*) child->hooks->data[i];
+        if (entry->hook == _punhook_parent) {
+            struct _mempool_pair* pair = entry->arg;
+            pair->parent = new_parent;
+            return;
+        }
+    }
+}
+
 void pchild(struct mempool* parent, struct mempool* child) {
     phook(parent, pfree, child);
     struct _mempool_pair* pair = pmalloc(child, sizeof(struct _mempool_pair));
     pair->child = child;
     pair->parent = parent;
     phook(child, _punhook_parent, pair);
+}
+
+void pxfer_parent(struct mempool* current_parent, struct mempool* new_parent, struct mempool* child) {
+    struct _mempool_pair unhook;
+    unhook.parent = current_parent;
+    unhook.child = child;
+    _punhook_parent(&unhook);
+    _prehook_child(child, new_parent);
+    phook(new_parent, pfree, child);
 }

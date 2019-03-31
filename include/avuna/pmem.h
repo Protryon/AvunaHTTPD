@@ -41,4 +41,6 @@ void phook(struct mempool* pool, void (* hook)(void* arg), void* arg);
 
 void pchild(struct mempool* parent, struct mempool* child);
 
+void pxfer_parent(struct mempool* current_parent, struct mempool* new_parent, struct mempool* child);
+
 #endif //AVUNA_HTTPD_PMEM_H

@@ -11,6 +11,7 @@
 #include <avuna/pmem.h>
 #include <avuna/list.h>
 #include <avuna/hash.h>
+#include <avuna/provider.h>
 #include <stdlib.h>
 #include <pthread.h>
 
@@ -20,7 +21,7 @@ struct scache {
     char etag[35];
     char* code;
     struct headers* headers;
-    struct body* body;
+    struct provision* body;
     size_t size;
     struct mempool* pool;
 };

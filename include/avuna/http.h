@@ -11,6 +11,7 @@
 #include <avuna/provider.h>
 #include <avuna/server.h>
 #include <avuna/cache.h>
+#include <avuna/connection.h>
 
 // perhaps a data attachment system?
 
@@ -35,10 +36,11 @@ struct response {
 
 
 struct request_session {
-    struct work_param* worker;
     struct conn* conn;
     struct response* response;
     struct request* request;
+    char* request_htpath;
+    char* request_extra_path;
     struct vhost* vhost;
     struct mempool* pool;
 };

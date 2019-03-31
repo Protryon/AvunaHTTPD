@@ -8,7 +8,7 @@
 #include <avuna/vhost.h>
 #include "work.h"
 
-void generateDefaultErrorPage(struct request_session* rs, struct vhost* vh, const char* msg);
+void generateDefaultErrorPage(struct request_session* rs, const char* msg);
 
 int generateResponse(struct request_session* rs);
 

@@ -8,6 +8,7 @@
 #include <avuna/pmem.h>
 #include <avuna/http.h>
 #include <avuna/hash.h>
+#include <avuna/config.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -23,18 +24,21 @@ struct provision_data {
     size_t size;
 };
 
+struct provision_stream {
+    int stream_fd;
+    void* extra;
+    ssize_t (*read)(struct provision* provision, struct provision_data* buffer);
+};
+
 struct provision {
     uint8_t type;
     union {
-        struct {
-            int stream_fd;
-            void* extra;
-            struct provision_data (*read)(struct provision* provision);
-        } stream;
+        struct provision_stream stream;
         struct provision_data data;
     } data;
     char* content_type;
     void* extra;
+    struct mempool* pool;
 };
 
 struct provider {
@@ -44,5 +48,7 @@ struct provider {
     struct provision* (*provide_data)(struct provider* provider, struct request_session* rs);
     void* extra;
 };
+
+ssize_t raw_stream_read(struct provision* provision, struct provision_data* buffer);
 
 #endif //AVUNA_HTTPD_PROVIDER_H

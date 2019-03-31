@@ -10,7 +10,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
-#include "pmem.h"
+#include <avuna/pmem.h>
 
 #define FCGI_VERSION_1 1
 #define FCGI_BEGIN_REQUEST 1
