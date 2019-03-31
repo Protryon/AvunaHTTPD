@@ -47,10 +47,10 @@ int parseRequest(struct request_session* rs, char* data, size_t maxPost) {
     header_parse(request->headers, temp, 0, rs->pool);
     request->body = NULL;
 
-    //TODO: stream posts?
-    const char* cl = header_get(request->headers, "Content-Length");
-    if (str_eq(request->method, "POST") && cl != NULL && str_isunum(cl)) {
-        size_t cli = strtoull(cl, NULL, 10);
+    //TODO: for streaming posts (large posts or chunked posts), return a streamed type provision
+    const char* content_length = header_get(request->headers, "Content-Length");
+    if (str_eq(request->method, "POST") && content_length != NULL && str_isunum(content_length)) {
+        size_t cli = strtoull(content_length, NULL, 10);
         if (cli > 0 && (maxPost == 0 || cli < maxPost)) {
             request->body = pcalloc(rs->pool, sizeof(struct provision));
             request->body->pool = rs->pool;
@@ -64,112 +64,121 @@ int parseRequest(struct request_session* rs, char* data, size_t maxPost) {
     return 0;
 }
 
-unsigned char* serializeRequest(struct request_session* rs, size_t* len) {
-    *len = 0;
-    size_t vl = strlen(rs->request->method);
-    size_t cl = strlen(rs->request->path);
-    size_t rvl = strlen(rs->request->http_version);
-    *len = vl + 1 + cl + 1 + rvl + 2;
-    size_t hl = 0;
-    char* headers = header_serialize(rs->request->headers, &hl);
-    *len += hl;
-    if (rs->response->body != NULL && rs->response->body->type == PROVISION_DATA) {
-        *len += rs->response->body->data.data.size;
+unsigned char* serializeRequest(struct request_session* rs, size_t* out_len) {
+    *out_len = 0;
+    size_t method_length = strlen(rs->request->method);
+    size_t path_length = strlen(rs->request->path);
+    size_t http_version_length = strlen(rs->request->http_version);
+    *out_len = method_length + 1 + path_length + 1 + http_version_length + 2;
+    size_t headers_length = 0;
+    char* headers = header_serialize(rs->request->headers, &headers_length);
+    *out_len += headers_length;
+    if (rs->request->body != NULL && rs->request->body->type == PROVISION_DATA) {
+        *out_len += rs->request->body->data.data.size;
     }
-    unsigned char* ret = pmalloc(rs->pool, *len);
-    size_t wr = 0;
-    memcpy(ret, rs->request->method, vl);
-    wr += vl;
-    ret[wr++] = ' ';
-    memcpy(ret + wr, rs->request->path, cl);
-    wr += cl;
-    ret[wr++] = ' ';
-    memcpy(ret + wr, rs->request->http_version, rvl);
-    wr += rvl;
-    ret[wr++] = '\r';
-    ret[wr++] = '\n';
-    memcpy(ret + wr, headers, hl);
-    wr += hl;
-    if (rs->response->body != NULL && rs->response->body->type == PROVISION_DATA) {
-        memcpy(ret + wr, rs->response->body->data.data.data, rs->response->body->data.data.size);
-        wr += rs->response->body->data.data.size;
+    unsigned char* output = pmalloc(rs->pool, *out_len);
+    size_t written = 0;
+    memcpy(output, rs->request->method, method_length);
+    written += method_length;
+    output[written++] = ' ';
+    memcpy(output + written, rs->request->path, path_length);
+    written += path_length;
+    output[written++] = ' ';
+    memcpy(output + written, rs->request->http_version, http_version_length);
+    written += http_version_length;
+    output[written++] = '\r';
+    output[written++] = '\n';
+    memcpy(output + written, headers, headers_length);
+    written += headers_length;
+    // TODO: don't copy body here
+    if (rs->request->body != NULL && rs->request->body->type == PROVISION_DATA) {
+        memcpy(output + written, rs->request->body->data.data.data, rs->request->body->data.data.size);
+        written += rs->request->body->data.data.size;
     }
-    return ret;
+    return output;
 }
 
-int parseResponse(struct request_session* rs, char* data) {
+int parseResponse(struct request_session* rs, struct sub_conn* sub_conn, char* data) {
     rs->response->parsed = 1;
-    char* cd = data;
-    char* eol1 = strchr(cd, '\n');
-    if (eol1 == NULL) {
+    char* current_data = data;
+    char* eol = strchr(current_data, '\n');
+    if (eol == NULL) {
         errno = EINVAL;
         return -1;
     }
-    eol1[0] = 0;
-    char* hdrs = eol1 + 1;
-    eol1 = strchr(cd, ' ');
-    if (eol1 == NULL) {
+    eol[0] = 0;
+    char* headers = eol + 1;
+    eol = strchr(current_data, ' ');
+    if (eol == NULL) {
         errno = EINVAL;
         return -1;
     }
-    eol1[0] = 0;
-    eol1++;
-    rs->response->http_version = str_dup(cd, 0, rs->pool);
-    size_t eols = strlen(eol1);
-    if (eol1[eols - 1] == '\r') eol1[eols - 1] = 0;
-    rs->response->code = str_dup(eol1, 0, rs->pool);
-    header_parse(rs->response->headers, hdrs, 3, rs->pool);
-    const char* cl = header_get(rs->response->headers, "Content-Length");
-    if (cl != NULL && str_isunum(cl)) {
-        size_t cli = strtoull(cl, NULL, 10);
-        rs->response->body = pmalloc(rs->pool, sizeof(struct body));
-        rs->response->body->len = cli;
-        rs->response->body->data = NULL;
-        rs->response->body->mime_type = header_get(rs->response->headers, "Content-Type");
-        if (rs->response->body->mime_type == NULL) {
-            rs->response->body->mime_type = "text/html";
+    eol[0] = 0;
+    eol++;
+    rs->response->http_version = str_dup(current_data, 0, rs->pool);
+    size_t eol_length = strlen(eol);
+    if (eol[eol_length - 1] == '\r') eol[eol_length - 1] = 0;
+    rs->response->code = str_dup(eol, 0, rs->pool);
+    header_parse(rs->response->headers, headers, 3, rs->pool);
+    const char* content_length = header_get(rs->response->headers, "Content-Length");
+    if (content_length != NULL && str_isunum(content_length)) {
+        size_t content_length_int = strtoull(content_length, NULL, 10);
+        rs->response->body = pcalloc(rs->pool, sizeof(struct provision));
+        rs->response->body->pool = mempool_new();
+        pchild(rs->pool, rs->response->body->pool);
+        rs->response->body->type = PROVISION_DATA;
+        rs->response->body->data.data.size = content_length_int;
+        rs->response->body->content_type = (char*) header_get(rs->response->headers, "Content-Type");
+        if (rs->response->body->content_type == NULL) {
+            rs->response->body->content_type = "text/html";
         }
-        rs->response->body->stream_fd = rs->conn->forward_conn->fd;
-        rs->response->body->stream_type = STREAM_TYPE_RAW;
     }
-    const char* te = header_get(rs->response->headers, "Transfer-Encoding");
-    if (te != NULL) {
-        rs->response->body = pmalloc(rs->pool, sizeof(struct body));
-        rs->response->body->len = 0;
-        rs->response->body->data = NULL;
-        rs->response->body->mime_type = header_get(rs->response->headers, "Content-Type");
-        if (rs->response->body->mime_type == NULL) {
-            rs->response->body->mime_type = "text/html";
+    const char* transfer_encoding = header_get(rs->response->headers, "Transfer-Encoding");
+    if (transfer_encoding != NULL) {
+        rs->response->body = pcalloc(rs->pool, sizeof(struct provision));
+        rs->response->body->pool = mempool_new();
+        pchild(rs->pool, rs->response->body->pool);
+        rs->response->body->type = PROVISION_STREAM;
+        rs->response->body->data.stream.stream_fd = -1;
+        rs->response->body->data.stream.known_length = -1;
+        rs->response->body->data.stream.read = chunked_read;
+        struct chunked_stream_extra* extra = rs->response->body->data.stream.extra = pcalloc(rs->response->body->pool, sizeof(struct chunked_stream_extra));
+        extra->sub_conn = sub_conn;
+        extra->remaining = -1;
+        rs->response->body->content_type = (char*) header_get(rs->response->headers, "Content-Type");
+        if (rs->response->body->content_type == NULL) {
+            rs->response->body->content_type = "text/html";
         }
-        rs->response->body->stream_fd = rs->conn->forward_conn->fd;
-        rs->response->body->stream_type = STREAM_TYPE_CHUNKED;
     }
     return 0;
 }
 
-unsigned char* serializeResponse(struct request_session* rs, size_t* len) {
-    *len = 0;
-    size_t vl = strlen(rs->response->http_version);
-    size_t cl = strlen(rs->response->code);
-    *len = vl + 1 + cl + 2;
-    size_t hl = 0;
-    char* headers = header_serialize(rs->response->headers, &hl);
-    *len += hl;
-    if (rs->response->body != NULL && rs->response->body->stream_type < 0) *len += rs->response->body->len;
-    unsigned char* ret = pmalloc(rs->conn->pool, *len);
-    size_t wr = 0;
-    memcpy(ret, rs->response->http_version, vl);
-    wr += vl;
-    ret[wr++] = ' ';
-    memcpy(ret + wr, rs->response->code, cl);
-    wr += cl;
-    ret[wr++] = '\r';
-    ret[wr++] = '\n';
-    memcpy(ret + wr, headers, hl);
-    wr += hl;
-    if (rs->request->method != METHOD_HEAD && rs->response->body != NULL && rs->response->body->stream_type < 0) {
-        memcpy(ret + wr, rs->response->body->data, rs->response->body->len);
-        wr += rs->response->body->len;
+unsigned char* serializeResponse(struct request_session* rs, size_t* out_len) {
+    *out_len = 0;
+    size_t http_version_length = strlen(rs->response->http_version);
+    size_t response_code_length = strlen(rs->response->code);
+    *out_len = http_version_length + 1 + response_code_length + 2;
+    size_t header_length = 0;
+    char* headers = header_serialize(rs->response->headers, &header_length);
+    *out_len += header_length;
+    if (rs->response->body != NULL && rs->response->body->type == PROVISION_DATA) {
+        *out_len += rs->response->body->data.data.size;
     }
-    return ret;
+    unsigned char* out = pmalloc(rs->conn->pool, *out_len);
+    size_t written = 0;
+    memcpy(out, rs->response->http_version, http_version_length);
+    written += http_version_length;
+    out[written++] = ' ';
+    memcpy(out + written, rs->response->code, response_code_length);
+    written += response_code_length;
+    out[written++] = '\r';
+    out[written++] = '\n';
+    memcpy(out + written, headers, header_length);
+    written += header_length;
+    // TODO: don't copy body here
+    if (!str_eq(rs->request->method, "HEAD") && rs->response->body != NULL && rs->response->body->type == PROVISION_DATA) {
+        memcpy(out + written, rs->response->body->data.data.data, rs->response->body->data.data.size);
+        written += rs->response->body->data.data.size;
+    }
+    return out;
 }

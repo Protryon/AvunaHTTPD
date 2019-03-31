@@ -8,6 +8,7 @@
 #include <avuna/pmem.h>
 #include <avuna/list.h>
 #include <avuna/queue.h>
+#include <avuna/tls.h>
 #include <avuna/log.h>
 #include <netinet/in.h>
 #include <sys/un.h>

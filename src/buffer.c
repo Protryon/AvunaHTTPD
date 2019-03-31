@@ -71,3 +71,27 @@ size_t buffer_pop(struct buffer* buffer, size_t size, uint8_t* data) {
     }
     return index;
 }
+
+
+size_t buffer_peek(struct buffer* buffer, size_t size, uint8_t* data) {
+    struct llist_node* node = buffer->buffers->head;
+    if (size > buffer->size) {
+        size = buffer->size;
+    }
+    size_t index = 0;
+    while (node != NULL && size > 0) {
+        struct buffer_entry* entry = node->data;
+        if (entry->size <= size) {
+            size -= entry->size;
+            memcpy(data + index, entry->data, entry->size);
+            index += entry->size;
+            node = node->next;
+        } else {
+            memcpy(data + index, entry->data, size);
+            index += size;
+            size = 0;
+            node = NULL;
+        }
+    }
+    return index;
+}

@@ -37,6 +37,7 @@ struct response {
 
 struct request_session {
     struct conn* conn;
+    struct sub_conn* src_conn;
     struct response* response;
     struct request* request;
     char* request_htpath;
@@ -48,11 +49,11 @@ struct request_session {
 
 int parseRequest(struct request_session* rs, char* data, size_t maxPost);
 
-unsigned char* serializeRequest(struct request_session* rs, size_t* len);
+unsigned char* serializeRequest(struct request_session* rs, size_t* out_len);
 
-int parseResponse(struct request_session* rs, char* data);
+int parseResponse(struct request_session* rs, struct sub_conn* sub_conn, char* data);
 
-unsigned char* serializeResponse(struct request_session* rs, size_t* len);
+unsigned char* serializeResponse(struct request_session* rs, size_t* out_len);
 
 
 #endif //AVUNA_HTTPD_HTTP_H

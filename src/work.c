@@ -12,110 +12,233 @@
 #include <avuna/vhost.h>
 #include <avuna/http.h>
 #include <avuna/pmem.h>
+#include <avuna/connection.h>
 #include <avuna/pmem_hooks.h>
+#include <avuna/provider.h>
+#include <avuna/globals.h>
 #include <errno.h>
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
 
-void closeConn(struct conn* conn) {
-    pfree(conn->pool);
-}
-
 void sendReqsess(struct request_session* rs, struct timespec* stt) {
     struct conn* conn = rs->conn;
-    struct work_param* param = rs->worker;
     struct response* resp = rs->response;
     struct request* req = rs->request;
-    if (conn->forward_conn == NULL) {
-        size_t response_length = 0;
-        unsigned char* serialized_response = serializeResponse(rs, &response_length);
-        struct timespec stt2;
-        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt2);
-        double msp =
-            (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt->tv_nsec / 1000000.0 + stt->tv_sec * 1000.0);
-        const char* mip = NULL;
-        char tip[48];
-        if (conn->addr.tcp6.sin6_family == AF_INET) {
-            struct sockaddr_in* sip4 = &conn->addr.tcp4;
-            mip = inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
-        } else if (conn->addr.tcp6.sin6_family == AF_INET6) {
-            struct sockaddr_in6* sip6 = &conn->addr.tcp6;
-            if (memseq((unsigned char*) &sip6->sin6_addr, 10, 0) &&
-                memseq((unsigned char*) &sip6->sin6_addr + 10, 2, 0xff)) {
-                mip = inet_ntop(AF_INET, ((unsigned char*) &sip6->sin6_addr) + 12, tip, 48);
-            } else mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
-        } else if (conn->addr.tcp6.sin6_family == AF_LOCAL) {
-            mip = "UNIX";
-        } else {
-            mip = "UNKNOWN";
-        }
-        if (mip == NULL) {
-            errlog(param->server->logsess, "Invalid IP Address: %s", strerror(errno));
-        }
-        acclog(param->server->logsess, "%s %s %s/%s%s returned %s took: %f ms", mip, getMethod(req->method),
-               param->server->id, req->vhost->id, req->path, resp->code, msp);
-        buffer_push(&conn->conn->write_buffer, serialized_response, response_length);
+    size_t response_length = 0;
+    unsigned char* serialized_response = serializeResponse(rs, &response_length);
+    struct timespec stt2;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt2);
+    double msp =
+        (stt2.tv_nsec / 1000000.0 + stt2.tv_sec * 1000.0) - (stt->tv_nsec / 1000000.0 + stt->tv_sec * 1000.0);
+    const char* mip = NULL;
+    char tip[48];
+    if (conn->addr.tcp6.sin6_family == AF_INET) {
+        struct sockaddr_in* sip4 = &conn->addr.tcp4;
+        mip = inet_ntop(AF_INET, &sip4->sin_addr, tip, 48);
+    } else if (conn->addr.tcp6.sin6_family == AF_INET6) {
+        struct sockaddr_in6* sip6 = &conn->addr.tcp6;
+        if (memseq((unsigned char*) &sip6->sin6_addr, 10, 0) &&
+            memseq((unsigned char*) &sip6->sin6_addr + 10, 2, 0xff)) {
+            mip = inet_ntop(AF_INET, ((unsigned char*) &sip6->sin6_addr) + 12, tip, 48);
+        } else mip = inet_ntop(AF_INET6, &sip6->sin6_addr, tip, 48);
+    } else if (conn->addr.tcp6.sin6_family == AF_LOCAL) {
+        mip = "UNIX";
     } else {
-        conn->forward_conn = NULL;
+        mip = "UNKNOWN";
     }
+    if (mip == NULL) {
+        errlog(conn->server->logsess, "Invalid IP Address: %s", strerror(errno));
+    }
+    acclog(conn->server->logsess, "%s %s %s/%s%s returned %s took: %f ms", mip, req->method,
+           conn->server->id, rs->vhost->id, req->path, resp->code, msp);
+    buffer_push(&rs->src_conn->write_buffer, serialized_response, response_length);
 }
 
-void handleRequest(struct timespec* stt, struct request_session* rs) {
-    struct response* resp = pmalloc(rs->pool, sizeof(struct response));
-    resp->body = NULL;
-    resp->parsed = 0;
-    resp->code = "500 Internal Server Error";
-    resp->http_version = "HTTP/1.1";
-    resp->fromCache = NULL;
-    resp->headers = pcalloc(rs->pool, sizeof(struct headers));
-    resp->headers->pool = rs->pool;
-    rs->response = resp;
-    generateResponse(rs);
-    sendReqsess(rs, stt);
+void determine_vhost(struct request_session* rs) {
+    const char* host = header_get(rs->request->headers, "Host");
+    if (host == NULL) host = "";
+    struct vhost* vhost = NULL;
+    for (size_t i = 0; i < rs->conn->server->vhosts->count; i++) {
+        struct vhost* iter_vhost = rs->conn->server->vhosts->data[i];
+        if (iter_vhost->hosts->count == 0) {
+            vhost = iter_vhost;
+            break;
+        } else
+            for (size_t x = 0; x < iter_vhost->hosts->count; x++) {
+                if (domeq(iter_vhost->hosts->data[x], host)) {
+                    vhost = iter_vhost;
+                    break;
+                }
+            }
+        if (vhost != NULL) break;
+    }
+    rs->vhost = vhost;
 }
 
-struct uconn {
-    int type;
-    struct conn* conn;
+struct http_server_extra {
+    struct request_session* currently_posting;
 };
 
-int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* read_buf, size_t read_buf_len) {
-    struct sub_conn* sconn = conn->conn;
-    struct sub_conn* active_conn = ct == 0 ? conn->conn :
-                                   ct == 1 ? conn->forward_conn : NULL;
+int handle_http_server_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len) {
+    struct http_server_extra* extra = sub_conn->extra;
+    buffer_push(&sub_conn->read_buffer, read_buf, read_buf_len);
+    restart:;
 
-    buffer_push(&active_conn->read_buffer, read_buf, read_buf_len);
-    reqp:;
-
-    if (ct == 0 && conn->currently_posting != NULL && conn->post_left > 0) {
-        if (sconn->read_buffer.size >= conn->post_left) {
+    // active post reading
+    if (extra->currently_posting != NULL) {
+        struct provision* provision = extra->currently_posting->request->body;
+        if (provision->type == PROVISION_DATA && sub_conn->read_buffer.size >= provision->data.data.size) {
             struct timespec stt;
             clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
-            size_t os = sconn->read_buffer.size;
-            buffer_pop(&sconn->read_buffer, conn->post_left,
-                       conn->currently_posting->request->body->data + conn->currently_posting->request->body->len -
-                       conn->post_left);
-            conn->post_left -= os;
-            if (conn->post_left == 0) {
-                handleRequest(&stt, conn->currently_posting);
-                pfree(conn->currently_posting->pool);
-                conn->currently_posting = NULL;
-            }
-            goto pc;
-        } else goto pc;
+            pxfer(provision->pool, sub_conn->pool, provision->data.data.data);
+            buffer_pop(&sub_conn->read_buffer, provision->data.data.size, provision->data.data.data);
+            generateResponse(extra->currently_posting);
+            sendReqsess(extra->currently_posting, &stt);
+            pfree(extra->currently_posting->pool);
+            extra->currently_posting = NULL;
+        } else { // PROVISION_STREAM
+            errlog(delog, "Invalid state! STREAM found during active post read");
+            return 0;
+        }
     }
 
-    sin:;
+    //TODO: while thje HTTP spec doesn't allow \n\n, we should probably accept it similar to other implementations
+    size_t match_length = 0;
+    static unsigned char newlines[4] = {0x0D, 0x0A, 0x0D, 0x0A};
+
+    // shrink read_buf if it was part header
+    if (sub_conn->read_buffer.size < read_buf_len) {
+        size_t shrink = read_buf_len - sub_conn->read_buffer.size;
+        read_buf += shrink;
+        read_buf_len -= shrink;
+    }
+
+    if (read_buf_len == 0) {
+        return 0;
+    }
+
+    // prepare match_length from previous buffer
+    struct llist_node* read_tail = sub_conn->read_buffer.buffers->tail;
+    if (read_tail != NULL) {
+        struct buffer_entry* entry = read_tail->data;
+        if (entry->data == read_buf) {
+            if (read_tail->prev == NULL) { // could be popped above
+                goto post_precheck;
+            }
+            entry = read_tail->prev->data;
+        }
+        ssize_t checking_index = entry->size - 3;
+        if (checking_index < 0)
+            checking_index = 0;
+        for (; checking_index < entry->size; ++checking_index) {
+            char c = ((char*) entry->data)[checking_index];
+            if (c == newlines[match_length]) {
+                match_length++;
+                if (match_length == 4) {
+                    errlog(sub_conn->conn->server->logsess, "Invalid state! This should never happen.");
+                }
+            } else if (c == newlines[0]) {
+                match_length = 1;
+            } else {
+                match_length = 0;
+            }
+        }
+    }
+    post_precheck:;
+
+    // match double newline
+    for (size_t checking_index = 0; checking_index < read_buf_len; ++checking_index) {
+        char c = read_buf[checking_index];
+        if (c == newlines[match_length]) {
+            match_length++;
+            if (match_length == 4) {
+                struct mempool* req_pool = mempool_new();
+                pchild(sub_conn->pool, req_pool);
+                size_t req_size = sub_conn->read_buffer.size + checking_index + 1 - read_buf_len;
+                unsigned char* request_headers = pmalloc(req_pool, req_size + 1);
+                buffer_pop(&sub_conn->read_buffer, req_size, request_headers);
+                request_headers[req_size] = 0;
+
+                struct timespec stt;
+                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
+
+                struct request_session* rs = pcalloc(req_pool, sizeof(struct request_session));
+                rs->conn = sub_conn->conn;
+                rs->src_conn = sub_conn;
+                rs->request = pcalloc(req_pool, sizeof(struct request));
+                rs->pool = req_pool;
+                if (parseRequest(rs, (char*) request_headers, sub_conn->conn->server->max_post) < 0) {
+                    errlog(sub_conn->conn->server->logsess, "Malformed Request!\n%s", request_headers);
+                    sub_conn->on_closed(sub_conn);
+                    return 1;
+                }
+                rs->response = pcalloc(rs->pool, sizeof(struct response));
+                rs->response->headers = pcalloc(rs->pool, sizeof(struct headers));
+                rs->response->headers->pool = rs->pool;
+                rs->response->http_version = "HTTP/1.1";
+                rs->response->http_version = rs->request->http_version;
+                rs->response->code = "200 OK";
+                determine_vhost(rs);
+                if (rs->request->body != NULL && rs->request->body->type == PROVISION_DATA) {
+                    extra->currently_posting = rs;
+                    goto restart;
+                }
+                generateResponse(rs);
+                sendReqsess(rs, &stt);
+                pfree(req_pool);
+            }
+        } else if (c == newlines[0])
+            match_length = 1;
+        else
+            match_length = 0;
+    }
+    return 0;
+}
+
+struct http_client_extra {
+    struct queue* forwarding_sessions;
+    struct request_session* currently_forwarding;
+};
+
+int handle_http_client_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len) {
+    struct http_client_extra* extra = sub_conn->extra;
+    buffer_push(&sub_conn->read_buffer, read_buf, read_buf_len);
+    restart:;
+
+    if (extra->currently_forwarding != NULL) {
+        struct provision* provision = extra->currently_forwarding->response->body;
+        struct provision_data data;
+        data.data = NULL;
+        data.size = 0;
+        ssize_t total_read = provision->data.stream.read(provision, &data);
+        if (total_read == -1) {
+            // backend server failed during stream
+            pfree(sub_conn->pool);
+            return 0;
+        } else if (total_read == 0) {
+            // end of stream
+            queue_pop(extra->forwarding_sessions);
+            pfree(extra->currently_forwarding->pool);
+        } else if (total_read == -2) {
+            // nothing to read, not end of stream
+        } else {
+            pxfer(provision->pool, sub_conn->pool, data.data);
+            buffer_push(&extra->currently_forwarding->src_conn->write_buffer, data.data, data.size);
+            return 0;
+        }
+    }
+
+    /*
     if (ct == 1 && conn->stream_type >= 0) {
         int se = 0;
         if (conn->stream_type == STREAM_TYPE_RAW) {
             if (conn->forwarding_request->response->fromCache != NULL) {
                 if (conn->stream_md5 == NULL) {
-                    conn->stream_md5 = pmalloc(conn->pool, sizeof(MD5_CTX));
+                    conn->stream_md5 = pmalloc(sub_conn->pool, sizeof(MD5_CTX));
                     MD5_Init(conn->stream_md5);
                 }
-                ITER_LLIST(active_conn->read_buffer.buffers, value)
+                ITER_LLIST(sub_conn->read_buffer.buffers, value)
                     {
                         struct buffer_entry* entry = value;
                         MD5_Update(conn->stream_md5, entry->data, entry->size);
@@ -123,15 +246,15 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* rea
                 }
             }
 
-            uint8_t* total_read = pmalloc(conn->forwarding_request->pool, active_conn->read_buffer.size);
-            size_t read_size = buffer_pop(&active_conn->read_buffer, active_conn->read_buffer.size, total_read);
+            uint8_t* total_read = pmalloc(conn->forwarding_request->pool, sub_conn->read_buffer.size);
+            size_t read_size = buffer_pop(&sub_conn->read_buffer, sub_conn->read_buffer.size, total_read);
 
             if (conn->forwarding_request->request->add_to_cache) {
                 buffer_push(&conn->cache_buffer, total_read, read_size);
             }
-            buffer_push(&sconn->write_buffer, total_read, read_size);
+            buffer_push(&sub_conn->write_buffer, total_read, read_size);
 
-            conn->streamed += active_conn->read_buffer.size;
+            conn->streamed += sub_conn->read_buffer.size;
             if (conn->streamed >= conn->stream_len) {
                 struct response* fwd_response = conn->forwarding_request->response;
                 if (conn->forwarding_request->request->add_to_cache) {
@@ -144,7 +267,7 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* rea
                         conn->forwarding_request->request->add_to_cache = 1;
                         struct scache* new_scache = pmalloc(vhost->pool, sizeof(struct scache));
                         if (fwd_response->body == NULL) {
-                            fwd_response->body = pmalloc(conn->pool, sizeof(struct body));
+                            fwd_response->body = pmalloc(sub_conn->pool, sizeof(struct body));
                         }
                         fwd_response->body->data = pmalloc(conn->forwarding_request->pool, conn->cache_buffer.size);
                         fwd_response->body->len = buffer_pop(&conn->cache_buffer, conn->cache_buffer.size,
@@ -199,18 +322,24 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* rea
 
         }
         if (!se) goto pc;
-    }
+    }*/
 
-    size_t ml = 0;
+    size_t match_length = 0;
     static unsigned char newlines[4] = {0x0D, 0x0A, 0x0D, 0x0A};
 
-    if (active_conn->read_buffer.size < read_buf_len) {
-        size_t shrink = active_conn->read_buffer.size - read_buf_len;
+    // shrink read_buf if it was part header
+    if (sub_conn->read_buffer.size < read_buf_len) {
+        size_t shrink = read_buf_len - sub_conn->read_buffer.size;
         read_buf += shrink;
         read_buf_len -= shrink;
     }
 
-    struct llist_node* read_tail = active_conn->read_buffer.buffers->tail;
+    if (read_buf_len == 0) {
+        return 0;
+    }
+
+    // prepare match_length from previous buffer
+    struct llist_node* read_tail = sub_conn->read_buffer.buffers->tail;
     if (read_tail != NULL) {
         struct buffer_entry* entry = read_tail->data;
         if (entry->data == read_buf) {
@@ -224,94 +353,297 @@ int handleRead(struct conn* conn, int ct, struct work_param* param, uint8_t* rea
             checking_index = 0;
         for (; checking_index < entry->size; ++checking_index) {
             char c = ((char*) entry->data)[checking_index];
-            if (c == newlines[ml]) {
-                ml++;
-                if (ml == 4) {
-                    errlog(param->server->logsess, "Invalid state! This should never happen.");
+            if (c == newlines[match_length]) {
+                match_length++;
+                if (match_length == 4) {
+                    errlog(sub_conn->conn->server->logsess, "Invalid state! This should never happen.");
                 }
             } else if (c == newlines[0])
-                ml = 1;
+                match_length = 1;
             else
-                ml = 0;
+                match_length = 0;
         }
     }
     post_precheck:;
 
+    // match double new line
     for (size_t checking_index = 0; checking_index < read_buf_len; ++checking_index) {
         char c = read_buf[checking_index];
-        if (c == newlines[ml]) {
-            ml++;
-            if (ml == 4) {
-                struct request_session* rs = NULL;
-                struct mempool* req_pool;
-                if (ct == 1) {
-                    rs = queue_peek(conn->fw_queue);
-                    req_pool = rs->pool;
-                } else {
-                    req_pool = mempool_new();
-                    pchild(conn->pool, req_pool);
-                }
-                size_t req_size = active_conn->read_buffer.size + checking_index + 1 - read_buf_len;
-                unsigned char* request_headers = pmalloc(req_pool, req_size + 1);
-                buffer_pop(&active_conn->read_buffer, req_size, request_headers);
+        if (c == newlines[match_length]) {
+            match_length++;
+            if (match_length == 4) {
+                struct request_session* rs = queue_peek(extra->forwarding_sessions);
+                size_t req_size = sub_conn->read_buffer.size + checking_index + 1 - read_buf_len;
+                unsigned char* request_headers = pmalloc(rs->pool, req_size + 1);
+                buffer_pop(&sub_conn->read_buffer, req_size, request_headers);
                 request_headers[req_size] = 0;
 
                 struct timespec stt;
                 clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
 
-                if (ct == 0) {
-                    struct request* req = pmalloc(req_pool, sizeof(struct request));
-                    rs = pmalloc(req_pool, sizeof(struct request_session));
-                    rs->worker = param;
-                    rs->conn = conn;
-                    rs->response = NULL;
-                    rs->request = req;
-                    rs->pool = req_pool;
-                    if (parseRequest(rs, (char*) request_headers, param->server->max_post) < 0) {
-                        errlog(param->server->logsess, "Malformed Request!\n%s", request_headers);
-                        closeConn(conn);
-                        return 1;
-                    }
-                    if (req->body != NULL) {
-                        conn->currently_posting = rs;
-                        conn->post_left = req->body->len;
-                        goto reqp;
-                    }
-                    handleRequest(&stt, rs);
-                    pfree(req_pool);
-                } else if (ct == 1) {
-                    if (parseResponse(rs, (char*) request_headers) < 0) {
-                        errlog(param->server->logsess, "Malformed Response!");
-                        closeConn(conn);
-                        return 1;
-                    }
-                    if (rs->response->body != NULL) {
-                        rs->response->body->mime_type = header_get(rs->response->headers, "Content-Type");
-                    }
-                    sendReqsess(rs, &stt);
-                    if (rs->response->body != NULL && rs->response->body->stream_type >= 0) {
-                        conn->stream_fd = rs->response->body->stream_fd;
-                        rs->response->body->stream_fd = -1;
-                        phook(conn->pool, close_hook, (void*) conn->stream_fd);
-                        conn->stream_type = rs->response->body->stream_type;
-                        conn->stream_len = rs->response->body->len;
-                        conn->forwarding_request = rs;
-                        goto sin;
+                if (parseResponse(rs, sub_conn, (char*) request_headers) < 0) {
+                    errlog(sub_conn->conn->server->logsess, "Malformed Response!");
+                    sub_conn->on_closed(sub_conn);
+                    return 1;
+                }
+                if (rs->response->body != NULL) {
+                    rs->response->body->content_type = (char*) header_get(rs->response->headers, "Content-Type");
+                }
+                sendReqsess(rs, &stt);
+                if (rs->response->body != NULL) {
+                    if (rs->response->body->type == PROVISION_DATA) {
+                        pxfer(rs->response->body->pool, sub_conn->pool, rs->response->body->data.data.data);
+                        buffer_push(&rs->src_conn->write_buffer, rs->response->body->data.data.data, rs->response->body->data.data.size);
                     } else {
-                        conn->stream_type = STREAM_TYPE_INVALID;
-                        queue_pop(conn->fw_queue);
-                        pfree(req_pool);
+                        extra->currently_forwarding = rs;
+                        goto restart;
                     }
                 }
+                queue_pop(extra->forwarding_sessions);
+                pfree(rs->pool);
             }
-        } else if (c == newlines[0])
-            ml = 1;
-        else
-            ml = 0;
+        } else if (c == newlines[0]) {
+            match_length = 1;
+        } else {
+            match_length = 0;
+        }
     }
-    pc:;
     return 0;
 }
+
+struct remove_conn_node_arg {
+    struct llist* list;
+    struct llist_node* node;
+};
+
+void remove_conn_node(struct remove_conn_node_arg* node) {
+    llist_del(node->list, node->node);
+}
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
+
+void run_work(struct work_param* param) {
+    if (pipe(param->pipes) != 0) {
+        errlog(param->server->logsess, "Failed to create pipe! %s", strerror(errno));
+        return;
+    }
+    struct mempool* pool = mempool_new();
+    unsigned char wb;
+    struct connection_manager* manager = pcalloc(pool, sizeof(struct connection_manager));
+    manager->pending_sub_conns = llist_new(pool);
+    struct llist* claimed_connections = llist_new(pool);
+    struct llist* flattened_connections = llist_new(pool);
+    struct pollfd* poll_fds = pmalloc(pool, sizeof(struct pollfd) * 64);
+    size_t poll_fds_cap = 64;
+    while (1) {
+        // by only doing one pop per loop, we effectively create a QoS in which serving existing connections is prioritized over new ones, but also so some better load balancing.
+        struct conn* new_conn = queue_maybepop(param->server->prepared_connections);
+        if (new_conn != NULL) {
+            new_conn->manager = manager;
+            {
+                struct remove_conn_node_arg* arg = pmalloc(new_conn->pool, sizeof(struct remove_conn_node_arg));
+                arg->list = claimed_connections;
+                arg->node = llist_append(claimed_connections, new_conn);
+                phook(new_conn->pool, remove_conn_node, arg);
+            }
+            // assumes only 1 sub connection at this point!
+            {
+                struct sub_conn* base_conn = new_conn->sub_conns->head->data;
+                struct remove_conn_node_arg* arg = pmalloc(base_conn->pool, sizeof(struct remove_conn_node_arg));
+                arg->list = flattened_connections;
+                arg->node = llist_append(flattened_connections, base_conn);
+                phook(new_conn->pool, remove_conn_node, arg);
+            }
+            // TODO: module connection initiated hook
+        }
+        for (struct llist_node* node = manager->pending_sub_conns->head; node != NULL; node = node->next) {
+            struct sub_conn* sub_conn = node->data;
+            llist_append(sub_conn->conn->sub_conns, sub_conn);
+            struct remove_conn_node_arg* arg = pmalloc(new_conn->pool, sizeof(struct remove_conn_node_arg));
+            arg->list = flattened_connections;
+            arg->node = llist_append(flattened_connections, sub_conn);
+            phook(sub_conn->pool, remove_conn_node, arg);
+        }
+        size_t poll_fd_count = flattened_connections->size + 1;
+        struct mempool* iter_pool = mempool_new();
+        size_t poll_fd_index = 0;
+        if (poll_fds_cap < poll_fd_count + 1) {
+            while (poll_fds_cap < poll_fd_count + 1) {
+                poll_fds_cap *= 2;
+            }
+            poll_fds = prealloc(pool, poll_fds, sizeof(struct pollfd) * poll_fds_cap);
+        }
+        ITER_LLIST(flattened_connections, value) {
+                struct sub_conn* sub_conn = value;
+                struct pollfd* pollfd = &poll_fds[poll_fd_index++];
+                pollfd->fd = sub_conn->fd;
+                pollfd->events = (short) (POLLIN | ((sub_conn->write_buffer.size > 0 ||
+                                                     (sub_conn->tls && !sub_conn->tls_handshaked &&
+                                                                sub_conn->tls_next_direction == 2)) ? POLLOUT : 0));
+                pollfd->revents = 0;
+            ITER_LLIST_END();
+        }
+        struct pollfd* pollfd = &poll_fds[poll_fd_index++];
+        pollfd->fd = param->pipes[0];
+        pollfd->events = POLLIN;
+        pollfd->revents = 0;
+        int polled_count = poll(poll_fds, poll_fd_count, -1);
+        if (polled_count < 0) {
+            errlog(param->server->logsess, "Poll error in worker thread! %s", strerror(errno));
+        } else if (polled_count == 0) {
+            pfree(iter_pool);
+            continue;
+        } else if ((poll_fds[poll_fd_count - 1].revents & POLLIN) == POLLIN) {
+            if (read(param->pipes[0], &wb, 1) < 1)
+                errlog(param->server->logsess, "Error reading from pipe, infinite loop COULD happen here.");
+            if (polled_count-- == 1) {
+                pfree(iter_pool);
+                continue;
+            }
+        }
+        struct llist_node* flat_node = flattened_connections->head;
+        for (int i = 0; i < poll_fd_count - 1 && polled_count > 0; i++) {
+            int revents = poll_fds[i].revents;
+            struct sub_conn* sub_conn = flat_node->data;
+            flat_node = flat_node->next;
+            if (revents == 0) continue;
+
+            polled_count--;
+
+            if ((revents & POLLHUP) == POLLHUP) {
+                sub_conn->on_closed(sub_conn);
+                continue;
+            }
+            if ((revents & POLLERR) == POLLERR) { //TODO: probably a HUP
+                sub_conn->on_closed(sub_conn);
+                continue;
+            }
+            if ((revents & POLLNVAL) == POLLNVAL) {
+                errlog(param->server->logsess, "Invalid FD in worker poll! This is bad!");
+                sub_conn->on_closed(sub_conn);
+                continue;
+            }
+
+            if (sub_conn->tls && !sub_conn->tls_handshaked) {
+                int r = SSL_accept(sub_conn->tls_session);
+                if (r == 1) {
+                    sub_conn->tls_handshaked = 1;
+                } else if (r == 2) {
+                    sub_conn->on_closed(sub_conn);
+                    continue;
+                } else {
+                    int err = SSL_get_error(sub_conn->tls_session, r);
+                    if (err == SSL_ERROR_WANT_READ) sub_conn->tls_next_direction = 1;
+                    else if (err == SSL_ERROR_WANT_WRITE) sub_conn->tls_next_direction = 2;
+                    else {
+                        sub_conn->on_closed(sub_conn);
+                        continue;
+                    }
+                }
+                continue;
+            }
+            if ((revents & POLLIN) == POLLIN) {
+                size_t guessed_read_total = 0;
+                int arbitrary_read_total = 0;
+                if (sub_conn->tls) {
+                    guessed_read_total = (size_t) SSL_pending(sub_conn->tls_session);
+                    if (guessed_read_total == 0) {
+                        guessed_read_total += 4096;
+                        arbitrary_read_total = 1;
+                    }
+                } else {
+                    ioctl(poll_fds[i].fd, FIONREAD, &guessed_read_total);
+                }
+                void* read_buf = pmalloc(sub_conn->pool, guessed_read_total);
+                ssize_t read_total = 0;
+                if (guessed_read_total == 0) { // nothing to read, but wont block.
+                    ssize_t x = 0;
+                    if (sub_conn->tls) {
+                        x = SSL_read(sub_conn->tls_session, read_buf + read_total, (int) (guessed_read_total - read_total));
+                        if (x <= 0) {
+                            int serr = SSL_get_error(sub_conn->tls_session, (int) x);
+                            if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) continue;
+                            sub_conn->on_closed(sub_conn);
+                            continue;
+                        }
+                    } else {
+                        x = read(poll_fds[i].fd, read_buf + read_total, guessed_read_total - read_total);
+                        if (x <= 0) {
+                            sub_conn->on_closed(sub_conn);
+                            continue;
+                        }
+                    }
+                    read_total += x;
+                }
+                while (read_total < guessed_read_total) {
+                    ssize_t x = 0;
+                    if (sub_conn->tls) {
+                        x = SSL_read(sub_conn->tls_session, read_buf + read_total, (int) (guessed_read_total - read_total));
+                        if (x <= 0) {
+                            int serr = SSL_get_error(sub_conn->tls_session, (int) x);
+                            if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) goto cont;
+                            sub_conn->on_closed(sub_conn);
+                            goto cont;
+                        }
+                        read_total += x;
+                        if (arbitrary_read_total) break;
+                    } else {
+                        x = read(poll_fds[i].fd, read_buf + read_total, guessed_read_total - read_total);
+                        if (x <= 0) {
+                            sub_conn->on_closed(sub_conn);
+                            goto cont;
+                        }
+                    }
+                    read_total += x;
+                }
+                int p = sub_conn->read(sub_conn, read_buf, (size_t) read_total);
+                if (p == 1) {
+                    continue;
+                }
+            }
+            if ((revents & POLLOUT) == POLLOUT) {
+                ITER_LLIST(sub_conn->write_buffer.buffers, value)
+                    {
+                        skip_into:;
+                        struct buffer_entry* entry = value;
+                        ssize_t mtr = sub_conn->tls ?
+                                      SSL_write(sub_conn->tls_session, entry->data, entry->size) :
+                                      write(poll_fds[i].fd, entry->data, entry->size);
+                        int serr = (sub_conn->tls && mtr < 0) ? SSL_get_error(sub_conn->tls_session, mtr) : 0;
+                        if (mtr < 0 && (sub_conn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) &&
+                                                      serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) :
+                                        errno != EAGAIN)) { // use error queue?
+                            sub_conn->on_closed(sub_conn);
+                            goto cont;
+                        } else if (mtr < 0) {
+                            goto cont;
+                        } else if (mtr < entry->size) {
+                            entry->data += mtr;
+                            entry->size -= mtr;
+                            sub_conn->write_buffer.size -= mtr;
+                            break;
+                        } else {
+                            sub_conn->write_buffer.size -= mtr;
+                            pprefree_strict(sub_conn->write_buffer.pool, entry->data_root);
+                            struct llist_node* next = node->next;
+                            llist_del(sub_conn->write_buffer.buffers, node);
+                            node = next;
+                            if (node == NULL) {
+                                break;
+                            } else {
+                                goto skip_into;
+                            }
+                        }
+                    ITER_LLIST_END();
+                }
+            }
+            cont:;
+        }
+        pfree(iter_pool);
+    }
+}
+
 
 /*
 int finalizeHeaders2(struct conn* conn, struct work_param* param) {
@@ -490,263 +822,5 @@ int handleRead2(struct conn* conn, int ct, struct work_param* param) {
 	}
 	return 0;
 }*/
-
-struct remove_conn_node_arg {
-    struct llist* list;
-    struct llist_node* node;
-};
-
-void remove_conn_node(struct remove_conn_node_arg* node) {
-    llist_del(node->list, node->node);
-}
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wmissing-noreturn"
-
-void run_work(struct work_param* param) {
-    if (pipe(param->pipes) != 0) {
-        errlog(param->server->logsess, "Failed to create pipe! %s", strerror(errno));
-        return;
-    }
-    struct mempool* pool = mempool_new();
-    unsigned char wb;
-    struct llist* claimed_connections = llist_new(pool);
-    struct list* uconns = list_new(64, pool);
-    struct pollfd* poll_fds = pmalloc(pool, sizeof(struct pollfd) * 64);
-    size_t poll_fds_cap = 64;
-    while (1) {
-        // by only doing one pop per loop, we effectively create a QoS in which serving existing connections is prioritized over new ones, but also so some better load balancing.
-        struct conn* new_conn = queue_maybepop(param->server->prepared_connections);
-        if (new_conn != NULL) {
-            struct remove_conn_node_arg* arg = pmalloc(new_conn->pool, sizeof(struct remove_conn_node_arg));
-            arg->list = claimed_connections;
-            arg->node = llist_append(claimed_connections, new_conn);
-            phook(new_conn->pool, remove_conn_node, arg);
-        }
-        size_t mfds = claimed_connections->size + 1;
-        uconns->count = 0;
-        uconns->size = 0;
-        struct mempool* iter_pool = mempool_new();
-        size_t poll_fd_index = 0;
-        if (poll_fds_cap < mfds * 3 + 1) {
-            while (poll_fds_cap < mfds * 3 + 1) {
-                poll_fds_cap *= 2;
-            }
-            poll_fds = prealloc(pool, poll_fds, sizeof(struct pollfd) * poll_fds_cap);
-        }
-        ITER_LLIST(claimed_connections, value)
-            {
-                struct conn* conn = value;
-                if (conn->fw_queue != NULL) {
-                    pthread_mutex_lock(&conn->fw_queue->data_mutex);
-                    if (conn->fw_queue->size > 0) {
-                        mfds += 1;
-                        struct uconn* uconn = pmalloc(iter_pool, sizeof(struct uconn));
-                        uconn->conn = conn;
-                        uconn->type = 1;
-                        list_add(uconns, uconn);
-                        struct pollfd* pollfd = &poll_fds[poll_fd_index++];
-                        pollfd->fd = conn->forward_conn->fd;
-                        pollfd->events = POLLIN;
-                        pollfd->revents = 0;
-                    }
-                    pthread_mutex_unlock(&conn->fw_queue->data_mutex);
-                }
-                if (conn->stream_type >= 0 && conn->stream_fd != conn->forward_conn->fd) { // TODO: finish impl
-                    mfds += 1;
-                    struct uconn* uconn = pmalloc(iter_pool, sizeof(struct uconn));
-                    uconn->conn = conn;
-                    uconn->type = 2;
-                    list_add(uconns, uconn);
-                    struct pollfd* pollfd = &poll_fds[poll_fd_index++];
-                    pollfd->fd = conn->stream_fd;
-                    pollfd->events = POLLIN;
-                    pollfd->revents = 0;
-                }
-                struct uconn* uconn = pmalloc(iter_pool, sizeof(struct uconn));
-                uconn->conn = conn;
-                uconn->type = 0;
-                list_add(uconns, uconn);
-                struct pollfd* pollfd = &poll_fds[poll_fd_index++];
-                pollfd->fd = conn->fd;
-                pollfd->events = POLLIN | ((conn->conn->write_buffer.size > 0 ||
-                                            (conn->conn->tls && !conn->conn->tls_handshaked &&
-                                             conn->conn->tls_next_direction == 2)) ? POLLOUT : 0);
-                pollfd->revents = 0;
-            ITER_LLIST_END();
-        }
-        struct pollfd* pollfd = &poll_fds[poll_fd_index++];
-        pollfd->fd = param->pipes[0];
-        pollfd->events = POLLIN;
-        pollfd->revents = 0;
-        int poll_count = poll(poll_fds, mfds, -1);
-        if (poll_count < 0) {
-            errlog(param->server->logsess, "Poll error in worker thread! %s", strerror(errno));
-        } else if (poll_count == 0) {
-            pfree(iter_pool);
-            continue;
-        } else if ((poll_fds[mfds - 1].revents & POLLIN) == POLLIN) {
-            if (read(param->pipes[0], &wb, 1) < 1)
-                errlog(param->server->logsess, "Error reading from pipe, infinite loop COULD happen here.");
-            if (poll_count-- == 1) {
-                pfree(iter_pool);
-                continue;
-            }
-        }
-        for (int i = 0; i < mfds - 1 && poll_count > 0; i++) {
-            int revents = poll_fds[i].revents;
-            if (revents == 0) continue;
-            struct uconn* uconn = uconns->data[i];
-            struct conn* conn = uconn->conn;
-            int connection_type = uconn->type;
-            if (connection_type != 0 && connection_type != 1) {
-                errlog(param->server->logsess, "Invalid connection type! %i", connection_type);
-                continue;
-            }
-
-            poll_count--;
-
-            if ((revents & POLLHUP) == POLLHUP && conn != NULL) {
-                closeConn(conn);
-                continue;
-            }
-            if ((revents & POLLERR) == POLLERR) { //TODO: probably a HUP
-                closeConn(conn);
-                continue;
-            }
-            if ((revents & POLLNVAL) == POLLNVAL) {
-                errlog(param->server->logsess, "Invalid FD in worker poll! This is bad!");
-                closeConn(conn);
-                continue;
-            }
-            struct sub_conn* sconn = connection_type == 0 ? conn->conn : conn->forward_conn;
-            if (sconn->tls && !sconn->tls_handshaked) {
-                int r = SSL_accept(sconn->tls_session);
-                if (r == 1) {
-                    sconn->tls_handshaked = 1;
-                } else if (r == 2) {
-                    closeConn(conn);
-                    continue;
-                } else {
-                    int err = SSL_get_error(sconn->tls_session, r);
-                    if (err == SSL_ERROR_WANT_READ) sconn->tls_next_direction = 1;
-                    else if (err == SSL_ERROR_WANT_WRITE) sconn->tls_next_direction = 2;
-                    else {
-                        closeConn(conn);
-                        continue;
-                    }
-                }
-                continue;
-            }
-            if ((revents & POLLIN) == POLLIN) {
-                size_t tr = 0;
-                int ftr = 0;
-                if (sconn->tls) {
-                    tr = (size_t) SSL_pending(sconn->tls_session);
-                    if (tr == 0) {
-                        tr += 4096;
-                        ftr = 1;
-                    }
-                } else {
-                    ioctl(poll_fds[i].fd, FIONREAD, &tr);
-                }
-                void* read_buf = pmalloc(conn->pool, tr);
-                ssize_t r = 0;
-                if (tr == 0) { // nothing to read, but wont block.
-                    ssize_t x = 0;
-                    if (sconn->tls) {
-                        x = SSL_read(sconn->tls_session, read_buf + r, tr - r);
-                        if (x <= 0) {
-                            int serr = SSL_get_error(sconn->tls_session, x);
-                            if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) continue;
-                            if (connection_type == 1) {
-                                errlog(param->server->logsess, "TLS Error receiving from backend server! %i",
-                                       SSL_get_error(sconn->tls_session, x));
-                            }
-                            closeConn(conn);
-                            continue;
-                        }
-                    } else {
-                        x = read(poll_fds[i].fd, read_buf + r, tr - r);
-                        if (x <= 0) {
-                            closeConn(conn);
-                            continue;
-                        }
-                    }
-                    r += x;
-                }
-                while (r < tr) {
-                    ssize_t x = 0;
-                    if (sconn->tls) {
-                        x = SSL_read(sconn->tls_session, read_buf + r, tr - r);
-                        if (x <= 0) {
-                            int serr = SSL_get_error(sconn->tls_session, x);
-                            if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) goto cont;
-                            if (connection_type == 1) {
-                                errlog(param->server->logsess, "TLS Error receiving from backend server! %i",
-                                       SSL_get_error(sconn->tls_session, x));
-                            }
-                            closeConn(conn);
-                            goto cont;
-                        }
-                        r += x;
-                        if (ftr) break;
-                    } else {
-                        x = read(poll_fds[i].fd, read_buf + r, tr - r);
-                        if (x <= 0) {
-                            closeConn(conn);
-                            goto cont;
-                        }
-                    }
-                    r += x;
-                }
-                int p = 0;
-                if (conn->proto == 0) p = handleRead(conn, connection_type, param, read_buf, r);
-                // else if (conn->proto == 1) p = handleRead2(conn, connection_type, param);
-                if (p == 1) {
-                    continue;
-                }
-            }
-            if ((revents & POLLOUT) == POLLOUT) {
-                ITER_LLIST(sconn->write_buffer.buffers, value)
-                    {
-                        skip_into:;
-                        struct buffer_entry* entry = value;
-                        ssize_t mtr = sconn->tls ?
-                                      SSL_write(sconn->tls_session, entry->data, entry->size) :
-                                      write(poll_fds[i].fd, entry->data, entry->size);
-                        int serr = (sconn->tls && mtr < 0) ? SSL_get_error(sconn->tls_session, mtr) : 0;
-                        if (mtr < 0 && (sconn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) &&
-                                                      serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) :
-                                        errno != EAGAIN)) { // use error queue?
-                            closeConn(conn);
-                            goto cont;
-                        } else if (mtr < 0) {
-                            goto cont;
-                        } else if (mtr < entry->size) {
-                            entry->data += mtr;
-                            entry->size -= mtr;
-                            sconn->write_buffer.size -= mtr;
-                            break;
-                        } else {
-                            sconn->write_buffer.size -= mtr;
-                            pprefree_strict(sconn->write_buffer.pool, entry->data_root);
-                            struct llist_node* next = node->next;
-                            llist_del(sconn->write_buffer.buffers, node);
-                            node = next;
-                            if (node == NULL) {
-                                break;
-                            } else {
-                                goto skip_into;
-                            }
-                        }
-                    ITER_LLIST_END();
-                }
-            }
-            cont:;
-        }
-        pfree(iter_pool);
-    }
-}
 
 #pragma clang diagnostic pop

@@ -30,4 +30,6 @@ void buffer_skip(struct buffer* buffer, size_t size);
 
 size_t buffer_pop(struct buffer* buffer, size_t size, uint8_t* data);
 
+size_t buffer_peek(struct buffer* buffer, size_t size, uint8_t* data);
+
 #endif //AVUNA_HTTPD_BUFFER_H

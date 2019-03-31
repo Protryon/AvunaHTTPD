@@ -55,36 +55,7 @@ int domeq(const char* dom1, const char* dom2) {
     return 1;
 }
 
-
-void init_response(struct request_session* rs) {
-    rs->response->parsed = 0;
-    rs->response->http_version = rs->request->http_version;
-    rs->response->code = "200 OK";
-    rs->response->headers->count = 0;
-    rs->response->headers->names = NULL;
-    rs->response->headers->values = NULL;
-    const char* host = header_get(rs->request->headers, "Host");
-    if (host == NULL) host = "";
-    struct vhost* vhost = NULL;
-    for (size_t i = 0; i < rs->conn->server->vhosts->count; i++) {
-        struct vhost* iter_vhost = rs->conn->server->vhosts->data[i];
-        if (iter_vhost->hosts->count == 0) {
-            vhost = iter_vhost;
-            break;
-        } else
-            for (size_t x = 0; x < iter_vhost->hosts->count; x++) {
-                if (domeq(iter_vhost->hosts->data[x], host)) {
-                    vhost = iter_vhost;
-                    break;
-                }
-            }
-        if (vhost != NULL) break;
-    }
-    rs->vhost = vhost;
-}
-
 int generateResponse(struct request_session* rs) {
-    init_response(rs);
     restart:;
     const char* upg = header_get(rs->request->headers, "Upgrade");
     if (!str_eq_case(rs->response->http_version, "HTTP/2.0")) {

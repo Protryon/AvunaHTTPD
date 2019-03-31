@@ -5,6 +5,7 @@
  *      Author: root
  */
 #include "accept.h"
+#include "http_pipeline.h"
 #include <avuna/connection.h>
 #include <avuna/tls.h>
 #include <avuna/vhost.h>
@@ -70,27 +71,26 @@ void run_accept(struct accept_param* param) {
     while (1) {
         struct mempool* pool = mempool_new();
         struct conn* conn = pcalloc(pool, sizeof(struct conn));
-        conn->incoming_binding = param->binding;
+        conn->manager = NULL;
         conn->pool = pool;
-        conn->conn = pcalloc(pool, sizeof(struct sub_conn));
-        conn->forward_conn = NULL;
-        buffer_init(&conn->conn->read_buffer, conn->pool);
-        buffer_init(&conn->conn->write_buffer, conn->pool);
-        conn->conn->tls = ssl;
+        conn->incoming_binding = param->binding;
+        conn->sub_conns = llist_new(pool);
+        conn->server = param->server;
+        struct sub_conn* sub_conn = pcalloc(pool, sizeof(struct sub_conn));
+        llist_append(conn->sub_conns, sub_conn);
+        buffer_init(&sub_conn->read_buffer, conn->pool);
+        buffer_init(&sub_conn->write_buffer, conn->pool);
+        sub_conn->tls = ssl;
         if (ssl) {
-            conn->conn->tls_session = SSL_new(param->binding->ssl_cert->ctx);
-            phook(conn->pool, shutdown_ssl_hook, conn->conn->tls_session);
-            SSL_set_mode(conn->conn->tls_session, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
-            SSL_set_accept_state(conn->conn->tls_session);
+            sub_conn->tls_session = SSL_new(param->binding->ssl_cert->ctx);
+            phook(conn->pool, shutdown_ssl_hook, sub_conn->tls_session);
+            SSL_set_mode(sub_conn->tls_session, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
+            SSL_set_accept_state(sub_conn->tls_session);
         }
 
-        conn->stream_type = STREAM_TYPE_INVALID;
-        conn->stream_fd = -1;
-        buffer_init(&conn->cache_buffer, conn->pool);
+        //conn->proto = (param->binding->mode & BINDING_MODE_HTTP2_ONLY != 0) &&
+        //              (param->binding->mode & BINDING_MODE_HTTP11_ONLY == 0) ? PROTO_HTTP2 : PROTO_HTTP1;
 
-        conn->proto = (param->binding->mode & BINDING_MODE_HTTP2_ONLY != 0) &&
-                      (param->binding->mode & BINDING_MODE_HTTP11_ONLY == 0) ? PROTO_HTTP2 : PROTO_HTTP1;
-        conn->nextStream = 2;
         if (poll(&spfd, 1, -1) < 0) {
             errlog(param->server->logsess, "Error while polling server: %s", strerror(errno));
             pfree(pool);
@@ -126,17 +126,17 @@ void run_accept(struct accept_param* param) {
             continue;
         }
         if (ssl) {
-            SSL_set_fd(conn->conn->tls_session, conn->fd);
-            int r = SSL_accept(conn->conn->tls_session);
+            SSL_set_fd(sub_conn->tls_session, conn->fd);
+            int r = SSL_accept(sub_conn->tls_session);
             if (r == 1) {
-                conn->conn->tls_handshaked = 1;
+                sub_conn->tls_handshaked = 1;
             } else if (r == 2) {
                 pfree(pool);
                 continue;
             } else {
-                int err = SSL_get_error(conn->conn->tls_session, r);
-                if (err == SSL_ERROR_WANT_READ) conn->conn->tls_next_direction = 1;
-                else if (err == SSL_ERROR_WANT_WRITE) conn->conn->tls_next_direction = 2;
+                int err = SSL_get_error(sub_conn->tls_session, r);
+                if (err == SSL_ERROR_WANT_READ) sub_conn->tls_next_direction = 1;
+                else if (err == SSL_ERROR_WANT_WRITE) sub_conn->tls_next_direction = 2;
                 else {
                     pfree(pool);
                     continue;
@@ -144,7 +144,7 @@ void run_accept(struct accept_param* param) {
             }
         }
         if (ssl && param->binding->ssl_cert->isDummy &&
-            SSL_get_SSL_CTX(conn->conn->tls_session) == param->binding->ssl_cert->ctx) {
+            SSL_get_SSL_CTX(sub_conn->tls_session) == param->binding->ssl_cert->ctx) {
             pfree(pool);
             continue;
         }

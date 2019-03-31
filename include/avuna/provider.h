@@ -24,11 +24,14 @@ struct provision_data {
     size_t size;
 };
 
+struct provision;
+struct request_session;
+
 struct provision_stream {
     int stream_fd;
     void* extra;
     ssize_t known_length;
-    ssize_t (*read)(struct provision* provision, struct provision_data* buffer);
+    ssize_t (*read)(struct provision* provision, struct provision_data* buffer); // -2 == no data, not broken, -1 = error, 0 = end of stream, > 0 = data returned
 };
 
 struct provision {
@@ -52,5 +55,12 @@ struct provider {
 };
 
 ssize_t raw_stream_read(struct provision* provision, struct provision_data* buffer);
+
+struct chunked_stream_extra {
+    struct sub_conn* sub_conn;
+    ssize_t remaining;
+};
+
+ssize_t chunked_read(struct provision* provision, struct provision_data* buffer);
 
 #endif //AVUNA_HTTPD_PROVIDER_H

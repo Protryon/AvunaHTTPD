@@ -20,7 +20,11 @@
 #include <netinet/ip6.h>
 #include <stdint.h>
 
+struct conn;
+
 struct sub_conn {
+    struct conn* conn;
+    struct mempool* pool;
     int fd;
     int tls;
     int tls_handshaked;
@@ -28,7 +32,12 @@ struct sub_conn {
     struct buffer read_buffer;
     struct buffer write_buffer;
     int tls_next_direction;
+    int (*read)(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len);
+    void (*on_closed)(struct sub_conn* sub_conn);
+    void* extra;
 };
+
+struct connection_manager;
 
 struct conn {
     int fd;
@@ -38,19 +47,14 @@ struct conn {
     } addr;
     struct server_binding* incoming_binding;
     struct server_info* server;
-    struct sub_conn* conn;
-    struct sub_conn* forward_conn;
-    size_t post_left;
-    struct request_session* currently_posting;
-    struct queue* fw_queue;
-    int stream_fd;
-    int stream_type;
-    size_t stream_len;
-    size_t streamed;
-    struct request_session* forwarding_request;
-    MD5_CTX* stream_md5;
-    size_t nextStream;
+    struct llist* sub_conns;
     struct mempool* pool;
+    struct connection_manager* manager;
 };
+
+struct connection_manager {
+    struct llist* pending_sub_conns;
+};
+
 
 #endif //AVUNA_HTTPD_CONNECTION_H
