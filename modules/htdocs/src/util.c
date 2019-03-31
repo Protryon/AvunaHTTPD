@@ -8,6 +8,7 @@
 #include <avuna/string.h>
 #include <avuna/http.h>
 #include <avuna/provider.h>
+#include <avuna/globals.h>
 #include <stdlib.h>
 #include <zlib.h>
 
@@ -161,4 +162,18 @@ void check_client_cache(struct request_session* rs) {
         }
         header_add(rs->response->headers, "Cache-Control", ccbuf);
     }
+}
+
+
+char* load_default(struct config_node* node, char* key, char* def) {
+    char* result = getConfigValue(node, key);
+    if (result == NULL) {
+        if (def == NULL) {
+            errlog(delog, "No %s at vhost %s, no default is available.", key, node->name);
+        } else {
+            result = def;
+            errlog(delog, "No %s at vhost %s, assuming default \"%s\".", key, node->name, def);
+        }
+    }
+    return result;
 }

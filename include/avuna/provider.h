@@ -47,6 +47,7 @@ struct provider {
     void (*load_config)(struct provider* provider, struct config_node* node);
     struct provision* (*provide_data)(struct provider* provider, struct request_session* rs);
     void* extra;
+    struct list* mime_types;
 };
 
 ssize_t raw_stream_read(struct provision* provision, struct provision_data* buffer);

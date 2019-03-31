@@ -23,44 +23,6 @@ struct errpage {
     char* page;
 };
 
-struct fcgi {
-    socklen_t addrlen;
-    struct sockaddr* addr;
-    struct list* mimes;
-    uint16_t req_id_counter;
-};
-
-struct vhost_htdocs {
-    struct cache* cache;
-    struct list* cache_types;
-    uint8_t enableGzip;
-    uint8_t scacheEnabled;
-    size_t maxAge;
-    size_t maxCache;
-    char* htdocs;
-    uint8_t symlock;
-    uint8_t nohardlinks;
-    uint32_t max_post;
-    struct list* index;
-    struct hashmap* error_pages;
-    struct hashmap* fcgis;
-};
-
-struct vhost_rproxy {
-    struct cache* cache;
-    struct list* cache_types;
-    uint8_t enableGzip;
-    uint8_t scacheEnabled;
-    size_t maxAge;
-    size_t maxCache;
-    struct sockaddr* fwaddr;
-    socklen_t fwaddrlen;
-    char* fwpath;
-    struct headers* headers;
-    struct hashset* dynamic_types;
-    int xfor;
-};
-
 struct vhost_redirect {
     char* redir;
 };

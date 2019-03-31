@@ -45,4 +45,14 @@ struct request_session {
     struct mempool* pool;
 };
 
+
+int parseRequest(struct request_session* rs, char* data, size_t maxPost);
+
+unsigned char* serializeRequest(struct request_session* rs, size_t* len);
+
+int parseResponse(struct request_session* rs, char* data);
+
+unsigned char* serializeResponse(struct request_session* rs, size_t* len);
+
+
 #endif //AVUNA_HTTPD_HTTP_H

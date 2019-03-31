@@ -342,7 +342,7 @@ void handle_vhost_htdocs(struct request_session* rs) {
             }
         } else { // PROVISION_STREAM
             struct provision* gzip_overlay = xcopy(rs->response->body, sizeof(struct provision), 0, rs->response->body->pool);
-            init_gzip_stream(rs->response->body, gzip_overlay);
+            init_gzip_stream(rs, rs->response->body, gzip_overlay);
             rs->response->body = gzip_overlay;
         }
     }
@@ -403,21 +403,8 @@ void handle_vhost_htdocs(struct request_session* rs) {
     //TODO: Chunked
 }
 
-char* load_default(struct config_node* node, char* key, char* def) {
-    char* result = getConfigValue(node, key);
-    if (result == NULL) {
-        if (def == NULL) {
-            errlog(delog, "No %s at vhost %s, no default is available.", key, node->name);
-        } else {
-            result = def;
-            errlog(delog, "No %s at vhost %s, assuming default \"%s\".", key, node->name, def);
-        }
-    }
-    return result;
-}
-
-int vhost_parse_config(struct vhost* vhost, struct config_node* node) {
-    struct vhost_htdocs* htdocs = vhost->sub->extra = pcalloc(sizeof(struct vhost_htdocs));
+int htdocs_parse_config(struct vhost* vhost, struct config_node* node) {
+    struct vhost_htdocs* htdocs = vhost->sub->extra = pcalloc(vhost->pool, sizeof(struct vhost_htdocs));
     htdocs->index = list_new(8, vhost->pool);
     htdocs->base.error_pages = hashmap_new(8, vhost->pool);
     htdocs->base.enableGzip = 1;
@@ -493,6 +480,9 @@ int vhost_parse_config(struct vhost* vhost, struct config_node* node) {
                 errlog(delog, "Could not find provider entry %s at vhost: %s", temp2, node->name);
                 continue;
             }
+            for (size_t j = 0; j < provider->mime_types->count; ++j) {
+                hashmap_put(htdocs->providers, provider->mime_types->data[j], provider);
+            }
         }
     }
     return 0;
@@ -501,7 +491,7 @@ int vhost_parse_config(struct vhost* vhost, struct config_node* node) {
 void initialize(struct module* module) {
     struct vhost_type* vhost_type = pcalloc(module->pool, sizeof(struct vhost_type));
     vhost_type->handle_request = handle_vhost_htdocs;
-    vhost_type->load_config = vhost_parse_config;
+    vhost_type->load_config = htdocs_parse_config;
     vhost_type->name = "htdocs";
     hashmap_put(registered_vhost_types, "htdocs", vhost_type);
 }

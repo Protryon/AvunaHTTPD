@@ -5,7 +5,6 @@
  *      Author: root
  */
 
-#include "http.h"
 #include <avuna/http.h>
 #include <avuna/string.h>
 #include <errno.h>
