@@ -31,7 +31,6 @@ struct vhost_type {
 };
 
 struct vhost {
-    uint8_t type;
     struct cert* ssl_cert;
     struct list* hosts;
     char* id;

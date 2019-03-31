@@ -33,27 +33,32 @@
 int load_vhost(struct config_node* config_node, struct vhost* vhost) {
     vhost->id = config_node->name;
     vhost->hosts = list_new(8, vhost->pool);
-    const char* vht = config_get(config_node, "type");
-    if (str_eq_case(vht, "htdocs")) {
-        vhost->type = VHOST_HTDOCS;
-    } else if (str_eq_case(vht, "reverse-proxy")) {
-        vhost->type = VHOST_RPROXY;
-    } else if (str_eq_case(vht, "redirect")) {
-        vhost->type = VHOST_REDIRECT;
-    } else if (str_eq_case(vht, "mount")) {
-        vhost->type = VHOST_MOUNT;
-    } else {
-        errlog(delog, "Invalid VHost Type: %s", vht);
+    const char* type = config_get(config_node, "type");
+    if (type == NULL) {
+        errlog(delog, "No vhost type found for vhost: %s", vhost->id);
+    }
+    vhost->sub = hashmap_get(registered_vhost_types, (char*) type);
+    if (vhost->sub == NULL) {
+        errlog(delog, "Invalid vhost type '%s' for vhost: %s", type, vhost->id);
         return 1;
     }
-    char* host_value = str_dup(config_get(config_node, "host"), 0, vhost->pool);
+    // prevent sharing of extra field across instances
+    vhost->sub = xcopy(vhost->sub, sizeof(struct vhost_type), 0, vhost->pool);
+
+    char* raw_host = (char*) config_get(config_node, "host");
+    if (raw_host == NULL) {
+        errlog(delog, "No vhost host found for vhost: %s", vhost->id);
+        return 1;
+    }
+    char* host_value = str_dup(raw_host, 0, vhost->pool);
     str_split(host_value, ",", vhost->hosts);
     for (size_t i = 0; i < vhost->hosts->count; ++i) {
         vhost->hosts->data[i] = str_trim(vhost->hosts->data[i]);
     }
+
     const char* ssl_name = config_get(config_node, "ssl");
     if (ssl_name != NULL) {
-        struct config_node* ssl_node = hashmap_get(cfg->nodesByName, ssl_name);
+        struct config_node* ssl_node = hashmap_get(cfg->nodesByName, (char*) ssl_name);
         if (ssl_node == NULL || !str_eq_case(ssl_node->category, "ssl")) {
             errlog(delog, "Invalid SSL node! Node not found! '%s'", ssl_name);
             goto post_ssl;
@@ -71,31 +76,10 @@ int load_vhost(struct config_node* config_node, struct vhost* vhost) {
     }
     post_ssl:;
 
-    if (vhost->type == VHOST_HTDOCS && load_vhost_htdocs(config_node, vhost)) {
-        return 1;
-    } else if (vhost->type == VHOST_RPROXY && load_vhost_rproxy(config_node, vhost)) {
-        return 1;
-    } else if (vhost->type == VHOST_REDIRECT) {
-        struct vhost_redirect* redirect = &vhost->sub.redirect;
-    } else if (vhost->type == VHOST_MOUNT) {
-        struct vhost_mount* mount = &vhost->sub.mount;
-        mount->mounts = list_new(8, vhost->pool);
-        ITER_MAP(config_node->map)
-                    {
-                        if (str_prefixes_case(str_key, "/")) {
-                            struct mountpoint* point = pmalloc(vhost->pool, sizeof(struct mountpoint));
-                            point->path = str_key;
-                            point->vhost = value;
-                            list_add(mount->mounts, point);
-                        }
-                    }ITER_MAP_END();
-        const char* keep_prefix = config_get(config_node, "keep-prefix");
-        if (keep_prefix == NULL) {
-            errlog(delog, "No keep-prefix at vhost: %s, assuming 'false'", config_node->name);
-            keep_prefix = "false";
-        }
-        mount->keep_prefix = str_eq(keep_prefix, "true");
+    if (vhost->sub->load_config != NULL) {
+        vhost->sub->load_config(vhost, config_node);
     }
+
     return 0;
 }
 
@@ -425,7 +409,7 @@ int main(int argc, char* argv[]) {
         }
 
         struct mempool* pool = mempool_new();
-        struct vhost* vhost = pmalloc(pool, sizeof(struct vhost));
+        struct vhost* vhost = pcalloc(pool, sizeof(struct vhost));
         vhost->pool = pool;
         if (load_vhost(vhost_node, vhost)) {
             pfree(pool);
