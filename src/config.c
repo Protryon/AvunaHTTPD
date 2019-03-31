@@ -9,12 +9,14 @@
 #include <avuna/string.h>
 #include <avuna/streams.h>
 #include <avuna/util.h>
+#include <avuna/globals.h>
+#include <avuna/log.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
 
-struct config* loadConfig(const char* file) {
+struct config* config_load(const char* file) {
     if (file == NULL) {
         errno = EBADF;
         return NULL;
@@ -92,12 +94,27 @@ struct config* loadConfig(const char* file) {
     return cfg;
 }
 
-const char* getConfigValue(const struct config_node* cat, const char* name) {
+const char* config_get(const struct config_node* cat, const char* name) {
     if (cat == NULL || name == NULL) return NULL;
     return (char*) hashmap_get(cat->map, name);
 }
 
-struct config_node* getUniqueByCat(const struct config* cfg, const char* cat) {
+
+//TODO: don't assume vhost
+char* config_get_default(struct config_node* node, char* key, char* def) {
+    char* result = config_get(node, key);
+    if (result == NULL) {
+        if (def == NULL) {
+            errlog(delog, "No %s at vhost %s, no default is available.", key, node->name);
+        } else {
+            result = def;
+            errlog(delog, "No %s at vhost %s, assuming default \"%s\".", key, node->name, def);
+        }
+    }
+    return result;
+}
+
+struct config_node* config_get_unique_cat(const struct config* cfg, const char* cat) {
     if (cfg == NULL || cat == NULL) return NULL;
     struct list* cat_list = hashmap_get(cfg->nodeListsByCat, cat);
     if (cat_list == NULL || cat_list->count == 0) {

@@ -19,10 +19,14 @@ struct hashmap* registered_vhost_types;
 struct vhost;
 struct request_session;
 
+#define VHOST_ACTION_NONE 0
+#define VHOST_ACTION_RESTART 1
+#define VHOST_ACTION_NO_CONTENT_UPDATE 2
+
 struct vhost_type {
     char* name;
     int (*load_config)(struct vhost* vhost, struct config_node* node);
-    void (*handle_request)(struct request_session* rs);
+    int (*handle_request)(struct request_session* rs); // returns a VHOST_ACTION_* value
     void* extra;
 };
 

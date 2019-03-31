@@ -12,6 +12,10 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 
+char* escapehtml(struct mempool* pool, const char* orig);
+
+void generateBaseErrorPage(struct request_session* rs, const char* msg);
+
 void* xcopy(const void* ptr, size_t size, size_t expand, struct mempool* pool);
 
 int recur_mkdir(const char* path, mode_t mode);

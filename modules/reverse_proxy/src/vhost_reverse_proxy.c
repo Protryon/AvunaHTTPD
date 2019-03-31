@@ -18,10 +18,10 @@
 #include <arpa/inet.h>
 
 
-void handle_vhost_reverse_proxy(struct request_session* rs) {
+int handle_vhost_reverse_proxy(struct request_session* rs) {
     struct vhost_reverse_proxy* rproxy = ((struct vhost_reverse_proxy*) rs->vhost->sub->extra);
     if (rproxy->base.scacheEnabled && check_cache(rs)) {
-        return;
+        return VHOST_ACTION_NO_CONTENT_UPDATE;
     }
     // remove leading slash
     char* htpath;
@@ -113,6 +113,7 @@ void handle_vhost_reverse_proxy(struct request_session* rs) {
         !hashset_has(rproxy->dynamic_types, rs->response->body->content_type)) {
         rs->request->add_to_cache = 1;
     }
+    return VHOST_ACTION_NO_CONTENT_UPDATE;
     //TODO: Chunked
 }
 
@@ -123,34 +124,34 @@ int rproxy_parse_config(struct vhost* vhost, struct config_node* node) {
     rproxy->base.enableGzip = 1;
     rproxy->base.cache_types = list_new(8, vhost->pool);
     rproxy->base.maxAge = 604800;
-    rproxy->base.scacheEnabled = (uint8_t) str_eq(load_default(node, "scache", "true"), "true");
+    rproxy->base.scacheEnabled = (uint8_t) str_eq(config_get_default(node, "scache", "true"), "true");
     rproxy->dynamic_types = hashset_new(8, vhost->pool);
 
-    char* temp = load_default(node, "cache-maxage", "604800");
+    char* temp = config_get_default(node, "cache-maxage", "604800");
     if (!str_isunum(temp)) {
         errlog(delog, "Invalid cache-maxage at vhost: %s, assuming '604800'", node->name);
         temp = "604800";
     }
     rproxy->base.maxAge = strtoul(temp, NULL, 10);
-    temp = load_default(node, "maxSCache", "0");
+    temp = config_get_default(node, "maxSCache", "0");
     if (!str_isunum(temp)) {
         errlog(delog, "Invalid maxSCache at vhost: %s, assuming '0'", node->name);
         temp = "0";
     }
     rproxy->base.cache = cache_new(strtoul(temp, NULL, 10));
     pchild(vhost->pool, rproxy->base.cache->pool);
-    rproxy->base.enableGzip = (uint8_t) str_eq(load_default(node, "enable-gzip", "true"), "true");
-    rproxy->xforwarded_header = (uint8_t) str_eq(load_default(node, "X-Forwarded", "true"), "true");
-    rproxy->forward_prefix_path = (char*) getConfigValue(node, "forward-prefix");
+    rproxy->base.enableGzip = (uint8_t) str_eq(config_get_default(node, "enable-gzip", "true"), "true");
+    rproxy->xforwarded_header = (uint8_t) str_eq(config_get_default(node, "X-Forwarded", "true"), "true");
+    rproxy->forward_prefix_path = (char*) config_get(node, "forward-prefix");
 
-    const char* forward_mode = load_default(node, "forward-mode", "tcp");
+    const char* forward_mode = config_get_default(node, "forward-mode", "tcp");
     if (str_eq(forward_mode, "tcp")) {
         rproxy->forward_address_length = sizeof(struct sockaddr_in);
         struct sockaddr_in* ina = pmalloc(vhost->pool, sizeof(struct sockaddr_in));
         rproxy->forward_address = (struct sockaddr*) ina;
         ina->sin_family = AF_INET;
-        const char* forward_ip = getConfigValue(node, "forward-ip");
-        const char* forward_port = getConfigValue(node, "forward-port");
+        const char* forward_ip = config_get(node, "forward-ip");
+        const char* forward_port = config_get(node, "forward-port");
         if (forward_ip == NULL || !inet_aton(forward_ip, &ina->sin_addr)) {
             errlog(delog, "Invalid IP for Reverse Proxy vhost: %s", node->name);
             return 1;
@@ -165,7 +166,7 @@ int rproxy_parse_config(struct vhost* vhost, struct config_node* node) {
         struct sockaddr_un* ina = pmalloc(vhost->pool, sizeof(struct sockaddr_un));
         rproxy->forward_address = ina;
         ina->sun_family = AF_LOCAL;
-        const char* ffile = getConfigValue(node, "file");
+        const char* ffile = config_get(node, "file");
         if (ffile == NULL || strlen(ffile) >= 107) {
             errlog(delog, "Invalid Unix Socket for Reverse Proxy vhost: %s", node->name);
             return 1;
@@ -176,14 +177,14 @@ int rproxy_parse_config(struct vhost* vhost, struct config_node* node) {
         return 1;
     }
 
-    temp = load_default(node, "cache-types", "text/css,application/javascript,image/*");
+    temp = config_get_default(node, "cache-types", "text/css,application/javascript,image/*");
     char* temp2 = str_dup(temp, 0, vhost->pool);
     str_split(temp2, ",", rproxy->base.cache_types);
     for (size_t i = 0; i < rproxy->base.cache_types->count; ++i) {
         rproxy->base.cache_types->data[i] = str_trim(rproxy->base.cache_types->data[i]);
     }
 
-    temp = load_default(node, "dynamic-types", "application/x-php");
+    temp = config_get_default(node, "dynamic-types", "application/x-php");
     temp2 = str_dup(temp, 0, vhost->pool);
     struct list* dynamic_list = list_new(8, vhost->pool);
     str_split(temp2, ",", dynamic_list);

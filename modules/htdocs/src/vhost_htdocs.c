@@ -17,11 +17,11 @@
 #include <fcntl.h>
 
 
-void handle_vhost_htdocs(struct request_session* rs) {
+int handle_vhost_htdocs(struct request_session* rs) {
     struct vhost* vhost = rs->vhost;
     struct vhost_htdocs* htdocs = ((struct vhost_htdocs*) rs->vhost->sub->extra);
     if (htdocs->base.scacheEnabled && check_cache(rs)) {
-        return;
+        return VHOST_ACTION_NONE;
     }
     int isStatic = 1;
     // make path relative to htdocs
@@ -155,7 +155,7 @@ void handle_vhost_htdocs(struct request_session* rs) {
                 expanded_path[expanded_path_length + 1] = 0;
             }
             header_add(rs->response->headers, "Location", expanded_path);
-            return;
+            return VHOST_ACTION_NONE;
         }
 
         if (!index_found) {
@@ -300,6 +300,7 @@ void handle_vhost_htdocs(struct request_session* rs) {
             rs->response->body->type = PROVISION_STREAM;
             rs->response->body->data.stream.stream_fd = ffd;
             rs->response->body->data.stream.read = raw_stream_read;
+            rs->response->body->data.stream.known_length = len;
         }
     }
 
@@ -399,6 +400,7 @@ void handle_vhost_htdocs(struct request_session* rs) {
             rs->response->code = "304 Not Modified";
         }
     }
+    return VHOST_ACTION_NONE;
     //TODO: Chunked
 }
 
@@ -410,7 +412,7 @@ int htdocs_parse_config(struct vhost* vhost, struct config_node* node) {
     htdocs->base.cache_types = list_new(8, vhost->pool);
     htdocs->base.maxAge = 604800;
     htdocs->providers = hashmap_new(8, vhost->pool);
-    htdocs->htdocs = load_default(node, "htdocs", "/var/www/html/");
+    htdocs->htdocs = config_get_default(node, "htdocs", "/var/www/html/");
     recur_mkdir(htdocs->htdocs, 0750);
     char* original_htdocs = htdocs->htdocs;
     htdocs->htdocs = pclaim(vhost->pool, realpath(htdocs->htdocs, NULL));
@@ -424,31 +426,31 @@ int htdocs_parse_config(struct vhost* vhost, struct config_node* node) {
         htdocs->htdocs[htdocs_length - 1] = '/';
         htdocs->htdocs[htdocs_length] = 0;
     }
-    htdocs->nohardlinks = (uint8_t) str_eq(load_default(node, "nohardlinks", "true"), "true");
-    htdocs->symlock = (uint8_t) str_eq(load_default(node, "symlock", "true"), "true");
-    htdocs->base.scacheEnabled = (uint8_t) str_eq(load_default(node, "scache", "true"), "true");
-    char* temp = load_default(node, "cache-maxage", "604800");
+    htdocs->nohardlinks = (uint8_t) str_eq(config_get_default(node, "nohardlinks", "true"), "true");
+    htdocs->symlock = (uint8_t) str_eq(config_get_default(node, "symlock", "true"), "true");
+    htdocs->base.scacheEnabled = (uint8_t) str_eq(config_get_default(node, "scache", "true"), "true");
+    char* temp = config_get_default(node, "cache-maxage", "604800");
     if (!str_isunum(temp)) {
         errlog(delog, "Invalid cache-maxage at vhost: %s, assuming '604800'", node->name);
         temp = "604800";
     }
     htdocs->base.maxAge = strtoul(temp, NULL, 10);
-    temp = load_default(node, "maxSCache", "0");
+    temp = config_get_default(node, "maxSCache", "0");
     if (!str_isunum(temp)) {
         errlog(delog, "Invalid maxSCache at vhost: %s, assuming '0'", node->name);
         temp = "0";
     }
     htdocs->base.cache = cache_new(strtoul(temp, NULL, 10));
     pchild(vhost->pool, htdocs->base.cache->pool);
-    htdocs->base.enableGzip = (uint8_t) str_eq(load_default(node, "enable-gzip", "true"), "true");
-    temp = load_default(node, "index", "index.php, index.html, index.htm");
+    htdocs->base.enableGzip = (uint8_t) str_eq(config_get_default(node, "enable-gzip", "true"), "true");
+    temp = config_get_default(node, "index", "index.php, index.html, index.htm");
     char* temp2 = str_dup(temp, 0, vhost->pool);
     str_split(temp2, ",", htdocs->index);
     for (size_t i = 0; i < htdocs->index->count; ++i) {
         htdocs->index->data[i] = str_trim(htdocs->index->data[i]);
     }
 
-    temp = load_default(node, "cache-types", "text/css,application/javascript,image/*");
+    temp = config_get_default(node, "cache-types", "text/css,application/javascript,image/*");
     temp2 = str_dup(temp, 0, vhost->pool);
     str_split(temp2, ",", htdocs->base.cache_types);
     for (size_t i = 0; i < htdocs->base.cache_types->count; ++i) {
@@ -467,7 +469,7 @@ int htdocs_parse_config(struct vhost* vhost, struct config_node* node) {
         ITER_MAP_END();
     }
 
-    temp = getConfigValue(node, "providers");
+    temp = config_get(node, "providers");
     if (temp != NULL) {
         temp2 = str_dup(temp, 0, vhost->pool);
         struct list* provider_names = list_new(8, vhost->pool);

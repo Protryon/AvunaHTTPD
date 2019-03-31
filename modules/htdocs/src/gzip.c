@@ -142,6 +142,7 @@ ssize_t gzip_stream_read(struct provision* provision, struct provision_data* buf
 
 int init_gzip_stream(struct request_session* rs, struct provision* parent, struct provision* provision) {
     struct gzip_stream_data* data = provision->data.stream.extra = pcalloc(parent->pool, sizeof(struct gzip_stream_data));
+    provision->data.stream.known_length = -1;
     data->parent = parent;
     buffer_init(&data->in_data, parent->pool);
     int dr = 0;

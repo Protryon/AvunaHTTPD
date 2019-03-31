@@ -7,63 +7,58 @@
 
 #include <avuna/http.h>
 #include <avuna/string.h>
+#include <avuna/provider.h>
 #include <errno.h>
 
 int parseRequest(struct request_session* rs, char* data, size_t maxPost) {
-    struct request* req = rs->request;
-    req->add_to_cache = 0;
-    char* cd = data;
-    char* eol1 = strchr(cd, '\n');
+    struct request* request = rs->request;
+    request->add_to_cache = 0;
+    char* temp = data;
+    char* eol1 = strchr(temp, '\n');
     if (eol1 == NULL) {
         errno = EINVAL;
         return -1;
     }
     eol1[0] = 0;
-    eol1 = strchr(cd, ' ');
+    eol1 = strchr(temp, ' ');
     if (eol1 == NULL) {
         errno = EINVAL;
         return -1;
     }
     eol1[0] = 0;
-    if (str_eq_case(cd, "GET")) {
-        req->method = METHOD_GET;
-    } else if (str_eq_case(cd, "POST")) {
-        req->method = METHOD_POST;
-    } else if (str_eq_case(cd, "HEAD")) {
-        req->method = METHOD_HEAD;
-    } else {
-        req->method = METHOD_UNK;
-    }
-    cd = eol1 + 1;
-    eol1 = strchr(cd, ' ');
+    request->method = str_dup(temp, 0, rs->pool);
+    temp = eol1 + 1;
+    eol1 = strchr(temp, ' ');
     if (eol1 == NULL) {
         errno = EINVAL;
         return -1;
     }
     eol1[0] = 0;
-    size_t pl = strlen(cd) + 1;
-    req->path = pmalloc(rs->pool, pl);
-    memcpy(req->path, cd, pl);
-    cd = eol1 + 1;
-    cd = str_trim(cd);
-    pl = strlen(cd) + 1;
-    req->version = pmalloc(rs->pool, pl);
-    memcpy(req->version, cd, pl);
-    cd += pl + 1;
-    req->headers = pcalloc(rs->pool, sizeof(struct headers));
-    header_parse(req->headers, cd, 0, rs->pool);
-    req->body = NULL;
-    const char* cl = header_get(req->headers, "Content-Length");
-    if (req->method == METHOD_POST && cl != NULL && str_isunum(cl)) {
+    size_t temp_len = strlen(temp) + 1;
+    request->path = pmalloc(rs->pool, temp_len);
+    memcpy(request->path, temp, temp_len);
+    temp = eol1 + 1;
+    temp = str_trim(temp);
+    temp_len = strlen(temp) + 1;
+    request->http_version = pmalloc(rs->pool, temp_len);
+    memcpy(request->http_version, temp, temp_len);
+    temp += temp_len + 1;
+    request->headers = pcalloc(rs->pool, sizeof(struct headers));
+    header_parse(request->headers, temp, 0, rs->pool);
+    request->body = NULL;
+
+    //TODO: stream posts?
+    const char* cl = header_get(request->headers, "Content-Length");
+    if (str_eq(request->method, "POST") && cl != NULL && str_isunum(cl)) {
         size_t cli = strtoull(cl, NULL, 10);
         if (cli > 0 && (maxPost == 0 || cli < maxPost)) {
-            req->body = pmalloc(rs->pool, sizeof(struct body));
-            req->body->len = cli;
-            req->body->data = pmalloc(rs->pool, cli);
-            const char* tmp = header_get(req->headers, "Content-Type");
-            req->body->mime_type = tmp == NULL ? "application/x-www-form-urlencoded" : tmp;
-            req->body->stream_fd = -1;
-            req->body->stream_type = STREAM_TYPE_INVALID;
+            request->body = pcalloc(rs->pool, sizeof(struct provision));
+            request->body->pool = rs->pool;
+            request->body->type = PROVISION_DATA;
+            const char* tmp = header_get(request->headers, "Content-Type");
+            request->body->content_type = (char*) (tmp == NULL ? "application/x-www-form-urlencoded" : tmp);
+            request->body->data.data.data = pmalloc(rs->pool, cli);
+            request->body->data.data.size = cli;
         }
     }
     return 0;
@@ -71,32 +66,33 @@ int parseRequest(struct request_session* rs, char* data, size_t maxPost) {
 
 unsigned char* serializeRequest(struct request_session* rs, size_t* len) {
     *len = 0;
-    const char* ms = getMethod(rs->request->method);
-    size_t vl = strlen(ms);
+    size_t vl = strlen(rs->request->method);
     size_t cl = strlen(rs->request->path);
-    size_t rvl = strlen(rs->request->version);
+    size_t rvl = strlen(rs->request->http_version);
     *len = vl + 1 + cl + 1 + rvl + 2;
     size_t hl = 0;
     char* headers = header_serialize(rs->request->headers, &hl);
     *len += hl;
-    if (rs->response->body != NULL) *len += rs->response->body->len;
+    if (rs->response->body != NULL && rs->response->body->type == PROVISION_DATA) {
+        *len += rs->response->body->data.data.size;
+    }
     unsigned char* ret = pmalloc(rs->pool, *len);
     size_t wr = 0;
-    memcpy(ret, ms, vl);
+    memcpy(ret, rs->request->method, vl);
     wr += vl;
     ret[wr++] = ' ';
     memcpy(ret + wr, rs->request->path, cl);
     wr += cl;
     ret[wr++] = ' ';
-    memcpy(ret + wr, rs->request->version, rvl);
+    memcpy(ret + wr, rs->request->http_version, rvl);
     wr += rvl;
     ret[wr++] = '\r';
     ret[wr++] = '\n';
     memcpy(ret + wr, headers, hl);
     wr += hl;
-    if (rs->request->method == METHOD_POST && rs->request->body != NULL) {
-        memcpy(ret + wr, rs->response->body->data, rs->response->body->len);
-        wr += rs->response->body->len;
+    if (rs->response->body != NULL && rs->response->body->type == PROVISION_DATA) {
+        memcpy(ret + wr, rs->response->body->data.data.data, rs->response->body->data.data.size);
+        wr += rs->response->body->data.data.size;
     }
     return ret;
 }
@@ -118,7 +114,7 @@ int parseResponse(struct request_session* rs, char* data) {
     }
     eol1[0] = 0;
     eol1++;
-    rs->response->version = str_dup(cd, 0, rs->pool);
+    rs->response->http_version = str_dup(cd, 0, rs->pool);
     size_t eols = strlen(eol1);
     if (eol1[eols - 1] == '\r') eol1[eols - 1] = 0;
     rs->response->code = str_dup(eol1, 0, rs->pool);
@@ -153,7 +149,7 @@ int parseResponse(struct request_session* rs, char* data) {
 
 unsigned char* serializeResponse(struct request_session* rs, size_t* len) {
     *len = 0;
-    size_t vl = strlen(rs->response->version);
+    size_t vl = strlen(rs->response->http_version);
     size_t cl = strlen(rs->response->code);
     *len = vl + 1 + cl + 2;
     size_t hl = 0;
@@ -162,7 +158,7 @@ unsigned char* serializeResponse(struct request_session* rs, size_t* len) {
     if (rs->response->body != NULL && rs->response->body->stream_type < 0) *len += rs->response->body->len;
     unsigned char* ret = pmalloc(rs->conn->pool, *len);
     size_t wr = 0;
-    memcpy(ret, rs->response->version, vl);
+    memcpy(ret, rs->response->http_version, vl);
     wr += vl;
     ret[wr++] = ' ';
     memcpy(ret + wr, rs->response->code, cl);

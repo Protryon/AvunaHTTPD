@@ -9,16 +9,17 @@
 #include <avuna/module.h>
 #include <avuna/globals.h>
 
-void handle_vhost_redirect(struct request_session* rs) {
+int handle_vhost_redirect(struct request_session* rs) {
     struct vhost* vhost = rs->vhost;
     struct vhost_redirect* redirect = vhost->sub->extra;
     rs->response->code = "302 Found";
     header_add(rs->response->headers, "Location", redirect->redir);
+    return VHOST_ACTION_NONE;
 }
 
 int redirect_parse_config(struct vhost* vhost, struct config_node* node) {
     struct vhost_redirect* redirect = vhost->sub->extra = pcalloc(vhost->pool, sizeof(struct vhost_mount));
-    redirect->redir = (char*) getConfigValue(node, "redirect");
+    redirect->redir = (char*) config_get(node, "redirect");
     if (redirect->redir == NULL) {
         errlog(delog, "No redirect at vhost: %s", node->name);
         return 1;

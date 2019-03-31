@@ -11,14 +11,12 @@
 
 #define HTBASE(vh) ((struct vhost_htbase*) (vh)->sub->extra)
 
-char* escapehtml(struct mempool* pool, const char* orig);
-
 void generateDefaultErrorPage(struct request_session* rs, const char* msg);
 
 int check_cache(struct request_session* rs);
 
 void check_client_cache(struct request_session* rs);
 
-char* load_default(struct config_node* node, char* key, char* def);
+char* config_get_default(struct config_node* node, char* key, char* def);
 
 #endif //AVUNA_HTTPD_UTIL_H

@@ -27,6 +27,7 @@ struct provision_data {
 struct provision_stream {
     int stream_fd;
     void* extra;
+    ssize_t known_length;
     ssize_t (*read)(struct provision* provision, struct provision_data* buffer);
 };
 

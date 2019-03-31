@@ -66,7 +66,7 @@ void handleRequest(struct timespec* stt, struct request_session* rs) {
     resp->body = NULL;
     resp->parsed = 0;
     resp->code = "500 Internal Server Error";
-    resp->version = "HTTP/1.1";
+    resp->http_version = "HTTP/1.1";
     resp->fromCache = NULL;
     resp->headers = pcalloc(rs->pool, sizeof(struct headers));
     resp->headers->pool = rs->pool;

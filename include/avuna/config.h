@@ -25,10 +25,12 @@ struct config {
     struct hashmap* nodeListsByCat;
 };
 
-struct config* loadConfig(const char* file);
+struct config* config_load(const char* file);
 
-const char* getConfigValue(const struct config_node* cat, const char* name);
+const char* config_get(const struct config_node* cat, const char* name);
 
-struct config_node* getUniqueByCat(const struct config* cfg, const char* cat);
+char* config_get_default(struct config_node* node, char* key, char* def);
+
+struct config_node* config_get_unique_cat(const struct config* cfg, const char* cat);
 
 #endif /* CONFIG_H_ */

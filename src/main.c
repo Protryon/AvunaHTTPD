@@ -33,7 +33,7 @@
 int load_vhost(struct config_node* config_node, struct vhost* vhost) {
     vhost->id = config_node->name;
     vhost->hosts = list_new(8, vhost->pool);
-    const char* vht = getConfigValue(config_node, "type");
+    const char* vht = config_get(config_node, "type");
     if (str_eq_case(vht, "htdocs")) {
         vhost->type = VHOST_HTDOCS;
     } else if (str_eq_case(vht, "reverse-proxy")) {
@@ -46,20 +46,20 @@ int load_vhost(struct config_node* config_node, struct vhost* vhost) {
         errlog(delog, "Invalid VHost Type: %s", vht);
         return 1;
     }
-    char* host_value = str_dup(getConfigValue(config_node, "host"), 0, vhost->pool);
+    char* host_value = str_dup(config_get(config_node, "host"), 0, vhost->pool);
     str_split(host_value, ",", vhost->hosts);
     for (size_t i = 0; i < vhost->hosts->count; ++i) {
         vhost->hosts->data[i] = str_trim(vhost->hosts->data[i]);
     }
-    const char* ssl_name = getConfigValue(config_node, "ssl");
+    const char* ssl_name = config_get(config_node, "ssl");
     if (ssl_name != NULL) {
         struct config_node* ssl_node = hashmap_get(cfg->nodesByName, ssl_name);
         if (ssl_node == NULL || !str_eq_case(ssl_node->category, "ssl")) {
             errlog(delog, "Invalid SSL node! Node not found! '%s'", ssl_name);
             goto post_ssl;
         }
-        const char* cert = getConfigValue(ssl_node, "publicKey");
-        const char* key = getConfigValue(ssl_node, "privateKey");
+        const char* cert = config_get(ssl_node, "publicKey");
+        const char* key = config_get(ssl_node, "privateKey");
         if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
             errlog(delog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
             goto post_ssl;
@@ -89,7 +89,7 @@ int load_vhost(struct config_node* config_node, struct vhost* vhost) {
                             list_add(mount->mounts, point);
                         }
                     }ITER_MAP_END();
-        const char* keep_prefix = getConfigValue(config_node, "keep-prefix");
+        const char* keep_prefix = config_get(config_node, "keep-prefix");
         if (keep_prefix == NULL) {
             errlog(delog, "No keep-prefix at vhost: %s, assuming 'false'", config_node->name);
             keep_prefix = "false";
@@ -100,7 +100,7 @@ int load_vhost(struct config_node* config_node, struct vhost* vhost) {
 }
 
 int load_binding(struct config_node* bind_node, struct server_binding* binding) {
-    const char* bind_mode = getConfigValue(bind_node, "bind-mode");
+    const char* bind_mode = config_get(bind_node, "bind-mode");
     const char* bind_ip = NULL;
     uint16_t port = 0;
     const char* bind_file = NULL;
@@ -109,7 +109,7 @@ int load_binding(struct config_node* bind_node, struct server_binding* binding) 
     int use_ipv6 = 0;
     if (str_eq_case(bind_mode, "tcp")) {
         binding->binding_type = BINDING_TCP4;
-        bind_ip = getConfigValue(bind_node, "bind-ip");
+        bind_ip = config_get(bind_node, "bind-ip");
         if (bind_ip == NULL || str_eq_case(bind_ip, "0.0.0.0")) {
             bind_all = 1;
         }
@@ -117,7 +117,7 @@ int load_binding(struct config_node* bind_node, struct server_binding* binding) 
         if (use_ipv6) {
             binding->binding_type = BINDING_TCP6;
         }
-        const char* bind_port = getConfigValue(bind_node, "bind-port");
+        const char* bind_port = config_get(bind_node, "bind-port");
         if (bind_port != NULL && !str_isunum(bind_port)) {
             errlog(delog, "Invalid bind-port for binding: %s", bind_node->name);
             return 1;
@@ -126,14 +126,14 @@ int load_binding(struct config_node* bind_node, struct server_binding* binding) 
         namespace = use_ipv6 ? PF_INET6 : PF_INET;
     } else if (str_eq_case(bind_mode, "unix")) {
         binding->binding_type = BINDING_UNIX;
-        bind_file = getConfigValue(bind_node, "bind-file");
+        bind_file = config_get(bind_node, "bind-file");
         namespace = PF_LOCAL;
     } else {
         errlog(delog, "Invalid bind-mode for binding: %s", bind_node->name);
         return 1;
     }
 
-    const char* mcc = getConfigValue(bind_node, "max-conn");
+    const char* mcc = config_get(bind_node, "max-conn");
     if (mcc != NULL && !str_isunum(mcc)) {
         errlog(delog, "Invalid max-conn for binding: %s", bind_node->name);
         return 1;
@@ -210,7 +210,7 @@ int load_binding(struct config_node* bind_node, struct server_binding* binding) 
 
     binding->mode = 0;
 
-    const char* protocol = getConfigValue(bind_node, "protocol");
+    const char* protocol = config_get(bind_node, "protocol");
     if (protocol == NULL || str_eq_case(protocol, "http/1.1")) {
         binding->mode |= BINDING_MODE_HTTP2_UPGRADABLE;
     } else if (str_eq_case(protocol, "http/2.0")) {
@@ -220,15 +220,15 @@ int load_binding(struct config_node* bind_node, struct server_binding* binding) 
         return 1;
     }
 
-    const char* ssl_name = getConfigValue(bind_node, "ssl");
+    const char* ssl_name = config_get(bind_node, "ssl");
     if (ssl_name != NULL) {
         struct config_node* ssl_node = hashmap_get(cfg->nodesByName, ssl_name);
         if (ssl_node == NULL || !str_eq_case(ssl_node->category, "ssl")) {
             errlog(delog, "Invalid SSL node! Node not found! '%s'", ssl_name);
             goto post_ssl;
         }
-        const char* cert = getConfigValue(ssl_node, "publicKey");
-        const char* key = getConfigValue(ssl_node, "privateKey");
+        const char* cert = config_get(ssl_node, "publicKey");
+        const char* key = config_get(ssl_node, "privateKey");
         if (cert == NULL || key == NULL || access(cert, R_OK) || access(key, R_OK)) {
             errlog(delog, "Invalid SSL node! No publicKey/privateKey value or cannot be read!");
             goto post_ssl;
@@ -275,12 +275,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     strncat(cwd, "/main.cfg", 9);
-    cfg = loadConfig(cwd);
+    cfg = config_load(cwd);
     if (cfg == NULL) {
         printf("Error loading Config<%s>: %s\n", cwd, errno == EINVAL ? "File doesn't exist!" : strerror(errno));
         return 1;
     }
-    struct config_node* dm = getUniqueByCat(cfg, "daemon");
+    struct config_node* dm = config_get_unique_cat(cfg, "daemon");
     if (dm == NULL) {
         printf("[daemon] block does not exist in %s!\n", cwd);
         return 1;
@@ -342,7 +342,7 @@ int main(int argc, char* argv[]) {
     delog = pmalloc(global_pool, sizeof(struct logsess));
     delog->pi = 0;
     delog->access_fd = NULL;
-    const char* el = getConfigValue(dm, "error-log");
+    const char* el = config_get(dm, "error-log");
     delog->error_fd = el == NULL ? NULL : fopen(el, "a"); // fopen will return NULL on error, which works.
 #ifndef DEBUG
     size_t pfpl = strlen(pid_file);
@@ -371,7 +371,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 #endif
-    const char* rlt = getConfigValue(dm, "fd-limit");
+    const char* rlt = config_get(dm, "fd-limit");
     if (rlt == NULL) {
         errlog(delog, "No fd-limit in daemon config! Assuming 1024.");
     }
@@ -380,7 +380,7 @@ int main(int argc, char* argv[]) {
     rlx.rlim_cur = fd_lim;
     rlx.rlim_max = fd_lim;
     if (setrlimit(RLIMIT_NOFILE, &rlx) == -1) printf("Error setting resource limit: %s\n", strerror(errno));
-    const char* mtf = getConfigValue(dm, "mime-types");
+    const char* mtf = config_get(dm, "mime-types");
     if (mtf == NULL) {
         errlog(delog, "No mime-types in daemon config!");
         return 1;
@@ -452,7 +452,7 @@ int main(int argc, char* argv[]) {
         info->vhosts = list_new(16, info->pool);
         info->prepared_connections = queue_new(0, 1, info->pool);
         list_add(server_infos, info);
-        const char* bindings = getConfigValue(serv, "bindings");
+        const char* bindings = config_get(serv, "bindings");
         struct list* binding_names = list_new(8, info->pool);
         char bindings_dup[strlen(bindings) + 1];
         strcpy(bindings_dup, bindings);
@@ -468,7 +468,7 @@ int main(int argc, char* argv[]) {
             list_add(info->bindings, data);
         }
 
-        const char* vhosts = getConfigValue(serv, "vhosts");
+        const char* vhosts = config_get(serv, "vhosts");
         struct list* vhost_names = list_new(8, info->pool);
         char vhosts_dup[strlen(vhosts) + 1];
         strcpy(vhosts_dup, vhosts);
@@ -484,7 +484,7 @@ int main(int argc, char* argv[]) {
             list_add(info->vhosts, data);
         }
 
-        const char* tcc = getConfigValue(serv, "threads");
+        const char* tcc = config_get(serv, "threads");
         if (!str_isunum(tcc)) {
             errlog(delog, "Invalid threads for server: %s", serv->name);
             continue;
@@ -495,7 +495,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         info->max_worker_count = (uint16_t) tc;
-        char* maxPostStr = getConfigValue(serv, "max-post");
+        char* maxPostStr = config_get(serv, "max-post");
         if (maxPostStr == NULL || !str_isunum(maxPostStr)) {
             errlog(delog, "No max-post at server: %s, assuming '0'", serv->name);
             maxPostStr = "0";
@@ -504,16 +504,16 @@ int main(int argc, char* argv[]) {
 
         struct logsess* slog = pmalloc(info->pool, sizeof(struct logsess));
         slog->pi = 0;
-        const char* lal = getConfigValue(serv, "access-log");
+        const char* lal = config_get(serv, "access-log");
         slog->access_fd = lal == NULL ? NULL : fopen(lal, "a");
-        const char* lel = getConfigValue(serv, "error-log");
+        const char* lel = config_get(serv, "error-log");
         slog->error_fd = lel == NULL ? NULL : fopen(lel, "a");
         acclog(slog, "Server %s listening for connections!", serv->name);
         info->logsess = slog;
     }
 
-    const char* uids = getConfigValue(dm, "uid");
-    const char* gids = getConfigValue(dm, "gid");
+    const char* uids = config_get(dm, "uid");
+    const char* gids = config_get(dm, "gid");
     uid_t uid = uids == NULL ? 0 : strtoul(uids, NULL, 10);
     uid_t gid = gids == NULL ? 0 : strtoul(gids, NULL, 10);
     if (gid > 0 && setgid(gid) != 0) {

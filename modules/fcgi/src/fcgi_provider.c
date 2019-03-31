@@ -26,14 +26,14 @@ struct fcgi_config {
 
 void fcgi_load_config(struct provider* provider, struct config_node* node) {
     struct fcgi_config* fcgi = provider->extra = pcalloc(provider->pool, sizeof(struct fcgi_config));
-    const char* mode = getConfigValue(node, "mode");
+    const char* mode = config_get(node, "mode");
     if (str_eq(mode, "tcp")) {
         fcgi->addrlen = sizeof(struct sockaddr_in);
         struct sockaddr_in* ina = pmalloc(provider->pool, sizeof(struct sockaddr_in));
         fcgi->addr = (struct sockaddr*) ina;
         ina->sin_family = AF_INET;
-        const char* ip = getConfigValue(node, "ip");
-        const char* port = getConfigValue(node, "port");
+        const char* ip = config_get(node, "ip");
+        const char* port = config_get(node, "port");
         if (ip == NULL || !inet_aton(ip, &ina->sin_addr)) {
             errlog(delog, "Invalid IP for FCGI node %s", node->name);
             return;
@@ -48,7 +48,7 @@ void fcgi_load_config(struct provider* provider, struct config_node* node) {
         struct sockaddr_un* ina = pmalloc(provider->pool, sizeof(struct sockaddr_un));
         fcgi->addr = (struct sockaddr*) ina;
         ina->sun_family = AF_LOCAL;
-        const char* file = getConfigValue(node, "file");
+        const char* file = config_get(node, "file");
         if (file == NULL || strlen(file) >= 107) {
             errlog(delog, "Invalid Unix Socket for FCGI node %s", node->name);
             return;
@@ -60,7 +60,7 @@ void fcgi_load_config(struct provider* provider, struct config_node* node) {
     }
     /*
      * TODO: no longer this function's duty, move to caller
-    const char* mimes = getConfigValue(node, "mime-types");
+    const char* mimes = config_get(node, "mime-types");
     if (mimes != NULL) {
         char* mimes_split = pclaim(provider->pool, str_dup(mimes, 0, provider->pool));
         mimes_split = str_trim(mimes_split);

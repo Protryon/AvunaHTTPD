@@ -7,10 +7,8 @@
 #include <avuna/vhost.h>
 #include <avuna/string.h>
 #include <avuna/module.h>
-#include <mod_htdocs/util.h>
 
-
-void handle_vhost_mount(struct request_session* rs) {
+int handle_vhost_mount(struct request_session* rs) {
     struct vhost* vhost = rs->vhost;
     struct vhost_mount* vhm = vhost->sub->extra;
     char* oid = vhost->id;
@@ -39,6 +37,7 @@ void handle_vhost_mount(struct request_session* rs) {
             if (vhost != NULL) break;
         }
     }
+    return VHOST_ACTION_RESTART;
 }
 
 int mount_parse_config(struct vhost* vhost, struct config_node* node) {
@@ -53,7 +52,7 @@ int mount_parse_config(struct vhost* vhost, struct config_node* node) {
         }
         ITER_MAP_END();
     }
-    mount->keep_prefix = (uint8_t) str_eq(load_default(node, "keep-prefix", "false"), "true");
+    mount->keep_prefix = (uint8_t) str_eq(config_get_default(node, "keep-prefix", "false"), "true");
     return 0;
 }
 

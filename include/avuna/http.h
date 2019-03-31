@@ -26,7 +26,7 @@ struct request {
 
 
 struct response {
-    char* version;
+    char* http_version;
     char* code;
     struct headers* headers;
     struct provision* body; // may be NULL
