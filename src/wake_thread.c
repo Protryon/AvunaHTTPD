@@ -3,7 +3,7 @@
 //
 
 #include "wake_thread.h"
-#include "work.h"
+#include "network.h"
 #include <avuna/queue.h>
 #include <avuna/log.h>
 #include <unistd.h>

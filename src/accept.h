@@ -8,7 +8,7 @@
 #ifndef ACCEPT_H_
 #define ACCEPT_H_
 
-#include "server.h"
+#include <avuna/server.h>
 
 struct accept_param {
     struct server_info* server;

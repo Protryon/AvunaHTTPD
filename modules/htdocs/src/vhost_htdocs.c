@@ -380,7 +380,7 @@ int handle_vhost_htdocs(struct request_session* rs) {
             } else {
                 MD5_CTX md5ctx;
                 MD5_Init(&md5ctx);
-                MD5_Update(&md5ctx, rs->response->body->data, rs->response->body->data.data.size);
+                MD5_Update(&md5ctx, rs->response->body->data.data.data, rs->response->body->data.data.size);
                 unsigned char rawmd5[16];
                 MD5_Final(rawmd5, &md5ctx);
                 etag[34] = 0;
@@ -400,8 +400,7 @@ int handle_vhost_htdocs(struct request_session* rs) {
             rs->response->code = "304 Not Modified";
         }
     }
-    return VHOST_ACTION_NONE;
-    //TODO: Chunked
+    return rs->response->body == NULL ? VHOST_ACTION_NONE : rs->response->body->requested_vhost_action;
 }
 
 int htdocs_parse_config(struct vhost* vhost, struct config_node* node) {
@@ -469,7 +468,7 @@ int htdocs_parse_config(struct vhost* vhost, struct config_node* node) {
         ITER_MAP_END();
     }
 
-    temp = config_get(node, "providers");
+    temp = (char*) config_get(node, "providers");
     if (temp != NULL) {
         temp2 = str_dup(temp, 0, vhost->pool);
         struct list* provider_names = list_new(8, vhost->pool);

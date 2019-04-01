@@ -6,7 +6,7 @@
  */
 
 #include "accept.h"
-#include "work.h"
+#include "network.h"
 #include "wake_thread.h"
 #include <avuna/config.h>
 #include <avuna/string.h>
@@ -29,6 +29,9 @@
 #include <pthread.h>
 #include <openssl/conf.h>
 #include <sys/resource.h>
+#include <dlfcn.h>
+#include <dirent.h>
+#include <avuna/module.h>
 
 int load_vhost(struct config_node* config_node, struct vhost* vhost) {
     vhost->id = config_node->name;
@@ -264,15 +267,15 @@ int main(int argc, char* argv[]) {
         printf("Error loading Config<%s>: %s\n", cwd, errno == EINVAL ? "File doesn't exist!" : strerror(errno));
         return 1;
     }
-    struct config_node* dm = config_get_unique_cat(cfg, "daemon");
-    if (dm == NULL) {
+    struct config_node* daemon_node = config_get_unique_cat(cfg, "daemon");
+    if (daemon_node == NULL) {
         printf("[daemon] block does not exist in %s!\n", cwd);
         return 1;
     }
 #ifndef DEBUG
     int runn = 0;
     pid_t pid = 0;
-    const char* pid_file = getConfigValue(dm, "pid-file");
+    const char* pid_file = getConfigValue(daemon_node, "pid-file");
     if (!access(pid_file, F_OK)) {
         int pidfd = open(pid_file, O_RDONLY);
         if (pidfd < 0) {
@@ -326,7 +329,7 @@ int main(int argc, char* argv[]) {
     delog = pmalloc(global_pool, sizeof(struct logsess));
     delog->pi = 0;
     delog->access_fd = NULL;
-    const char* el = config_get(dm, "error-log");
+    const char* el = config_get(daemon_node, "error-log");
     delog->error_fd = el == NULL ? NULL : fopen(el, "a"); // fopen will return NULL on error, which works.
 #ifndef DEBUG
     size_t pfpl = strlen(pid_file);
@@ -355,28 +358,88 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 #endif
-    const char* rlt = config_get(dm, "fd-limit");
-    if (rlt == NULL) {
+    const char* fd_limit_str = config_get(daemon_node, "fd-limit");
+    if (fd_limit_str == NULL) {
         errlog(delog, "No fd-limit in daemon config! Assuming 1024.");
     }
-    size_t fd_lim = rlt == NULL ? 1024 : strtoul(rlt, NULL, 10);
+    size_t fd_lim = fd_limit_str == NULL ? 1024 : strtoul(fd_limit_str, NULL, 10);
     struct rlimit rlx;
     rlx.rlim_cur = fd_lim;
     rlx.rlim_max = fd_lim;
     if (setrlimit(RLIMIT_NOFILE, &rlx) == -1) printf("Error setting resource limit: %s\n", strerror(errno));
-    const char* mtf = config_get(dm, "mime-types");
-    if (mtf == NULL) {
+    const char* mime_types_file = config_get(daemon_node, "mime-types");
+    if (mime_types_file == NULL) {
         errlog(delog, "No mime-types in daemon config!");
         return 1;
     }
-    if (access(mtf, R_OK) || loadMimes(mtf)) {
-        errlog(delog, "Cannot read or mime-types file does not exist: %s", mtf);
+    if (access(mime_types_file, R_OK) || loadMimes(mime_types_file)) {
+        errlog(delog, "Cannot read or mime-types file does not exist: %s", mime_types_file);
         return 1;
+    }
+    const char* modules_dir = config_get(daemon_node, "modules");
+    if (modules_dir == NULL) {
+        errlog(delog, "'modules' directory not defined in daemon block.");
+        return 1;
+    }
+    size_t modules_dir_length = strlen(modules_dir);
+
+    DIR* modules = opendir(modules_dir);
+    if (modules == NULL) {
+        errlog(delog, "Failed to open modules dir: '%s': %s", modules_dir, strerror(errno));
+        return 1;
+    }
+    registered_vhost_types = hashmap_new(8, global_pool);
+    loaded_modules = hashmap_new(8, global_pool);
+    available_providers = hashmap_new(8, global_pool);
+    available_provider_types = hashmap_new(8, global_pool);
+    struct dirent* module_entry = NULL;
+    while ((module_entry = readdir(modules)) != NULL) {
+        char* name = module_entry->d_name;
+        if (!str_suffixes(name, ".so") || !str_prefixes(name, "lib")) {
+            continue;
+        }
+        size_t name_len = strlen(name);
+        char* path = str_dup((char*) modules_dir, name_len + 2, global_pool);
+        size_t path_index = modules_dir_length;
+        if (!str_suffixes(modules_dir, "/")) {
+            path[path_index++] = '/';
+        }
+        memcpy(path + path_index, name, name_len);
+        path_index += name_len;
+        path[path_index] = 0;
+        void* handler = dlopen(path, RTLD_LAZY | RTLD_GLOBAL);
+        if (handler == NULL) {
+            errlog(delog, "Failed to open module: '%s': %s", path, dlerror());
+            continue;
+        }
+        char* module_name = str_dup(name + 3, 0, global_pool);
+        module_name[name_len - 3 - 3] = 0;
+        void (*initialize)(struct module* module) = dlsym(handler, "initialize");
+        if (initialize == NULL) {
+            errlog(delog, "Failed to open module: '%s': %s", path, dlerror());
+            continue;
+        }
+        void (*uninitialize)(struct module* module) = dlsym(handler, "uninitialize");
+        // uninitialize can be NULL
+        struct mempool* pool = mempool_new();
+        struct module* module_data = pcalloc(pool, sizeof(struct module));
+        module_data->pool = pool;
+        module_data->name = module_name;
+        module_data->handle = handler;
+        module_data->initialize = initialize;
+        module_data->uninitialize = uninitialize;
+        hashmap_put(loaded_modules, module_name, module_data);
     }
     (void) SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
     OPENSSL_config(NULL);
+
+    ITER_MAP(loaded_modules) {
+        struct module* module = value;
+        module->initialize(module);
+        ITER_MAP_END();
+    }
 
     struct hashmap* binding_map = hashmap_new(16, global_pool);
 
@@ -496,8 +559,8 @@ int main(int argc, char* argv[]) {
         info->logsess = slog;
     }
 
-    const char* uids = config_get(dm, "uid");
-    const char* gids = config_get(dm, "gid");
+    const char* uids = config_get(daemon_node, "uid");
+    const char* gids = config_get(daemon_node, "gid");
     uid_t uid = uids == NULL ? 0 : strtoul(uids, NULL, 10);
     uid_t gid = gids == NULL ? 0 : strtoul(gids, NULL, 10);
     if (gid > 0 && setgid(gid) != 0) {

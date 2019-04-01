@@ -10,6 +10,7 @@
 #include <avuna/buffer.h>
 #include <avuna/list.h>
 #include <avuna/queue.h>
+#include <avuna/log.h>
 #include <avuna/http.h>
 #include <avuna/server.h>
 #include <openssl/ssl.h>
@@ -50,11 +51,14 @@ struct conn {
     struct llist* sub_conns;
     struct mempool* pool;
     struct connection_manager* manager;
+    void* vhost_extra;
 };
 
 struct connection_manager {
     struct llist* pending_sub_conns;
 };
+
+int configure_fd(struct logsess* logger, int fd);
 
 
 #endif //AVUNA_HTTPD_CONNECTION_H

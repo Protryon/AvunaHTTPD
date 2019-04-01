@@ -46,7 +46,9 @@ file(GLOB reverse_proxy_src
 add_executable(avuna-httpd ${httpd_src} ${global_src})
 target_include_directories(avuna-httpd PUBLIC include/)
 target_include_directories(avuna-httpd PRIVATE src/)
-target_link_libraries(avuna-httpd -lssl -lcrypto -lpthread)
+target_link_libraries(avuna-httpd -lssl -lcrypto -lpthread -ldl -export-dynamic)
+
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "/etc/avuna/httpd/modules/")
 
 add_library(mod_fcgi SHARED ${fcgi_src} ${global_src})
 target_include_directories(mod_fcgi PRIVATE include/)

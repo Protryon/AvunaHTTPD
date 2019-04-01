@@ -9,6 +9,7 @@
 #define UTIL_H_
 
 #include <avuna/pmem.h>
+#include <avuna/http.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 

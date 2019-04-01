@@ -61,6 +61,6 @@ void initialize(struct module* module) {
     struct vhost_type* vhost_type = pcalloc(module->pool, sizeof(struct vhost_type));
     vhost_type->handle_request = handle_vhost_mount;
     vhost_type->load_config = mount_parse_config;
-    vhost_type->name = "reverse_proxy";
-    hashmap_put(registered_vhost_types, "reverse_proxy", vhost_type);
+    vhost_type->name = "mount";
+    hashmap_put(registered_vhost_types, "mount", vhost_type);
 }

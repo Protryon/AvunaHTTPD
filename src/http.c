@@ -99,7 +99,6 @@ unsigned char* serializeRequest(struct request_session* rs, size_t* out_len) {
 }
 
 int parseResponse(struct request_session* rs, struct sub_conn* sub_conn, char* data) {
-    rs->response->parsed = 1;
     char* current_data = data;
     char* eol = strchr(current_data, '\n');
     if (eol == NULL) {

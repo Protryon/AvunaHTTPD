@@ -3,7 +3,6 @@
 //
 
 #include "http_pipeline.h"
-#include "vhost.h"
 #include <avuna/string.h>
 #include <avuna/util.h>
 #include <avuna/version.h>

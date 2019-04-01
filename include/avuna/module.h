@@ -15,6 +15,7 @@ struct hashmap* loaded_modules;
 // modules add providers, provider types, and vhost types
 struct module {
     struct mempool* pool;
+    void* handle;
     char* name;
     void* extra;
     void (*initialize)(struct module* module);

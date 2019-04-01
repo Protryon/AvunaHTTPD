@@ -5,6 +5,7 @@
  *      Author: root
  */
 #include "accept.h"
+#include "network.h"
 #include "http_pipeline.h"
 #include <avuna/connection.h>
 #include <avuna/tls.h>
@@ -52,10 +53,6 @@ void shutdown_ssl_hook(SSL* ssl) {
 
 void run_accept(struct accept_param* param) {
     struct mempool* accept_pool = mempool_new();
-    static int one = 1;
-    struct timeval timeout;
-    timeout.tv_sec = 60;
-    timeout.tv_usec = 0;
     struct pollfd spfd;
     spfd.events = POLLIN;
     spfd.revents = 0;
@@ -76,10 +73,17 @@ void run_accept(struct accept_param* param) {
         conn->incoming_binding = param->binding;
         conn->sub_conns = llist_new(pool);
         conn->server = param->server;
+        pool = mempool_new();
+        pchild(conn->pool, pool);
         struct sub_conn* sub_conn = pcalloc(pool, sizeof(struct sub_conn));
-        llist_append(conn->sub_conns, sub_conn);
+        sub_conn->pool = pool;
+        sub_conn->read = handle_http_server_read;
+        sub_conn->conn = conn;
+        sub_conn->on_closed = http_on_closed;
         buffer_init(&sub_conn->read_buffer, conn->pool);
         buffer_init(&sub_conn->write_buffer, conn->pool);
+        llist_append(conn->sub_conns, sub_conn);
+
         sub_conn->tls = ssl;
         if (ssl) {
             sub_conn->tls_session = SSL_new(param->binding->ssl_cert->ctx);
@@ -113,15 +117,7 @@ void run_accept(struct accept_param* param) {
         }
         conn->fd = cfd;
         phook(pool, close_hook, (void*) cfd);
-        if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, (char*) &timeout, sizeof(timeout)))
-            errlog(param->server->logsess, "Setting recv timeout failed! %s", strerror(errno));
-        if (setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, (char*) &timeout, sizeof(timeout)))
-            errlog(param->server->logsess, "Setting send timeout failed! %s", strerror(errno));
-        if (setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (void*) &one, sizeof(one)))
-            errlog(param->server->logsess, "Setting TCP_NODELAY failed! %s", strerror(errno));
-        if (fcntl(cfd, F_SETFL, fcntl(cfd, F_GETFL) | O_NONBLOCK) < 0) {
-            errlog(param->server->logsess,
-                   "Setting O_NONBLOCK failed! %s, this error cannot be recovered, closing client.", strerror(errno));
+        if (configure_fd(param->server->logsess, cfd)) {
             pfree(pool);
             continue;
         }

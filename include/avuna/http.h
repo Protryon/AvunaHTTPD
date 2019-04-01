@@ -30,7 +30,6 @@ struct response {
     char* code;
     struct headers* headers;
     struct provision* body; // may be NULL
-    int parsed; // todo: remove
     struct scache* fromCache; // todo: remove
 };
 

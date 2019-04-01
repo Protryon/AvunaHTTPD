@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <avuna/pmem.h>
+#include <avuna/buffer.h>
 
 #define FCGI_VERSION_1 1
 #define FCGI_BEGIN_REQUEST 1
@@ -25,17 +26,17 @@
 #define FCGI_GET_VALUES_RESULT 10
 #define FCGI_UNKNOWN_TYPE 11
 
-struct fcgiframe {
-    unsigned char type;
-    int reqID;
+struct fcgi_frame {
+    uint8_t type;
+    uint16_t request_id;
     uint16_t len;
     void* data;
 };
 
-int writeFCGIFrame(int fd, struct fcgiframe* fcgif);
+void fcgi_writeFrame(struct buffer* buffer, struct fcgi_frame* frame);
 
-int writeFCGIParam(int fd, int reqid, const char* name, const char* value);
+void fcgi_writeParam(struct buffer* buffer, uint16_t reqid, const char* name, const char* value);
 
-int readFCGIFrame(int fd, struct fcgiframe* fcgif, struct mempool* pool);
+ssize_t fcgi_readFrame(struct buffer* buffer, struct fcgi_frame* frame, struct mempool* pool);
 
 #endif /* FCGI_H_ */

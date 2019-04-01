@@ -2,7 +2,7 @@
 // Created by p on 3/30/19.
 //
 
-#include "fcgi.h"
+#include "fcgi_protocol.h"
 #include <avuna/provider.h>
 #include <avuna/config.h>
 #include <avuna/http.h>
@@ -12,6 +12,7 @@
 #include <avuna/globals.h>
 #include <avuna/util.h>
 #include <avuna/version.h>
+#include <avuna/pmem_hooks.h>
 #include <mod_htdocs/util.h>
 #include <mod_htdocs/vhost_htdocs.h>
 #include <netinet/in.h>
@@ -74,21 +75,175 @@ void fcgi_load_config(struct provider* provider, struct config_node* node) {
 }
 
 
-int fcgi_request_connection(struct fcgi_config* fcgi) {
+int fcgi_request_connection(struct request_session* rs, struct fcgi_config* fcgi) {
     int fd = socket(fcgi->addr->sa_family == AF_INET ? PF_INET : PF_LOCAL, SOCK_STREAM, 0);
     if (fd < 0) {
         return -1;
     }
-    if (connect(fd, fcgi->addr, fcgi->addrlen)) {
+    if (configure_fd(rs->conn->server->logsess, fd)) {
+        return -1;
+    }
+    if (connect(fd, fcgi->addr, fcgi->addrlen) && errno != EINPROGRESS) {
         close(fd);
         return -1;
     }
     return fd;
 }
 
+struct fcgi_stream_data {
+    struct request_session* rs;
+    struct provision* provision;
+    uint16_t request_id;
+    int stdout_state; // 0 = headers, 1 = errors, 2 = headers read finished, 3 = body
+    struct buffer headers;
+    struct buffer* output;
+    int complete;
+};
+
+int fcgi_forward(struct fcgi_stream_data* extra) {
+    struct provision* provision = extra->rs->response->body;
+    struct provision_data data;
+    data.data = NULL;
+    data.size = 0;
+    ssize_t total_read = provision->data.stream.read(provision, &data);
+    if (total_read == -1) {
+        // backend server failed during stream
+        pfree(extra->rs->pool);
+        return 1;
+    } else if (total_read == 0) {
+        // end of stream
+        pfree(extra->rs->pool);
+        return 1;
+    } else if (total_read == -2) {
+        // nothing to read, not end of stream
+    } else {
+        pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
+        buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
+    }
+    return 0;
+}
+
+int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len) {
+    buffer_push(&sub_conn->read_buffer, read_buf, read_buf_len);
+    struct fcgi_stream_data* extra = sub_conn->extra;
+    struct fcgi_frame frame;
+    frame.type = FCGI_BEGIN_REQUEST;
+    int output_ready = 0;
+    if (fcgi_forward(extra)) {
+        return 1;
+    }
+    while (frame.type != FCGI_END_REQUEST) {
+        ssize_t status = fcgi_readFrame(&sub_conn->read_buffer, &frame, sub_conn->pool);
+        if (status == -2) {
+            if (output_ready && fcgi_forward(extra)) {
+                return 1;
+            }
+            return 0;
+        } else if (status == -1) {
+            return 1;
+        }
+
+        // fcgi server messed up and replied to wrong request on wrong connection
+        if (frame.request_id != extra->request_id) {
+            frame.type = FCGI_BEGIN_REQUEST; // to prevent termination of loop
+            errlog(sub_conn->conn->server->logsess, "FCGI server returned invalid request id.");
+            continue;
+        }
+
+        if (frame.type == FCGI_END_REQUEST) {
+            continue;
+        }
+
+        if (frame.type == FCGI_STDERR) {
+            errlog(sub_conn->conn->server->logsess, "FCGI STDERR <%s>: %s", extra->rs->request_htpath, frame.data);
+        }
+
+        if (frame.type == FCGI_STDOUT || frame.type == FCGI_STDERR) {
+            size_t headers_read = 0;
+            if (frame.type == FCGI_STDOUT) {
+                if (extra->stdout_state == 0) {
+                    int match_length = 0;
+                    char* tm = "\r\n\r\n";
+                    for (size_t i = 0; i < frame.len; i++) {
+                        if (((char*) frame.data)[i] == tm[match_length]) {
+                            match_length++;
+                            if (match_length == 4) {
+                                extra->stdout_state = 1;
+                                headers_read = i + 1;
+                                buffer_push(&extra->headers, frame.data, i);
+                                break;
+                            }
+                        } else match_length = 0;
+                    }
+                    if (extra->stdout_state == 0) { // state unchanged
+                        headers_read = frame.len;
+                        buffer_push(&extra->headers, frame.data, frame.len);
+                    }
+                }
+
+                if (extra->stdout_state == 1) {
+                    extra->stdout_state = 2;
+                    struct headers* hdrs = pcalloc(extra->rs->pool, sizeof(struct headers));
+                    hdrs->pool = extra->rs->pool;
+                    char* headers = pmalloc(extra->rs->pool, extra->headers.size + 1);
+                    headers[extra->headers.size] = 0;
+                    buffer_pop(&extra->headers, extra->headers.size, (uint8_t*) headers);
+                    header_parse(hdrs, headers, 0, extra->rs->pool);
+                    for (int i = 0; i < hdrs->count; i++) {
+                        char* name = hdrs->names[i];
+                        char* value = hdrs->values[i];
+                        if (str_eq(name, "Content-Type")) {
+                            extra->rs->response->body->content_type = value;
+                        } else if (str_eq(name, "Status")) {
+                            extra->rs->response->code = value;
+                        } else if (str_eq(name, "ETag")) {
+                            // we handle ETags, ignore FCGI-given ones
+                        } else header_add(extra->rs->response->headers, name, value);
+                    }
+                }
+            }
+
+            if (headers_read <= frame.len) {
+                if (extra->stdout_state == 2) {
+                    extra->provision->data.stream.delay_finish(extra->rs, &extra->provision->data.stream.delayed_start);
+                    extra->stdout_state = 3;
+                }
+
+                pxfer(sub_conn->pool, extra->rs->src_conn->pool, frame.data);
+                void* offset_data = frame.data + headers_read;
+                size_t len = frame.len - headers_read;
+                buffer_push(extra->output, offset_data, len);
+                output_ready = 1;
+            }
+        }
+    }
+    if (output_ready && fcgi_forward(extra)) {
+        return 1;
+    }
+
+    sub_conn->on_closed(sub_conn);
+    return 1;
+}
+
+ssize_t fcgi_provision_read(struct provision* provision, struct provision_data* buffer) {
+    struct fcgi_stream_data* extra = provision->extra;
+    if (extra->complete) {
+        return 0;
+    } else if (extra->output->size == 0) {
+        return -2;
+    }
+    buffer->size = extra->output->size;
+    buffer->data = pmalloc(provision->pool, buffer->size);
+    return buffer->size = buffer_pop(extra->output, buffer->size, buffer->data);
+}
+
+void fcgi_on_closed(struct sub_conn* sub_conn) {
+    struct fcgi_stream_data* extra = sub_conn->extra;
+    extra->complete = 1;
+    pfree(sub_conn->pool);
+}
+
 struct provision* fcgi_provide_data(struct provider* provider, struct request_session* rs) {
-    int attempt_count = 0;
-    int fcgi_fd;
     char* request_path = str_dup(rs->request->path, 0, rs->pool);
     {
         char* hashtag = strchr(request_path, '#');
@@ -123,25 +278,8 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
         snprintf(sport_str, 16, "UNKNOWN");
     }
 
-    goto start_fcgi;
-    restart_fcgi:;
-    if (fcgi_fd >= 0) {
-        close(fcgi_fd);
-    }
-    attempt_count++;
-    errlog(rs->conn->server->logsess,
-           "Failed to read/write to FCGI Server! File: %s Error: %s, restarting connection!", rs->request_htpath,
-           strerror(errno));
-    start_fcgi:;
-    if (attempt_count >= 2) {
-        errlog(rs->conn->server->logsess, "Too many FCGI connection attempts, aborting.");
-        rs->response->code = "500 Internal Server Error";
-        generateDefaultErrorPage(rs,
-                                 "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
-        return NULL;
-    }
     struct fcgi_config* fcgi_config = provider->extra;
-    fcgi_fd = fcgi_request_connection(fcgi_config);
+    int fcgi_fd = fcgi_request_connection(rs, fcgi_config);
     if (fcgi_fd < 0) {
         errlog(rs->conn->server->logsess, "Error connecting socket to FCGI Server! %s", strerror(errno));
         rs->response->code = "500 Internal Server Error";
@@ -149,20 +287,40 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
                                  "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
         return NULL;
     }
+    struct mempool* provision_pool = mempool_new();
+    struct mempool* sub_pool = mempool_new();
+    struct sub_conn* sub_conn = pcalloc(sub_pool, sizeof(struct sub_conn));
+    sub_conn->conn = rs->conn;
+    sub_conn->pool = sub_pool;
+    phook(sub_conn->pool, close_hook, (void*) fcgi_fd);
+    pchild(rs->pool, sub_conn->pool);
+    buffer_init(&sub_conn->read_buffer, sub_conn->pool);
+    buffer_init(&sub_conn->write_buffer, sub_conn->pool);
+    sub_conn->fd = fcgi_fd;
+    struct fcgi_stream_data* stream_data = pcalloc(provision_pool, sizeof(struct fcgi_stream_data));
+    buffer_init(&stream_data->headers, sub_conn->pool);
+    stream_data->output = pcalloc(provision_pool, sizeof(struct buffer));
+    buffer_init(stream_data->output, provision_pool);
+    stream_data->rs = rs;
+    sub_conn->extra = stream_data;
+    sub_conn->read = fcgi_read;
+    sub_conn->on_closed = fcgi_on_closed;
+    llist_append(rs->conn->manager->pending_sub_conns, sub_conn);
 
-    struct fcgiframe ff;
-    ff.type = FCGI_BEGIN_REQUEST;
-    ff.reqID = fcgi_config->req_id_counter++ % 65535;
+    struct fcgi_frame frame;
+    frame.type = FCGI_BEGIN_REQUEST;
+    stream_data->request_id = frame.request_id = (uint16_t) (fcgi_config->req_id_counter++ & 0xFFFF);
     if (fcgi_config->req_id_counter > 65535) fcgi_config->req_id_counter = 0;
-    ff.len = 8;
-    unsigned char pkt[8];
-    pkt[0] = 0;
-    pkt[1] = 1;
-    pkt[2] = 1;
-    memset(pkt + 3, 0, 5);
-    ff.data = pkt;
-    if (writeFCGIFrame(fcgi_fd, &ff)) goto restart_fcgi;
-    //TODO: SERVER_ADDR
+    frame.len = 8;
+    uint8_t* begin_packet = pcalloc(sub_conn->pool, 8);
+    // 0 -> 7 are 0 intentionally
+    begin_packet[1] = 1;
+    begin_packet[2] = 1;
+    frame.data = begin_packet;
+    fcgi_writeFrame(&sub_conn->write_buffer, &frame);
+
+    //TODO: SERVER_ADDR?
+
     struct hashmap* fcgi_params = hashmap_new(16, rs->pool);
     hashmap_put(fcgi_params, "REQUEST_URI", rs->request->path);
     hashmap_put(fcgi_params, "CONTENT_LENGTH", "0");
@@ -244,148 +402,55 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
             if (nname[x] >= 'a' && nname[x] <= 'z') nname[x] -= ' ';
             else if (nname[x] == '-') nname[x] = '_';
         }
-        hashmap_put(fcgi_params, nname, value);
+        hashmap_put(fcgi_params, nname, (void*) value);
     }
     ITER_MAP(fcgi_params) {
-        writeFCGIParam(fcgi_fd, ff.reqID, str_key, (char*) value);
+        fcgi_writeParam(&sub_conn->read_buffer, frame.request_id, str_key, (char*) value);
         ITER_MAP_END();
     }
 
-    ff.type = FCGI_PARAMS;
-    ff.len = 0;
-    ff.data = NULL;
-    writeFCGIFrame(fcgi_fd, &ff);
-    ff.type = FCGI_STDIN;
-    // ended here: we need to asynchronize networking!
-    if (rs->request->body != NULL && rs->request->body->len > 0) {
-        size_t cr = 0;
-        size_t left = rs->request->body->len;
-        while (left > 0) {
-            ff.len = left > 0xFFFF ? 0xFFFF : (uint16_t) left;
-            ff.data = rs->request->body->data + cr;
-            cr += ff.len;
-            left -= ff.len;
-            writeFCGIFrame(fcgi_fd, &ff);
+    frame.type = FCGI_PARAMS;
+    frame.len = 0;
+    frame.data = NULL;
+    fcgi_writeFrame(&sub_conn->read_buffer, &frame);
+    frame.type = FCGI_STDIN;
+
+    if (rs->request->body != NULL) {
+        if (rs->request->body->type == PROVISION_DATA) {
+            size_t cr = 0;
+            size_t left = rs->request->body->data.data.size;
+            while (left > 0) {
+                frame.len = (uint16_t) (left > 0xFFFF ? 0xFFFF : (uint16_t) left);
+                frame.data = rs->request->body->data.data.data + cr;
+                cr += frame.len;
+                left -= frame.len;
+                // pxfer should handle the invalid pointers correctly in writeFrame
+                fcgi_writeFrame(&sub_conn->read_buffer, &frame);
+            }
+        } else {
+            // TODO: implement once we have streaming post bodies implemented
         }
     }
-    ff.len = 0;
-    writeFCGIFrame(fcgi_fd, &ff);
+
+    frame.len = 0;
+    fcgi_writeFrame(&sub_conn->read_buffer, &frame);
     if (rs->response->body != NULL) {
         rs->response->body = NULL;
     }
 
-    char* ct = NULL;
-    int hd = 0;
-    char* hdd = NULL;
-    size_t hddl = 0;
-    int eid = ff.reqID;
+    pchild(rs->pool, provision_pool);
+    struct provision* provision = pcalloc(provision_pool, sizeof(struct provision));
+    stream_data->provision = provision;
+    provision->pool = provision_pool;
+    provision->type = PROVISION_STREAM;
+    provision->content_type = "application/octet-stream";
+    provision->extra = stream_data;
+    provision->data.stream.read = fcgi_provision_read;
+    provision->data.stream.stream_fd = -1;
+    provision->requested_vhost_action = VHOST_ACTION_NO_CONTENT_UPDATE;
+    provision->data.stream.delay_header_output = 1;
+    return provision;
 
-    while (ff.type != FCGI_END_REQUEST) {
-        if (readFCGIFrame(fcgi_fd, &ff, rs->pool)) {
-            errlog(rs->worker->server->logsess, "Error reading from FCGI server: %s", strerror(errno));
-            goto restart_fcgi;
-        }
-        if (ff.reqID != eid) {
-            //printf("unx name %i wanted: %i\n", ff.reqID, eid);
-            if (ff.type == FCGI_END_REQUEST) {
-                ff.type = FCGI_STDERR;
-                //printf("rewr\n");
-            }
-            continue;
-        }
-        //printf("recv %i\n", ff.type);
-        if (ff.type == FCGI_END_REQUEST) {
-            //printf("er!\n");
-            continue;
-        }
-        if (ff.type == FCGI_STDERR) {
-            errlog(rs->worker->server->logsess, "FCGI STDERR <%s>: %s", htpath, ff.data);
-        }
-        if (ff.type == FCGI_STDOUT || ff.type == FCGI_STDERR) {
-            int hr = 0;
-            if (!hd && ff.type == FCGI_STDOUT) {
-                int ml = 0;
-                char* tm = "\r\n\r\n";
-                for (int i = 0; i < ff.len; i++) {
-                    if (((char*) ff.data)[i] == tm[ml]) {
-                        ml++;
-                        if (ml == 4) {
-                            hd = 1;
-                            hr = i + 1;
-                            if (hdd == NULL) {
-                                hdd = pmalloc(rs->pool, i + 1);
-                                hdd[i] = 0;
-                                memcpy(hdd, ff.data, i);
-                                hddl = i;
-                            } else {
-                                hdd = prealloc(rs->pool, hdd, hddl + i + 1);
-                                hdd[hddl + i] = 0;
-                                memcpy(hdd + hddl, ff.data, i);
-                                hddl += i;
-                            }
-                            break;
-                        }
-                    } else ml = 0;
-                }
-                if (!hd) {
-                    hr = ff.len;
-                    if (hdd == NULL) {
-                        hdd = pmalloc(rs->pool, ff.len);
-                        hdd[ff.len] = 0;
-                        memcpy(hdd, ff.data, ff.len);
-                        hddl = ff.len;
-                    } else {
-                        hdd = prealloc(rs->pool, hdd, hddl + ff.len);
-                        hdd[hddl + ff.len] = 0;
-                        memcpy(hdd + hddl, ff.data, ff.len);
-                        hddl += ff.len;
-                    }
-                }
-            }
-
-            if (hd == 1 && ff.type == FCGI_STDOUT) {
-                hd = 2;
-                struct headers* hdrs = pcalloc(rs->pool, sizeof(struct headers));
-                hdrs->pool = rs->pool;
-                header_parse(hdrs, hdd, 0, rs->pool);
-                for (int i = 0; i < hdrs->count; i++) {
-                    const char* name = hdrs->names[i];
-                    const char* value = hdrs->values[i];
-                    if (str_eq(name, "Content-Type")) {
-                        ct = value;
-                    } else if (str_eq(name, "Status")) {
-                        if (!rs->response->parsed) {
-                            rs->response->parsed = 2;
-                        }
-                        rs->response->code = value;
-                    } else if (str_eq(name, "ETag")) {
-                        // we handle ETags, ignore FCGI-given ones
-                    } else header_add(rs->response->headers, name, value);
-                }
-            }
-
-            if (hr <= ff.len) {
-                unsigned char* ffd = ff.data + hr;
-                ff.len -= hr;
-                if (rs->response->body == NULL) {
-                    rs->response->body = pmalloc(rs->pool, sizeof(struct body));
-                    rs->response->body->data = pmalloc(rs->pool, ff.len);
-                    memcpy(rs->response->body->data, ffd, ff.len);
-                    rs->response->body->len = ff.len;
-                    rs->response->body->mime_type = ct == NULL ? "text/html" : ct;
-                    rs->response->body->stream_fd = -1;
-                    rs->response->body->stream_type = STREAM_TYPE_INVALID;
-                } else {
-                    rs->response->body->len += ff.len;
-                    rs->response->body->data = prealloc(rs->pool, rs->response->body->data,
-                                                        rs->response->body->len);
-                    memcpy(rs->response->body->data + rs->response->body->len - ff.len, ffd, ff.len);
-                }
-            }
-        }
-    }
-
-    close(fcgi_fd);
 }
 
 void initialize(struct module* module) {

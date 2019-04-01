@@ -6,6 +6,8 @@
  */
 #include <avuna/pmem.h>
 #include <avuna/string.h>
+#include <avuna/list.h>
+#include <avuna/hash.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -94,8 +96,8 @@ int str_suffixes_case(const char* str, const char* with) {
     size_t l1 = strlen(str);
     size_t l2 = strlen(with);
     if (l1 < l2) return 0;
-    for (ssize_t i = l2 - 1; i >= 0; i--) {
-        if (str[i] != with[i]) {
+    for (ssize_t i = 0; i < l2; ++i) {
+        if (str[l1 - 1 - i] != with[l2 - 1 - i]) {
             return 0;
         }
     }
@@ -108,10 +110,10 @@ int str_suffixes(const char* str, const char* with) {
     size_t l1 = strlen(str);
     size_t l2 = strlen(with);
     if (l1 < l2) return 0;
-    for (ssize_t i = l2 - 1; i >= 0; i--) {
-        char s1 = str[i];
+    for (ssize_t i = 0; i < l2; ++i) {
+        char s1 = str[l1 - 1 - i];
         if (s1 >= 'A' && s1 <= 'Z') s1 += ' ';
-        char s2 = with[i];
+        char s2 = with[l2 - 1 - i];
         if (s2 >= 'A' && s2 <= 'Z') s2 += ' ';
         if (s1 != s2) {
             return 0;
@@ -234,7 +236,7 @@ char* str_urldecode(char* str) {
     return str;
 }
 
-void str_split(char* str, const char* delim, struct list* out) {
+void str_split(char* str, char* delim, struct list* out) {
     if (strlen(delim) == 0) {
         return;
     }
@@ -253,7 +255,7 @@ void str_split(char* str, const char* delim, struct list* out) {
     }
 }
 
-void str_split_case(char* str, const char* delim, struct list* out) {
+void str_split_case(char* str, char* delim, struct list* out) {
     if (strlen(delim) == 0) {
         return;
     }
@@ -273,7 +275,7 @@ void str_split_case(char* str, const char* delim, struct list* out) {
 }
 
 
-void str_split_set(char* str, const char* delim, struct hashset* out) {
+void str_split_set(char* str, char* delim, struct hashset* out) {
     if (strlen(delim) == 0) {
         return;
     }
@@ -292,7 +294,7 @@ void str_split_set(char* str, const char* delim, struct hashset* out) {
     }
 }
 
-void str_split_set_case(char* str, const char* delim, struct hashset* out) {
+void str_split_set_case(char* str, char* delim, struct hashset* out) {
     if (strlen(delim) == 0) {
         return;
     }

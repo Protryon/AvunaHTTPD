@@ -50,9 +50,9 @@ void str_split(char* str, char* delim, struct list* out);
 
 void str_split_case(char* str, char* delim, struct list* out);
 
-void str_split_set(char* str, const char* delim, struct hashset* out);
+void str_split_set(char* str, char* delim, struct hashset* out);
 
-void str_split_set_case(char* str, const char* delim, struct hashset* out);
+void str_split_set_case(char* str, char* delim, struct hashset* out);
 
 int str_isunum(const char* str);
 

@@ -3,6 +3,7 @@
 //
 
 #include "vhost_reverse_proxy.h"
+#include "reverse_network.h"
 #include <avuna/http.h>
 #include <avuna/vhost.h>
 #include <avuna/pmem_hooks.h>
@@ -10,6 +11,7 @@
 #include <avuna/module.h>
 #include <avuna/string.h>
 #include <avuna/globals.h>
+#include <avuna/queue.h>
 #include <mod_htdocs/vhost_htdocs.h>
 #include <mod_htdocs/util.h>
 #include <mod_htdocs/gzip.h>
@@ -17,6 +19,10 @@
 #include <errno.h>
 #include <arpa/inet.h>
 
+struct vhost_conn_extra {
+    struct sub_conn* forward_connection;
+    struct queue* forward_queue;
+};
 
 int handle_vhost_reverse_proxy(struct request_session* rs) {
     struct vhost_reverse_proxy* rproxy = ((struct vhost_reverse_proxy*) rs->vhost->sub->extra);
@@ -45,19 +51,46 @@ int handle_vhost_reverse_proxy(struct request_session* rs) {
         if (htpath_part != NULL) htpath_part[0] = 0;
     }
 
+    /*
+     *
+     *     struct mempool* provision_pool = mempool_new();
+    struct fcgi_stream_data* stream_data = pcalloc(provision_pool, sizeof(struct fcgi_stream_data));
+    buffer_init(&stream_data->headers, sub_conn->pool);
+    stream_data->output = pcalloc(provision_pool, sizeof(struct buffer));
+    buffer_init(stream_data->output, provision_pool);
+    stream_data->rs = rs;
+    sub_conn->extra = stream_data;
+    sub_conn->read = fcgi_read;
+    sub_conn->on_closed = fcgi_on_closed;
+    llist_append(rs->conn->manager->pending_sub_conns, sub_conn);
+
+     */
     // directory fix no applicable?
-    if (rs->conn->forward_conn == NULL) {
-        rs->conn->forward_conn = pcalloc(rs->pool, sizeof(struct sub_conn));
-        rs->conn->forward_conn->fd = -1;
-        buffer_init(&rs->conn->forward_conn->read_buffer, rs->conn->pool);
-        //todo: TLS
+    struct vhost_conn_extra* extra = rs->conn->vhost_extra;
+    if (extra == NULL) {
+        rs->conn->vhost_extra = extra = pcalloc(rs->conn->pool, sizeof(struct vhost_conn_extra));
+    }
+
+    if (extra->forward_connection == NULL) {
+        struct mempool* sub_pool = mempool_new();
+        struct sub_conn* sub_conn = extra->forward_connection = pcalloc(sub_pool, sizeof(struct sub_conn));
+        sub_conn->conn = rs->conn;
+        sub_conn->pool = sub_pool;
+        pchild(rs->pool, sub_conn->pool);
+        buffer_init(&sub_conn->read_buffer, sub_conn->pool);
+        buffer_init(&sub_conn->write_buffer, sub_conn->pool);
+        sub_conn->fd = -1;
+        sub_conn->read = handle_http_client_read;
+        sub_conn->on_closed = http_client_on_closed;
+        llist_append(rs->conn->manager->pending_sub_conns, sub_conn);
+        //todo: TLS?
     }
     init_forward_connection:;
-    if (rs->conn->forward_conn->fd < 0) {
-        rs->conn->forward_conn->fd = socket(rproxy->forward_address->sa_family == AF_INET ? PF_INET : PF_LOCAL,
+    if (extra->forward_connection->fd < 0) {
+        extra->forward_connection->fd = socket(rproxy->forward_address->sa_family == AF_INET ? PF_INET : PF_LOCAL,
                                             SOCK_STREAM, 0);
-        if (rs->conn->forward_conn->fd < 0 ||
-            connect(rs->conn->forward_conn->fd, rproxy->forward_address, rproxy->forward_address_length) < 0) {
+        if (extra->forward_connection->fd < 0 ||
+            connect(extra->forward_connection->fd, rproxy->forward_address, rproxy->forward_address_length) < 0) {
             errlog(rs->conn->server->logsess, "Failed to create/connect to forwarding socket: %s",
                    strerror(errno));
             rs->response->code = "500 Internal Server Error";
@@ -65,29 +98,29 @@ int handle_vhost_reverse_proxy(struct request_session* rs) {
                                      "An unknown error occurred trying to serve your request! If you believe this to be an error, please contact your system administrator.");
             goto return_error;
         }
-        phook(rs->pool, close_hook, (void*) rs->conn->forward_conn->fd);
+        phook(extra->forward_connection->pool, close_hook, (void*) extra->forward_connection->fd);
     }
 
     size_t sreql = 0;
     unsigned char* sreq = serializeRequest(rs, &sreql);
     size_t wr = 0;
     while (wr < sreql) {
-        ssize_t x = write(rs->conn->forward_conn->fd, sreq + wr, sreql - wr);
+        ssize_t x = write(extra->forward_connection->fd, sreq + wr, sreql - wr);
         if (x < 1) {
             // we should ideally close the current connection here, but it will have to wait until the connection closes due to the `phook` call above.
-            rs->conn->forward_conn->fd = -1;
+            extra->forward_connection->fd = -1;
             goto init_forward_connection;
         }
         wr += x;
     }
 
-    if (rs->conn->fw_queue == NULL) {
-        rs->conn->fw_queue = queue_new(0, 1, rs->pool);
+    if (extra->forward_queue == NULL) {
+        extra->forward_queue = queue_new(0, 1, rs->pool);
     }
     // why do we copy here?
     struct request_session* rs2 = pmalloc(rs->pool, sizeof(struct request_session));
     memcpy(rs2, rs, sizeof(struct request_session));
-    queue_push(rs->conn->fw_queue, rs2);
+    queue_push(extra->forward_queue, rs2);
 
     check_client_cache(rs);
 
@@ -114,7 +147,6 @@ int handle_vhost_reverse_proxy(struct request_session* rs) {
         rs->request->add_to_cache = 1;
     }
     return VHOST_ACTION_NO_CONTENT_UPDATE;
-    //TODO: Chunked
 }
 
 
@@ -224,6 +256,6 @@ void initialize(struct module* module) {
     struct vhost_type* vhost_type = pcalloc(module->pool, sizeof(struct vhost_type));
     vhost_type->handle_request = handle_vhost_reverse_proxy;
     vhost_type->load_config = rproxy_parse_config;
-    vhost_type->name = "reverse_proxy";
-    hashmap_put(registered_vhost_types, "reverse_proxy", vhost_type);
+    vhost_type->name = "reverse-proxy";
+    hashmap_put(registered_vhost_types, "reverse-proxy", vhost_type);
 }
