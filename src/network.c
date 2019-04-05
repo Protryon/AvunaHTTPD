@@ -16,6 +16,7 @@
 #include <avuna/provider.h>
 #include <avuna/globals.h>
 #include <avuna/network.h>
+#include <avuna/module.h>
 #include <errno.h>
 #include <poll.h>
 #include <sys/ioctl.h>
@@ -51,8 +52,15 @@ void send_request_session(struct request_session* rs, struct timespec* start) {
         errlog(conn->server->logsess, "Invalid IP Address: %s", strerror(errno));
     }
     acclog(conn->server->logsess, "%s %s %s/%s%s returned %s took: %f ms", mip, req->method,
-           conn->server->id, rs->vhost->id, req->path, resp->code, msp);
+           conn->server->id, rs->vhost->name, req->path, resp->code, msp);
     buffer_push(&rs->src_conn->write_buffer, serialized_response, response_length);
+    ITER_LLIST(loaded_modules, value) {
+        struct module* module = value;
+        if (module->events.on_request_completed) {
+            module->events.on_request_completed(module, rs);
+        }
+        ITER_LLIST_END();
+    }
 }
 
 void determine_vhost(struct request_session* rs) {
@@ -93,11 +101,31 @@ int handle_http_server_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
             clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stt);
             pxfer(provision->pool, sub_conn->pool, provision->data.data.data);
             buffer_pop(&sub_conn->read_buffer, provision->data.data.size, provision->data.data.data);
-            generateResponse(extra->currently_posting);
-            //TODO: streaming as below
-            send_request_session(extra->currently_posting, &stt);
-            pfree(extra->currently_posting->pool);
-            extra->currently_posting = NULL;
+            ITER_LLIST(loaded_modules, value) {
+                struct module* module = value;
+                if (module->events.on_request_post_received && module->events.on_request_post_received(module, extra->currently_posting)) {
+                    return 1;
+                }
+                ITER_LLIST_END();
+            }
+            if (!extra->skip_generate_response) {
+                generateResponse(extra->currently_posting);
+            }
+            if (extra->currently_posting->response->body != NULL && extra->currently_posting->response->body->type == PROVISION_STREAM) {
+                extra->currently_streaming = extra->currently_posting;
+                if (extra->currently_posting->response->body->data.stream.delay_header_output) {
+                    memcpy(&extra->currently_posting->response->body->data.stream.delayed_start, &stt, sizeof(struct timespec));
+                    extra->currently_posting->response->body->data.stream.delay_finish = send_request_session;
+                } else {
+                    send_request_session(extra->currently_posting, &stt);
+                }
+                extra->currently_posting = NULL;
+                goto restart;
+            } else {
+                send_request_session(extra->currently_posting, &stt);
+                pfree(extra->currently_posting->pool);
+                extra->currently_posting = NULL;
+            }
         } else { // PROVISION_STREAM
             errlog(delog, "Invalid state! STREAM found during active post read");
             return 0;
@@ -187,12 +215,36 @@ int handle_http_server_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
                 rs->response->http_version = "HTTP/1.1";
                 rs->response->http_version = rs->request->http_version;
                 rs->response->code = "200 OK";
+                int skip_generate_response = 0;
+                ITER_LLIST(loaded_modules, value) {
+                        struct module* module = value;
+                        if (module->events.on_request_received) {
+                            int status = module->events.on_request_received(module, rs);
+                            if (status == 1) {
+                                skip_generate_response = 1;
+                                break;
+                            } else if (status == -1) {
+                                return 1;
+                            }
+                        }
+                    ITER_LLIST_END();
+                }
                 determine_vhost(rs);
+                ITER_LLIST(loaded_modules, value) {
+                        struct module* module = value;
+                        if (module->events.on_request_vhost_resolved) {
+                            rs->vhost = module->events.on_request_vhost_resolved(module, rs, rs->vhost);
+                        }
+                    ITER_LLIST_END();
+                }
                 if (rs->request->body != NULL && rs->request->body->type == PROVISION_DATA) {
                     extra->currently_posting = rs;
+                    extra->skip_generate_response = skip_generate_response;
                     goto restart;
                 }
-                generateResponse(rs);
+                if (!skip_generate_response) {
+                    generateResponse(rs);
+                }
                 if (rs->response->body != NULL && rs->response->body->type == PROVISION_STREAM) {
                     extra->currently_streaming = rs;
                     if (rs->response->body->data.stream.delay_header_output) {
@@ -215,13 +267,17 @@ int handle_http_server_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
     return 0;
 }
 
-struct remove_conn_node_arg {
+struct conn_node_arg {
     struct llist* list;
     struct llist_node* node;
 };
 
-void remove_conn_node(struct remove_conn_node_arg* node) {
+void remove_conn_node(struct conn_node_arg* node) {
     llist_del(node->list, node->node);
+}
+
+void add_conn_node(struct conn_node_arg* node) {
+    llist_append(node->list, node->node);
 }
 
 #pragma clang diagnostic push
@@ -238,6 +294,7 @@ void run_work(struct work_param* param) {
     manager->pending_sub_conns = llist_new(pool);
     struct llist* claimed_connections = llist_new(pool);
     struct llist* flattened_connections = llist_new(pool);
+    struct llist* to_remove_flattened = llist_new(pool);
     struct pollfd* poll_fds = pmalloc(pool, sizeof(struct pollfd) * 64);
     size_t poll_fds_cap = 64;
     while (1) {
@@ -246,7 +303,7 @@ void run_work(struct work_param* param) {
         if (new_conn != NULL) {
             new_conn->manager = manager;
             {
-                struct remove_conn_node_arg* arg = pmalloc(new_conn->pool, sizeof(struct remove_conn_node_arg));
+                struct conn_node_arg* arg = pmalloc(new_conn->pool, sizeof(struct conn_node_arg));
                 arg->list = claimed_connections;
                 arg->node = llist_append(claimed_connections, new_conn);
                 phook(new_conn->pool, remove_conn_node, arg);
@@ -254,20 +311,23 @@ void run_work(struct work_param* param) {
             // assumes only 1 sub connection at this point!
             {
                 struct sub_conn* base_conn = new_conn->sub_conns->head->data;
-                struct remove_conn_node_arg* arg = pmalloc(base_conn->pool, sizeof(struct remove_conn_node_arg));
-                arg->list = flattened_connections;
+                struct conn_node_arg* arg = pmalloc(base_conn->pool, sizeof(struct conn_node_arg));
+                arg->list = to_remove_flattened;
                 arg->node = llist_append(flattened_connections, base_conn);
-                phook(new_conn->pool, remove_conn_node, arg);
+                phook(base_conn->pool, add_conn_node, arg);
             }
             // TODO: module connection initiated hook
         }
-        for (struct llist_node* node = manager->pending_sub_conns->head; node != NULL; node = node->next) {
+        for (struct llist_node* node = manager->pending_sub_conns->head; node != NULL; ) {
             struct sub_conn* sub_conn = node->data;
             llist_append(sub_conn->conn->sub_conns, sub_conn);
-            struct remove_conn_node_arg* arg = pmalloc(new_conn->pool, sizeof(struct remove_conn_node_arg));
-            arg->list = flattened_connections;
+            struct conn_node_arg* arg = pmalloc(sub_conn->pool, sizeof(struct conn_node_arg));
+            arg->list = to_remove_flattened;
             arg->node = llist_append(flattened_connections, sub_conn);
-            phook(sub_conn->pool, remove_conn_node, arg);
+            phook(sub_conn->pool, add_conn_node, arg);
+            struct llist_node* next = node->next;
+            llist_del(manager->pending_sub_conns, node);
+            node = next;
         }
         size_t poll_fd_count = flattened_connections->size + 1;
         struct mempool* iter_pool = mempool_new();
@@ -319,7 +379,7 @@ void run_work(struct work_param* param) {
                 sub_conn->on_closed(sub_conn);
                 continue;
             }
-            if ((revents & POLLERR) == POLLERR) { //TODO: probably a HUP
+            if ((revents & POLLERR) == POLLERR) {
                 sub_conn->on_closed(sub_conn);
                 continue;
             }
@@ -408,42 +468,46 @@ void run_work(struct work_param* param) {
                 }
             }
             if ((revents & POLLOUT) == POLLOUT) {
-                ITER_LLIST(sub_conn->write_buffer.buffers, value)
-                    {
-                        skip_into:;
-                        struct buffer_entry* entry = value;
-                        ssize_t mtr = sub_conn->tls ?
-                                      SSL_write(sub_conn->tls_session, entry->data, entry->size) :
-                                      write(poll_fds[i].fd, entry->data, entry->size);
-                        int serr = (sub_conn->tls && mtr < 0) ? SSL_get_error(sub_conn->tls_session, mtr) : 0;
-                        if (mtr < 0 && (sub_conn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) &&
-                                                      serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) :
-                                        errno != EAGAIN)) { // use error queue?
-                            sub_conn->on_closed(sub_conn);
-                            goto cont;
-                        } else if (mtr < 0) {
-                            goto cont;
-                        } else if (mtr < entry->size) {
-                            entry->data += mtr;
-                            entry->size -= mtr;
-                            sub_conn->write_buffer.size -= mtr;
+                for (struct llist_node* node = sub_conn->write_buffer.buffers->head; node != NULL; ) {
+                    struct buffer_entry* entry = node->data;
+                    ssize_t mtr = sub_conn->tls ?
+                                  SSL_write(sub_conn->tls_session, entry->data, (int) entry->size) :
+                                  write(poll_fds[i].fd, entry->data, entry->size);
+                    int serr = (sub_conn->tls && mtr < 0) ? SSL_get_error(sub_conn->tls_session, mtr) : 0;
+                    if (mtr < 0 && (sub_conn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) &&
+                                                  serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) :
+                                    errno != EAGAIN)) { // use error queue?
+                        sub_conn->on_closed(sub_conn);
+                        break;
+                    } else if (mtr < 0) {
+                        break;
+                    } else if (mtr < entry->size) {
+                        entry->data += mtr;
+                        entry->size -= mtr;
+                        sub_conn->write_buffer.size -= mtr;
+                        break;
+                    } else {
+                        sub_conn->write_buffer.size -= mtr;
+                        pprefree_strict(sub_conn->write_buffer.pool, entry->data_root);
+                        struct llist_node* next = node->next;
+                        llist_del(sub_conn->write_buffer.buffers, node);
+                        node = next;
+                        if (node == NULL) {
                             break;
                         } else {
-                            sub_conn->write_buffer.size -= mtr;
-                            pprefree_strict(sub_conn->write_buffer.pool, entry->data_root);
-                            struct llist_node* next = node->next;
-                            llist_del(sub_conn->write_buffer.buffers, node);
-                            node = next;
-                            if (node == NULL) {
-                                break;
-                            } else {
-                                goto skip_into;
-                            }
+                            continue;
                         }
-                    ITER_LLIST_END();
+                    }
                 }
             }
             cont:;
+        }
+        for (struct llist_node* node = to_remove_flattened->head; node != NULL; ) {
+            struct llist_node* next = node->next;
+            struct llist_node* proper_node = node->data;
+            llist_del(to_remove_flattened, node);
+            llist_del(flattened_connections, proper_node);
+            node = next;
         }
         pfree(iter_pool);
     }
@@ -490,7 +554,7 @@ int handleRead2(struct conn* conn, int ct, struct work_param* param) {
 			frame->strobj = NULL;
 			memcpy(&frame->stream + sizeof(size_t) - 4, conn->readBuffer + 5, 4);
 			if (frame->stream > 0) for (int i = 0; i < conn->http2_stream_size; i++) {
-				if (conn->http2_stream[i]->id == frame->stream) {
+				if (conn->http2_stream[i]->name == frame->stream) {
 					frame->strobj = conn->http2_stream[i];
 					break;
 				}
@@ -528,7 +592,7 @@ int handleRead2(struct conn* conn, int ct, struct work_param* param) {
 			} else if (frame->type == FRAME_HEADERS_ID) {
 				if (frame->strobj == NULL) {
 					frame->strobj = smalloc(sizeof(struct http2_stream)); //TODO reuse mem space in conn->http2_stream
-					frame->strobj->id = frame->stream;
+					frame->strobj->name = frame->stream;
 					frame->strobj->http2_dataBuffer = NULL;
 					frame->strobj->http2_headerBuffer = NULL;
 					frame->strobj->http2_dataBuffer_size = 0;
@@ -582,8 +646,8 @@ int handleRead2(struct conn* conn, int ct, struct work_param* param) {
 			} else if (frame->type == FRAME_SETTINGS_ID) {
 				if (len % 6 == 0) {
 					for (int i = 0; i < len / 6; i++) {
-						int id = 0;
-						memcpy(&id + sizeof(int) - 2, lframe + len + (i * 6), 2);
+						int name = 0;
+						memcpy(&name + sizeof(int) - 2, lframe + len + (i * 6), 2);
 						uint32_t val = 0;
 						memcpy(&val, lframe + len + (i * 6) + 2, 4);
 

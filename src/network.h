@@ -22,6 +22,7 @@ struct work_param {
 
 struct http_server_extra {
     struct request_session* currently_posting;
+    int skip_generate_response;
     struct request_session* currently_streaming;
 };
 

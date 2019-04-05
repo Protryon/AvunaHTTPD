@@ -8,6 +8,7 @@
 #include <avuna/http.h>
 #include <avuna/string.h>
 #include <avuna/provider.h>
+#include <avuna/chunked.h>
 #include <errno.h>
 
 int parseRequest(struct request_session* rs, char* data, size_t maxPost) {
@@ -180,4 +181,33 @@ unsigned char* serializeResponse(struct request_session* rs, size_t* out_len) {
         written += rs->response->body->data.data.size;
     }
     return out;
+}
+
+void updateContentHeaders(struct request_session* rs) {
+    if (rs->response->body->content_type != NULL) {
+        header_setoradd(rs->response->headers, "Content-Type", rs->response->body->content_type);
+    }
+    ssize_t len = -1;
+    if (rs->response->body->type == PROVISION_DATA) {
+        len = rs->response->body->data.data.size;
+    } else if (rs->response->body->data.stream.known_length >= 0) {
+        len = rs->response->body->data.stream.known_length;
+    }
+    if (len >= 0) {
+        char len_str[16];
+        sprintf(len_str, "%lu", len);
+        header_setoradd(rs->response->headers, "Content-Length", len_str);
+    } else {
+        header_setoradd(rs->response->headers, "Transfer-Encoding", "chunked");
+        struct mempool* pool = mempool_new();
+        pchild(rs->pool, pool);
+        struct provision* parent = rs->response->body;
+        rs->response->body = pcalloc(pool, sizeof(struct provision));
+        rs->response->body->pool = pool;
+        rs->response->body->content_type = parent->content_type;
+        rs->response->body->data.stream.delay_finish = parent->data.stream.delay_finish;
+        rs->response->body->data.stream.delayed_start = parent->data.stream.delayed_start;
+        rs->response->body->data.stream.stream_fd = -1;
+        init_chunked_stream(rs, parent, rs->response->body);
+    }
 }

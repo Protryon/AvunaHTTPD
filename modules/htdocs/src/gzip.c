@@ -60,8 +60,6 @@ int gzip_total(struct request_session* rs) {
     cdata = prealloc(rs->pool, cdata, ts); // shrink
     rs->response->body->data.data.data = cdata;
     rs->response->body->data.data.size = ts;
-    header_add(rs->response->headers, "Content-Encoding", "gzip");
-    header_add(rs->response->headers, "Vary", "Accept-Encoding");
     return 0;
 }
 
@@ -69,30 +67,38 @@ struct gzip_stream_data {
     struct provision* parent;
     struct buffer in_data;
     z_stream strm;
+    int finished;
 };
 
 ssize_t gzip_stream_read(struct provision* provision, struct provision_data* buffer) {
-    struct gzip_stream_data* data = provision->extra;
-    // TODO: delay input for small reads
+    struct gzip_stream_data* data = provision->data.stream.extra;
+    if (data->finished) {
+        return 0;
+    }
     struct provision_data output;
     output.data = NULL;
     output.size = 0;
     ssize_t read = data->parent->data.stream.read(data->parent, &output);
     if (read == 0) {
-
+        if (output.size > 0) {
+            buffer_push(&data->in_data, output.data, output.size);
+        }
     } else if (read < 0) {
         return read;
     } else {
-        buffer_push(&data->in_data, output.data, (size_t) read);
+        buffer_push(&data->in_data, output.data, output.size);
     }
-    void* out = NULL;
-    size_t out_cap = 0;
+    size_t out_cap = data->in_data.size;
+    if (out_cap < 16) {
+        out_cap = 1024;
+    }
+    void* out = pmalloc(provision->pool, out_cap);
     //TODO: will gzip not like having such small inputs due to linked buffer boundaries?
     data->strm.next_out = out;
     data->strm.avail_out = (uInt) out_cap;
     while (data->in_data.size > 0 || read == 0) {
         struct buffer_entry* entry = NULL;
-        if (data->in_data.size == 0) {
+        if (data->in_data.buffers->head == NULL) {
             data->strm.next_in = NULL;
             data->strm.avail_in = 0;
         } else {
@@ -101,25 +107,19 @@ ssize_t gzip_stream_read(struct provision* provision, struct provision_data* buf
             data->strm.avail_in = (uInt) entry->size;
         }
         int status;
-        while ((status = deflate(&data->strm, (read == 0 && data->in_data.buffers->size == 1) ? Z_FINISH : Z_NO_FLUSH)) == Z_BUF_ERROR) {
-            if (out_cap == 0) {
-                out_cap = data->strm.avail_in;
-                if (out_cap == 0) {
-                    out_cap = 16384;
-                }
-                out = pmalloc(provision->pool, out_cap);
-            } else {
-                out_cap *= 2;
-                size_t offset = (void*) data->strm.next_out - out;
-                out = prealloc(provision->pool, out, out_cap);
-                data->strm.next_out = out + offset;
-                data->strm.avail_out = (uInt) (out_cap - offset);
-            }
+        while ((status = deflate(&data->strm, (read == 0 && data->in_data.buffers->size <= 1) ? Z_FINISH : Z_NO_FLUSH)) == Z_BUF_ERROR) {
+            out_cap *= 2;
+            size_t offset = (void*) data->strm.next_out - out;
+            out = prealloc(provision->pool, out, out_cap);
+            data->strm.next_out = out + offset;
+            data->strm.avail_out = (uInt) (out_cap - offset);
         }
         if (status == Z_STREAM_ERROR) {
+            data->finished = 1;
             deflateEnd(&data->strm);
             return -1;
         } else if (status == Z_STREAM_END) {
+            data->finished = 1;
             deflateEnd(&data->strm);
             break;
         } else if (entry != NULL) {
@@ -151,6 +151,7 @@ int init_gzip_stream(struct request_session* rs, struct provision* parent, struc
         errlog(rs->conn->server->logsess, "Error with zlib defaultInit2: %i", dr);
         return 1;
     }
+    provision->data.stream.extra = data;
     provision->data.stream.read = gzip_stream_read;
     return 0;
 }

@@ -242,7 +242,26 @@ int handle_vhost_htdocs(struct request_session* rs) {
         }
     }
 
+    ITER_LLIST(loaded_modules, value) {
+        struct module* module = value;
+        if (module->events.on_mime_type_resolved) {
+            char* new_type = module->events.on_mime_type_resolved(module, rs, content_type);
+            if (new_type != NULL) {
+                rs->response->body->content_type = content_type = new_type;
+            }
+        }
+        ITER_LLIST_END();
+    }
+
     struct provider* provider = hashmap_get(htdocs->providers, rs->response->body->content_type);
+
+    ITER_LLIST(loaded_modules, value) {
+        struct module* module = value;
+        if (module->events.on_request_handler_found) {
+            provider = module->events.on_request_handler_found(module, rs, provider);
+        }
+        ITER_LLIST_END();
+    }
 
     if (provider != NULL) {
         isStatic = 0;
@@ -251,12 +270,6 @@ int handle_vhost_htdocs(struct request_session* rs) {
             goto return_error;
         }
     } else {
-        if (rs->response->body->pool == NULL) {
-            body_pool = mempool_new();
-            rs->response->body = pcalloc(body_pool, sizeof(struct provision));
-            rs->response->body->pool = body_pool;
-            pchild(rs->pool, rs->response->body->pool);
-        }
         rs->response->body->content_type = content_type;
         check_client_cache(rs);
 
@@ -279,7 +292,7 @@ int handle_vhost_htdocs(struct request_session* rs) {
         }
         if (len < 1024 * 1024) { // perhaps make this configurable?
             rs->response->body->type = PROVISION_DATA;
-            rs->response->body->data.data.size = 0;
+            rs->response->body->data.data.size = (size_t) len;
             rs->response->body->data.data.data = pmalloc(rs->pool, (size_t) len);
             ssize_t r = 0;
             while ((r = read(ffd, rs->response->body->data.data.data + rs->response->body->data.data.size,
@@ -302,6 +315,14 @@ int handle_vhost_htdocs(struct request_session* rs) {
             rs->response->body->data.stream.read = raw_stream_read;
             rs->response->body->data.stream.known_length = len;
         }
+    }
+
+    ITER_LLIST(loaded_modules, value) {
+        struct module* module = value;
+        if (module->events.on_request_handled) {
+            module->events.on_request_handled(module, rs);
+        }
+        ITER_LLIST_END();
     }
 
     return_error:;
@@ -339,11 +360,16 @@ int handle_vhost_htdocs(struct request_session* rs) {
             if (gzip_total(rs)) {
                 // gzip failed, continue without it
                 do_gzip = 0;
+            } else {
+                header_add(rs->response->headers, "Content-Encoding", "gzip");
+                header_add(rs->response->headers, "Vary", "Accept-Encoding");
             }
         } else { // PROVISION_STREAM
             struct provision* gzip_overlay = xcopy(rs->response->body, sizeof(struct provision), 0, rs->response->body->pool);
             init_gzip_stream(rs, rs->response->body, gzip_overlay);
             rs->response->body = gzip_overlay;
+            header_add(rs->response->headers, "Content-Encoding", "gzip");
+            header_add(rs->response->headers, "Vary", "Accept-Encoding");
         }
     }
 

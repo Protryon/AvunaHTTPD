@@ -54,5 +54,6 @@ int parseResponse(struct request_session* rs, struct sub_conn* sub_conn, char* d
 
 unsigned char* serializeResponse(struct request_session* rs, size_t* out_len);
 
+void updateContentHeaders(struct request_session* rs);
 
 #endif //AVUNA_HTTPD_HTTP_H

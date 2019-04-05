@@ -9,8 +9,6 @@
 #include <avuna/http.h>
 #include <stdlib.h>
 
-ssize_t gzip_stream_read(struct provision* provision, struct provision_data* buffer);
-
 int should_gzip(struct request_session* rs);
 
 int gzip_total(struct request_session* rs);

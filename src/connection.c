@@ -11,7 +11,7 @@
 #include <sys/socket.h>
 
 
-int configure_fd(struct logsess* logger, int fd) {
+int configure_fd(struct logsess* logger, int fd, int is_tcp) {
     static struct timeval timeout;
     timeout.tv_sec = 60;
     timeout.tv_usec = 0;
@@ -20,7 +20,7 @@ int configure_fd(struct logsess* logger, int fd) {
         errlog(logger, "Setting recv timeout failed! %s", strerror(errno));
     if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char*) &timeout, sizeof(timeout)))
         errlog(logger, "Setting send timeout failed! %s", strerror(errno));
-    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void*) &one, sizeof(one)))
+    if (is_tcp && setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void*) &one, sizeof(one)))
         errlog(logger, "Setting TCP_NODELAY failed! %s", strerror(errno));
     if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) < 0) {
         errlog(logger, "Setting O_NONBLOCK failed! %s, this error cannot be recovered, closing client.", strerror(errno));

@@ -9,6 +9,7 @@
 #include <avuna/mime.h>
 #include <avuna/pmem_hooks.h>
 #include <avuna/provider.h>
+#include <avuna/module.h>
 #include <errno.h>
 
 int domeq(const char* dom1, const char* dom2) {
@@ -74,27 +75,20 @@ int generateResponse(struct request_session* rs) {
     } else {
         vhost_action = rs->vhost->sub->handle_request(rs);
     }
+    ITER_LLIST(loaded_modules, value) {
+        struct module* module = value;
+        if (module->events.on_request_processed) {
+            module->events.on_request_processed(module, rs);
+        }
+        ITER_LLIST_END();
+    }
     if (vhost_action == VHOST_ACTION_RESTART) {
         goto restart;
     }
 
     // content update
     if (vhost_action != VHOST_ACTION_NO_CONTENT_UPDATE && rs->response->body != NULL) {
-        if (rs->response->body->content_type != NULL) {
-            header_setoradd(rs->response->headers, "Content-Type", rs->response->body->content_type);
-        }
-        ssize_t len = -1;
-        if (rs->response->body->type == PROVISION_DATA) {
-            len = rs->response->body->data.data.size;
-        } else if (rs->response->body->data.stream.known_length >= 0) {
-            len = rs->response->body->data.stream.known_length;
-        }
-        if (len >= 0) {
-            char len_str[16];
-            sprintf(len_str, "%lu", len);
-            header_setoradd(rs->response->headers, "Content-Length", len_str);
-
-        }
+        updateContentHeaders(rs);
     }
     return 0;
 }

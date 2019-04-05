@@ -33,7 +33,7 @@ struct vhost_type {
 struct vhost {
     struct cert* ssl_cert;
     struct list* hosts;
-    char* id;
+    char* name;
     struct mempool* pool;
     struct vhost_type* sub;
 };

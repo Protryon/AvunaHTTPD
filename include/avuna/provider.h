@@ -53,7 +53,7 @@ struct provision {
 struct provider {
     char* name;
     struct mempool* pool;
-    void (*load_config)(struct provider* provider, struct config_node* node);
+    int (*load_config)(struct provider* provider, struct config_node* node);
     struct provision* (*provide_data)(struct provider* provider, struct request_session* rs);
     void* extra;
     struct list* mime_types;

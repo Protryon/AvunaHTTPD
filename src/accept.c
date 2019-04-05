@@ -12,6 +12,7 @@
 #include <avuna/vhost.h>
 #include <avuna/globals.h>
 #include <avuna/pmem_hooks.h>
+#include <avuna/module.h>
 #include <errno.h>
 #include <netinet/tcp.h>
 #include <fcntl.h>
@@ -51,6 +52,16 @@ void shutdown_ssl_hook(SSL* ssl) {
     SSL_free(ssl);
 }
 
+void conn_disconnect_handler(struct conn* conn) {
+    ITER_LLIST(loaded_modules, value) {
+        struct module* module = value;
+        if (module->events.on_disconnect) {
+            module->events.on_disconnect(module, conn));
+        }
+        ITER_LLIST_END();
+    }
+}
+
 void run_accept(struct accept_param* param) {
     struct mempool* accept_pool = mempool_new();
     struct pollfd spfd;
@@ -80,6 +91,7 @@ void run_accept(struct accept_param* param) {
         sub_conn->read = handle_http_server_read;
         sub_conn->conn = conn;
         sub_conn->on_closed = http_on_closed;
+        sub_conn->extra = pcalloc(sub_conn->pool, sizeof(struct http_server_extra));
         buffer_init(&sub_conn->read_buffer, conn->pool);
         buffer_init(&sub_conn->write_buffer, conn->pool);
         llist_append(conn->sub_conns, sub_conn);
@@ -115,14 +127,14 @@ void run_accept(struct accept_param* param) {
             pfree(pool);
             continue;
         }
-        conn->fd = cfd;
+        sub_conn->fd = cfd;
         phook(pool, close_hook, (void*) cfd);
-        if (configure_fd(param->server->logsess, cfd)) {
+        if (configure_fd(param->server->logsess, cfd, param->binding->binding_type != BINDING_UNIX)) {
             pfree(pool);
             continue;
         }
         if (ssl) {
-            SSL_set_fd(sub_conn->tls_session, conn->fd);
+            SSL_set_fd(sub_conn->tls_session, sub_conn->fd);
             int r = SSL_accept(sub_conn->tls_session);
             if (r == 1) {
                 sub_conn->tls_handshaked = 1;
@@ -144,6 +156,17 @@ void run_accept(struct accept_param* param) {
             pfree(pool);
             continue;
         }
+
+        ITER_LLIST(loaded_modules, value) {
+            struct module* module = value;
+            if (module->events.on_connect && module->events.on_connect(module, conn)) {
+                pfree(pool);
+                break;
+            }
+            ITER_LLIST_END();
+        }
+
+        phook(pool, (void (*)(void*)) conn_disconnect_handler, conn);
 
         queue_push(param->server->prepared_connections, conn);
     }

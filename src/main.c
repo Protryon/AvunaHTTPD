@@ -11,6 +11,7 @@
 #include <avuna/config.h>
 #include <avuna/string.h>
 #include <avuna/version.h>
+#include <avuna/llist.h>
 #include <avuna/util.h>
 #include <avuna/globals.h>
 #include <avuna/mime.h>
@@ -34,15 +35,15 @@
 #include <avuna/module.h>
 
 int load_vhost(struct config_node* config_node, struct vhost* vhost) {
-    vhost->id = config_node->name;
+    vhost->name = config_node->name;
     vhost->hosts = list_new(8, vhost->pool);
     const char* type = config_get(config_node, "type");
     if (type == NULL) {
-        errlog(delog, "No vhost type found for vhost: %s", vhost->id);
+        errlog(delog, "No vhost type found for vhost: %s", vhost->name);
     }
     vhost->sub = hashmap_get(registered_vhost_types, (char*) type);
     if (vhost->sub == NULL) {
-        errlog(delog, "Invalid vhost type '%s' for vhost: %s", type, vhost->id);
+        errlog(delog, "Invalid vhost type '%s' for vhost: %s", type, vhost->name);
         return 1;
     }
     // prevent sharing of extra field across instances
@@ -50,7 +51,7 @@ int load_vhost(struct config_node* config_node, struct vhost* vhost) {
 
     char* raw_host = (char*) config_get(config_node, "host");
     if (raw_host == NULL) {
-        errlog(delog, "No vhost host found for vhost: %s", vhost->id);
+        errlog(delog, "No vhost host found for vhost: %s", vhost->name);
         return 1;
     }
     char* host_value = str_dup(raw_host, 0, vhost->pool);
@@ -389,7 +390,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     registered_vhost_types = hashmap_new(8, global_pool);
-    loaded_modules = hashmap_new(8, global_pool);
+    loaded_modules_by_name = hashmap_new(8, global_pool);
+    loaded_modules = llist_new(global_pool);
     available_providers = hashmap_new(8, global_pool);
     available_provider_types = hashmap_new(8, global_pool);
     struct dirent* module_entry = NULL;
@@ -416,29 +418,39 @@ int main(int argc, char* argv[]) {
         module_name[name_len - 3 - 3] = 0;
         void (*initialize)(struct module* module) = dlsym(handler, "initialize");
         if (initialize == NULL) {
-            errlog(delog, "Failed to open module: '%s': %s", path, dlerror());
+            errlog(delog, "Failed to find 'initialize' function in module: '%s': %s", path, dlerror());
             continue;
         }
-        void (*uninitialize)(struct module* module) = dlsym(handler, "uninitialize");
-        // uninitialize can be NULL
         struct mempool* pool = mempool_new();
         struct module* module_data = pcalloc(pool, sizeof(struct module));
         module_data->pool = pool;
         module_data->name = module_name;
         module_data->handle = handler;
         module_data->initialize = initialize;
-        module_data->uninitialize = uninitialize;
-        hashmap_put(loaded_modules, module_name, module_data);
+        module_data->uninitialize = dlsym(handler, "uninitialize");
+        module_data->events.on_connect = dlsym(handler, "on_connect");
+        module_data->events.on_disconnect = dlsym(handler, "on_disconnect");
+        module_data->events.on_request_received = dlsym(handler, "on_request_received");
+        module_data->events.on_request_vhost_resolved = dlsym(handler, "on_request_vhost_resolved");
+        module_data->events.on_request_post_received = dlsym(handler, "on_request_post_received");
+        module_data->events.on_mime_type_resolved = dlsym(handler, "on_mime_type_resolved");
+        module_data->events.on_request_handler_found = dlsym(handler, "on_request_handler_found");
+        module_data->events.on_request_handled = dlsym(handler, "on_request_handled");
+        module_data->events.on_request_processed = dlsym(handler, "on_request_processed");
+        module_data->events.on_request_completed = dlsym(handler, "on_request_completed");
+        hashmap_put(loaded_modules_by_name, module_name, module_data);
+        llist_append(loaded_modules, module_data);
     }
+    closedir(modules);
     (void) SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
     OPENSSL_config(NULL);
 
-    ITER_MAP(loaded_modules) {
+    ITER_LLIST(loaded_modules, value) {
         struct module* module = value;
         module->initialize(module);
-        ITER_MAP_END();
+        ITER_LLIST_END();
     }
 
     struct hashmap* binding_map = hashmap_new(16, global_pool);
@@ -460,6 +472,53 @@ int main(int argc, char* argv[]) {
             hashmap_put(binding_map, bind_node->name, binding);
         }
     }
+
+    struct list* provider_list = hashmap_get(cfg->nodeListsByCat, "provider");
+    for (int i = 0; i < provider_list->count; i++) {
+        struct config_node* provider_node = provider_list->data[i];
+        if (provider_node->name == NULL) {
+            errlog(delog, "All provider nodes must have names, skipping node.");
+            continue;
+        }
+
+        char* type = (char*) config_get(provider_node, "type");
+        if (type == NULL) {
+            errlog(delog, "All provider nodes must have a 'type' entry, skipping '%s'.", provider_node->name);
+            continue;
+        }
+
+        struct provider* provider_type = hashmap_get(available_provider_types, type);
+        if (provider_type == NULL) {
+            errlog(delog, "Invalid 'type' entry for node '%s': %s", provider_node->name, type);
+            continue;
+        }
+
+        struct mempool* pool = mempool_new();
+        struct provider* provider = xcopy(provider_type, sizeof(struct provider), 0, pool);
+        provider->pool = pool;
+        provider->name = provider_node->name;
+        const char* mimes = config_get(provider_node, "mime-types");
+        if (mimes == NULL) {
+            errlog(delog, "All provider nodes must have a 'mime-types' entry, skipping '%s'.", provider_node->name);
+            continue;
+        }
+
+        if (provider->load_config(provider, provider_node)) {
+            errlog(delog, "Failed to load provider '%s'.", provider->name);
+            pfree(pool);
+            continue;
+        } else {
+            hashmap_put(available_providers, provider_node->name, provider);
+        }
+        char* mimes_split = str_dup((char*) mimes, 0, provider->pool);
+        mimes_split = str_trim(mimes_split);
+        provider->mime_types = list_new(8, provider->pool);
+        str_split(mimes_split, ",", provider->mime_types);
+        for (size_t x = 0; x < provider->mime_types->count; ++x) {
+            provider->mime_types->data[x] = str_trim(provider->mime_types->data[x]);
+        }
+    }
+
 
     struct hashmap* vhost_map = hashmap_new(16, global_pool);
 

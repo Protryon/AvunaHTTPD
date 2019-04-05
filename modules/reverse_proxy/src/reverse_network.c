@@ -29,11 +29,17 @@ int handle_http_client_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
         if (total_read == -1) {
             // backend server failed during stream
             pfree(extra->currently_forwarding->pool);
+            extra->currently_forwarding = NULL;
             return 0;
         } else if (total_read == 0) {
             // end of stream
             queue_pop(extra->forwarding_sessions);
+            if (data.size > 0) {
+                pxfer(provision->pool, extra->currently_forwarding->src_conn->pool, data.data);
+                buffer_push(&extra->currently_forwarding->src_conn->write_buffer, data.data, data.size);
+            }
             pfree(extra->currently_forwarding->pool);
+            extra->currently_forwarding = NULL;
         } else if (total_read == -2) {
             // nothing to read, not end of stream
         } else {

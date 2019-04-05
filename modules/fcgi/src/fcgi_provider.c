@@ -25,7 +25,7 @@ struct fcgi_config {
     uint16_t req_id_counter;
 };
 
-void fcgi_load_config(struct provider* provider, struct config_node* node) {
+int fcgi_load_config(struct provider* provider, struct config_node* node) {
     struct fcgi_config* fcgi = provider->extra = pcalloc(provider->pool, sizeof(struct fcgi_config));
     const char* mode = config_get(node, "mode");
     if (str_eq(mode, "tcp")) {
@@ -37,11 +37,11 @@ void fcgi_load_config(struct provider* provider, struct config_node* node) {
         const char* port = config_get(node, "port");
         if (ip == NULL || !inet_aton(ip, &ina->sin_addr)) {
             errlog(delog, "Invalid IP for FCGI node %s", node->name);
-            return;
+            return 1;
         }
         if (port == NULL || !str_isunum(port)) {
             errlog(delog, "Invalid Port for FCGI node %s", node->name);
-            return;
+            return 1;
         }
         ina->sin_port = htons((uint16_t) strtoul(port, NULL, 10));
     } else if (str_eq(mode, "unix")) {
@@ -52,26 +52,14 @@ void fcgi_load_config(struct provider* provider, struct config_node* node) {
         const char* file = config_get(node, "file");
         if (file == NULL || strlen(file) >= 107) {
             errlog(delog, "Invalid Unix Socket for FCGI node %s", node->name);
-            return;
+            return 1;
         }
         memcpy(ina->sun_path, file, strlen(file) + 1);
     } else {
         errlog(delog, "Invalid mode for FCGI node %s", node->name);
-        return;
+        return 1;
     }
-    /*
-     * TODO: no longer this function's duty, move to caller
-    const char* mimes = config_get(node, "mime-types");
-    if (mimes != NULL) {
-        char* mimes_split = pclaim(provider->pool, str_dup(mimes, 0, provider->pool));
-        mimes_split = str_trim(mimes_split);
-        struct list* mime_list = list_new(8, provider->pool);
-        str_split(mimes_split, ",", mime_list);
-        for (size_t i = 0; i < mime_list->count; ++i) {
-            mime_list->data[i] = str_trim(mime_list->data[i]);
-            hashmap_put(available_provider_types, mime_list->data[i], provider);
-        }
-    }*/
+    return 0;
 }
 
 
@@ -80,7 +68,7 @@ int fcgi_request_connection(struct request_session* rs, struct fcgi_config* fcgi
     if (fd < 0) {
         return -1;
     }
-    if (configure_fd(rs->conn->server->logsess, fd)) {
+    if (configure_fd(rs->conn->server->logsess, fd, fcgi->addr->sa_family != AF_UNIX)) {
         return -1;
     }
     if (connect(fd, fcgi->addr, fcgi->addrlen) && errno != EINPROGRESS) {
@@ -108,11 +96,15 @@ int fcgi_forward(struct fcgi_stream_data* extra) {
     ssize_t total_read = provision->data.stream.read(provision, &data);
     if (total_read == -1) {
         // backend server failed during stream
-        pfree(extra->rs->pool);
+        // pfree(extra->rs->pool);
         return 1;
     } else if (total_read == 0) {
         // end of stream
-        pfree(extra->rs->pool);
+        // pfree(extra->rs->pool);
+        if (data.size > 0) {
+            pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
+            buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
+        }
         return 1;
     } else if (total_read == -2) {
         // nothing to read, not end of stream
@@ -146,7 +138,7 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
         // fcgi server messed up and replied to wrong request on wrong connection
         if (frame.request_id != extra->request_id) {
             frame.type = FCGI_BEGIN_REQUEST; // to prevent termination of loop
-            errlog(sub_conn->conn->server->logsess, "FCGI server returned invalid request id.");
+            errlog(sub_conn->conn->server->logsess, "FCGI server returned invalid request name.");
             continue;
         }
 
@@ -205,7 +197,8 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
 
             if (headers_read <= frame.len) {
                 if (extra->stdout_state == 2) {
-                    extra->provision->data.stream.delay_finish(extra->rs, &extra->provision->data.stream.delayed_start);
+                    updateContentHeaders(extra->rs);
+                    extra->rs->response->body->data.stream.delay_finish(extra->rs, &extra->rs->response->body->data.stream.delayed_start);
                     extra->stdout_state = 3;
                 }
 
@@ -217,11 +210,16 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
             }
         }
     }
+
+
     if (output_ready && fcgi_forward(extra)) {
         return 1;
     }
 
-    sub_conn->on_closed(sub_conn);
+    extra->complete = 1;
+
+    fcgi_forward(extra); // flush streams
+
     return 1;
 }
 
@@ -405,14 +403,14 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
         hashmap_put(fcgi_params, nname, (void*) value);
     }
     ITER_MAP(fcgi_params) {
-        fcgi_writeParam(&sub_conn->read_buffer, frame.request_id, str_key, (char*) value);
+        fcgi_writeParam(&sub_conn->write_buffer, frame.request_id, str_key, (char*) value);
         ITER_MAP_END();
     }
 
     frame.type = FCGI_PARAMS;
     frame.len = 0;
     frame.data = NULL;
-    fcgi_writeFrame(&sub_conn->read_buffer, &frame);
+    fcgi_writeFrame(&sub_conn->write_buffer, &frame);
     frame.type = FCGI_STDIN;
 
     if (rs->request->body != NULL) {
@@ -433,7 +431,7 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     }
 
     frame.len = 0;
-    fcgi_writeFrame(&sub_conn->read_buffer, &frame);
+    fcgi_writeFrame(&sub_conn->write_buffer, &frame);
     if (rs->response->body != NULL) {
         rs->response->body = NULL;
     }

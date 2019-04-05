@@ -41,7 +41,6 @@ struct sub_conn {
 struct connection_manager;
 
 struct conn {
-    int fd;
     union {
         struct sockaddr_in6 tcp6;
         struct sockaddr_in tcp4;
@@ -58,7 +57,6 @@ struct connection_manager {
     struct llist* pending_sub_conns;
 };
 
-int configure_fd(struct logsess* logger, int fd);
-
+int configure_fd(struct logsess* logger, int fd, int is_tcp);
 
 #endif //AVUNA_HTTPD_CONNECTION_H
