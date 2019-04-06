@@ -37,6 +37,7 @@ int handle_http_client_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
             if (data.size > 0) {
                 pxfer(provision->pool, extra->currently_forwarding->src_conn->pool, data.data);
                 buffer_push(&extra->currently_forwarding->src_conn->write_buffer, data.data, data.size);
+                trigger_write(extra->currently_forwarding->src_conn);
             }
             pfree(extra->currently_forwarding->pool);
             extra->currently_forwarding = NULL;
@@ -45,6 +46,7 @@ int handle_http_client_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
         } else {
             pxfer(provision->pool, extra->currently_forwarding->src_conn->pool, data.data);
             buffer_push(&extra->currently_forwarding->src_conn->write_buffer, data.data, data.size);
+            trigger_write(extra->currently_forwarding->src_conn);
             return 0;
         }
     }
@@ -214,6 +216,7 @@ int handle_http_client_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
                     if (rs->response->body->type == PROVISION_DATA) {
                         pxfer(rs->response->body->pool, sub_conn->pool, rs->response->body->data.data.data);
                         buffer_push(&rs->src_conn->write_buffer, rs->response->body->data.data.data, rs->response->body->data.data.size);
+                        trigger_write(rs->src_conn);
                     } else {
                         extra->currently_forwarding = rs;
                         goto restart;

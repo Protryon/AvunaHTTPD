@@ -6,30 +6,31 @@
 #include "network.h"
 #include <avuna/queue.h>
 #include <avuna/log.h>
+#include <avuna/llist.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/epoll.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
 
 void wake_thread(struct wake_thread_arg* arg) {
-    size_t revolving_initial = 0;
-    int onec = 1;
+    size_t counter = 0;
     while (1) {
-        queue_block(arg->server->prepared_connections);
-        size_t count = arg->work_params->count;
-        size_t total = arg->server->prepared_connections->size;
-        size_t initial = 0;
-        if (total < count) {
-            initial = revolving_initial % (count - total);
-            revolving_initial += total;
-        }
-        for (size_t i = initial; i < count; ++i) {
-            struct work_param* param = arg->work_params->data[i];
-            if (write(param->pipes[1], &onec, 1) < 1) {
-                errlog(param->server->logsess, "Failed to write to wakeup pipe! Connection may hang. %s",
-                       strerror(errno));
+        struct conn* conn = queue_pop(arg->server->prepared_connections);
+        struct work_param* param = arg->work_params->data[counter];
+        counter = (counter + 1) % arg->work_params->count;
+        conn->manager = param->manager;
+        ITER_LLIST(conn->sub_conns, value) {
+            struct sub_conn* sub_conn = value;
+            struct epoll_event event;
+            event.events = EPOLLIN | EPOLLOUT | EPOLLET;
+            event.data.ptr = sub_conn;
+            if (epoll_ctl(param->epoll_fd, EPOLL_CTL_ADD, sub_conn->fd, &event)) {
+                errlog(param->server->logsess, "Failed to add fd to epoll! %s", strerror(errno));
+                continue;
             }
+            ITER_LLIST_END();
         }
     }
 }

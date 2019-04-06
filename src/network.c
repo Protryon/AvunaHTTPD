@@ -18,7 +18,7 @@
 #include <avuna/network.h>
 #include <avuna/module.h>
 #include <errno.h>
-#include <poll.h>
+#include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
 
@@ -54,6 +54,7 @@ void send_request_session(struct request_session* rs, struct timespec* start) {
     acclog(conn->server->logsess, "%s %s %s/%s%s returned %s took: %f ms", mip, req->method,
            conn->server->id, rs->vhost->name, req->path, resp->code, msp);
     buffer_push(&rs->src_conn->write_buffer, serialized_response, response_length);
+    trigger_write(rs->src_conn);
     ITER_LLIST(loaded_modules, value) {
         struct module* module = value;
         if (module->events.on_request_completed) {
@@ -133,9 +134,6 @@ int handle_http_server_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
     }
 
     if (extra->currently_streaming != NULL) {
-        //TODO: this could causes a block-until-receive after a stream, fix
-        //TODO: set to NULL when done
-        //TODO:  if stream is done free currently_streaming
         return 0;
     }
 
@@ -280,111 +278,101 @@ void add_conn_node(struct conn_node_arg* node) {
     llist_append(node->list, node->node);
 }
 
+void trigger_write(struct sub_conn* sub_conn) {
+    if (sub_conn->write_available && sub_conn->write_buffer.size > 0) {
+        for (struct llist_node* node = sub_conn->write_buffer.buffers->head; node != NULL; ) {
+            struct buffer_entry* entry = node->data;
+            size_t written;
+            if (sub_conn->tls) {
+                ssize_t mtr = SSL_write(sub_conn->tls_session, entry->data, (int) entry->size);
+                if (mtr < 0 && errno == EAGAIN) {
+                    sub_conn->write_available = 0;
+                    break;
+                } else if (mtr < 0) {
+                    sub_conn->safe_close = 1;
+                    break;
+                }
+                written = (size_t) mtr;
+
+            } else {
+                ssize_t mtr = write(sub_conn->fd, entry->data, entry->size);
+                if (mtr < 0) {
+                    int ssl_error = SSL_get_error(sub_conn->tls_session, (int) mtr);
+                    if (ssl_error == SSL_ERROR_SYSCALL && errno == EAGAIN) {
+                        sub_conn->write_available = 0;
+                        break;
+                    } else if (ssl_error != SSL_ERROR_WANT_WRITE && ssl_error != SSL_ERROR_WANT_READ) {
+                        sub_conn->safe_close = 1;
+                        return;
+                    }
+                }
+                written = (size_t) mtr;
+            }
+            if (written < entry->size) {
+                entry->data += written;
+                entry->size -= written;
+                sub_conn->write_available = 1;
+                sub_conn->write_buffer.size -= written;
+                break;
+            } else {
+                sub_conn->write_buffer.size -= written;
+                pprefree_strict(sub_conn->write_buffer.pool, entry->data_root);
+                struct llist_node* next = node->next;
+                llist_del(sub_conn->write_buffer.buffers, node);
+                node = next;
+                if (node == NULL) {
+                    sub_conn->write_available = 1;
+                    break;
+                } else {
+                    continue;
+                }
+            }
+        }
+    }
+}
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
 
 void run_work(struct work_param* param) {
-    if (pipe(param->pipes) != 0) {
-        errlog(param->server->logsess, "Failed to create pipe! %s", strerror(errno));
-        return;
-    }
     struct mempool* pool = mempool_new();
-    unsigned char wb;
-    struct connection_manager* manager = pcalloc(pool, sizeof(struct connection_manager));
-    manager->pending_sub_conns = llist_new(pool);
-    struct llist* claimed_connections = llist_new(pool);
-    struct llist* flattened_connections = llist_new(pool);
-    struct llist* to_remove_flattened = llist_new(pool);
-    struct pollfd* poll_fds = pmalloc(pool, sizeof(struct pollfd) * 64);
-    size_t poll_fds_cap = 64;
+    param->manager = pcalloc(pool, sizeof(struct connection_manager));
+    param->manager->pending_sub_conns = llist_new(pool);
+    struct epoll_event events[128];
     while (1) {
-        // by only doing one pop per loop, we effectively create a QoS in which serving existing connections is prioritized over new ones, but also so some better load balancing.
-        struct conn* new_conn = queue_maybepop(param->server->prepared_connections);
-        if (new_conn != NULL) {
-            new_conn->manager = manager;
-            {
-                struct conn_node_arg* arg = pmalloc(new_conn->pool, sizeof(struct conn_node_arg));
-                arg->list = claimed_connections;
-                arg->node = llist_append(claimed_connections, new_conn);
-                phook(new_conn->pool, remove_conn_node, arg);
-            }
-            // assumes only 1 sub connection at this point!
-            {
-                struct sub_conn* base_conn = new_conn->sub_conns->head->data;
-                struct conn_node_arg* arg = pmalloc(base_conn->pool, sizeof(struct conn_node_arg));
-                arg->list = to_remove_flattened;
-                arg->node = llist_prepend(flattened_connections, base_conn);
-                phook(base_conn->pool, add_conn_node, arg);
-            }
-            // TODO: module connection initiated hook
-        }
-        for (struct llist_node* node = manager->pending_sub_conns->head; node != NULL; ) {
+        for (struct llist_node* node = param->manager->pending_sub_conns->head; node != NULL; ) {
             struct sub_conn* sub_conn = node->data;
             llist_append(sub_conn->conn->sub_conns, sub_conn);
-            struct conn_node_arg* arg = pmalloc(sub_conn->pool, sizeof(struct conn_node_arg));
-            arg->list = to_remove_flattened;
-            arg->node = llist_prepend(flattened_connections, sub_conn);
-            phook(sub_conn->pool, add_conn_node, arg);
+            struct epoll_event event;
+            event.events = EPOLLIN | EPOLLOUT | EPOLLET;
+            event.data.ptr = sub_conn;
+            if (epoll_ctl(param->epoll_fd, EPOLL_CTL_ADD, sub_conn->fd, &event)) {
+                errlog(param->server->logsess, "Failed to add fd to epoll! %s", strerror(errno));
+            }
             struct llist_node* next = node->next;
-            llist_del(manager->pending_sub_conns, node);
+            llist_del(param->manager->pending_sub_conns, node);
             node = next;
         }
-        size_t poll_fd_count = flattened_connections->size + 1;
-        struct mempool* iter_pool = mempool_new();
-        size_t poll_fd_index = 0;
-        if (poll_fds_cap < poll_fd_count + 1) {
-            while (poll_fds_cap < poll_fd_count + 1) {
-                poll_fds_cap *= 2;
-            }
-            poll_fds = prealloc(pool, poll_fds, sizeof(struct pollfd) * poll_fds_cap);
-        }
-        ITER_LLIST(flattened_connections, value) {
-                struct sub_conn* sub_conn = value;
-                struct pollfd* pollfd = &poll_fds[poll_fd_index++];
-                pollfd->fd = sub_conn->fd;
-                pollfd->events = (short) (POLLIN | ((sub_conn->write_buffer.size > 0 ||
-                                                     (sub_conn->tls && !sub_conn->tls_handshaked &&
-                                                                sub_conn->tls_next_direction == 2)) ? POLLOUT : 0));
-                pollfd->revents = 0;
-            ITER_LLIST_END();
-        }
-        struct pollfd* pollfd = &poll_fds[poll_fd_index++];
-        pollfd->fd = param->pipes[0];
-        pollfd->events = POLLIN;
-        pollfd->revents = 0;
-        int polled_count = poll(poll_fds, poll_fd_count, -1);
-        if (polled_count < 0) {
-            errlog(param->server->logsess, "Poll error in worker thread! %s", strerror(errno));
-        } else if (polled_count == 0) {
-            pfree(iter_pool);
+        int epoll_status = epoll_wait(param->epoll_fd, events, 128, -1);
+        if (epoll_status < 0) {
+            errlog(param->server->logsess, "Epoll error in worker thread! %s", strerror(errno));
+        } else if (epoll_status == 0) {
             continue;
-        } else if ((poll_fds[poll_fd_count - 1].revents & POLLIN) == POLLIN) {
-            if (read(param->pipes[0], &wb, 1) < 1)
-                errlog(param->server->logsess, "Error reading from pipe, infinite loop COULD happen here.");
-            if (polled_count-- == 1) {
-                pfree(iter_pool);
-                continue;
-            }
         }
-        struct llist_node* flat_node = flattened_connections->head;
-        for (int i = 0; i < poll_fd_count - 1 && polled_count > 0; i++) {
-            int revents = poll_fds[i].revents;
-            struct sub_conn* sub_conn = flat_node->data;
-            flat_node = flat_node->next;
-            if (revents == 0) continue;
-
-            polled_count--;
-
-            if ((revents & POLLHUP) == POLLHUP) {
+        for (int i = 0; i < epoll_status; ++i) {
+            struct epoll_event* event = &events[i];
+            struct sub_conn* sub_conn = event->data.ptr;
+            if (sub_conn->safe_close) {
                 sub_conn->on_closed(sub_conn);
                 continue;
             }
-            if ((revents & POLLERR) == POLLERR) {
+            if (event->events == 0) continue;
+
+            if (event->events & EPOLLHUP) {
                 sub_conn->on_closed(sub_conn);
                 continue;
             }
-            if ((revents & POLLNVAL) == POLLNVAL) {
-                errlog(param->server->logsess, "Invalid FD in worker poll! This is bad!");
+            if (event->events & EPOLLERR) {
                 sub_conn->on_closed(sub_conn);
                 continue;
             }
@@ -398,119 +386,78 @@ void run_work(struct work_param* param) {
                     continue;
                 } else {
                     int err = SSL_get_error(sub_conn->tls_session, r);
-                    if (err == SSL_ERROR_WANT_READ) sub_conn->tls_next_direction = 1;
-                    else if (err == SSL_ERROR_WANT_WRITE) sub_conn->tls_next_direction = 2;
-                    else {
+                    if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
                         sub_conn->on_closed(sub_conn);
                         continue;
                     }
                 }
                 continue;
             }
-            if ((revents & POLLIN) == POLLIN) {
-                size_t guessed_read_total = 0;
-                int arbitrary_read_total = 0;
+
+
+            if (event->events & EPOLLOUT) {
+                sub_conn->write_available = 1;
+                trigger_write(sub_conn);
+            }
+
+            if (event->events & EPOLLIN) {
+                void* read_buf = NULL;
+                size_t read_total = 0;
                 if (sub_conn->tls) {
-                    guessed_read_total = (size_t) SSL_pending(sub_conn->tls_session);
-                    if (guessed_read_total == 0) {
-                        guessed_read_total += 4096;
-                        arbitrary_read_total = 1;
+                    size_t read_capacity = (size_t) SSL_pending(sub_conn->tls_session);
+                    if (read_capacity == 0) {
+                        ioctl(sub_conn->fd, FIONREAD, &read_capacity);
+                        if (read_capacity < 64) {
+                            read_capacity = 1024;
+                        }
+                    }
+                    read_buf = pmalloc(sub_conn->pool, read_capacity);
+                    ssize_t r;
+                    while ((r = SSL_read(sub_conn->tls_session, read_buf + read_total, (int) (read_capacity - read_total))) > 0) {
+                        read_total += r;
+                        if (read_total == read_capacity) {
+                            read_capacity *= 2;
+                            read_buf = prealloc(sub_conn->pool, read_buf, read_capacity);
+                        }
+                    }
+                    if (r == 0) {
+                        sub_conn->on_closed(sub_conn);
+                        continue;
+                    } else { // < 0
+                        int ssl_error = SSL_get_error(sub_conn->tls_session, (int) r);
+                        if (!(ssl_error == SSL_ERROR_SYSCALL && errno == EAGAIN) && ssl_error != SSL_ERROR_WANT_WRITE && ssl_error != SSL_ERROR_WANT_READ) {
+                            sub_conn->on_closed(sub_conn);
+                            continue;
+                        }
                     }
                 } else {
-                    ioctl(poll_fds[i].fd, FIONREAD, &guessed_read_total);
-                }
-                void* read_buf = pmalloc(sub_conn->pool, guessed_read_total);
-                ssize_t read_total = 0;
-                if (guessed_read_total == 0) { // nothing to read, but wont block.
-                    ssize_t x = 0;
-                    if (sub_conn->tls) {
-                        x = SSL_read(sub_conn->tls_session, read_buf + read_total, (int) (guessed_read_total - read_total));
-                        if (x <= 0) {
-                            int serr = SSL_get_error(sub_conn->tls_session, (int) x);
-                            if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) continue;
-                            sub_conn->on_closed(sub_conn);
-                            continue;
-                        }
-                    } else {
-                        x = read(poll_fds[i].fd, read_buf + read_total, guessed_read_total - read_total);
-                        if (x <= 0) {
-                            sub_conn->on_closed(sub_conn);
-                            continue;
+                    size_t read_capacity = 0;
+                    ioctl(sub_conn->fd, FIONREAD, &read_capacity);
+                    read_buf = pmalloc(sub_conn->pool, read_capacity);
+                    ssize_t r;
+                    while ((r = read(sub_conn->fd, read_buf + read_total, read_capacity - read_total)) > 0) {
+                        read_total += r;
+                        if (read_total == read_capacity) {
+                            read_capacity *= 2;
+                            read_buf = prealloc(sub_conn->pool, read_buf, read_capacity);
                         }
                     }
-                    read_total += x;
-                }
-                while (read_total < guessed_read_total) {
-                    ssize_t x = 0;
-                    if (sub_conn->tls) {
-                        x = SSL_read(sub_conn->tls_session, read_buf + read_total, (int) (guessed_read_total - read_total));
-                        if (x <= 0) {
-                            int serr = SSL_get_error(sub_conn->tls_session, (int) x);
-                            if (serr == SSL_ERROR_WANT_WRITE || serr == SSL_ERROR_WANT_READ) goto cont;
-                            sub_conn->on_closed(sub_conn);
-                            goto cont;
-                        }
-                        read_total += x;
-                        if (arbitrary_read_total) break;
-                    } else {
-                        x = read(poll_fds[i].fd, read_buf + read_total, guessed_read_total - read_total);
-                        if (x <= 0) {
-                            sub_conn->on_closed(sub_conn);
-                            goto cont;
-                        }
+                    if (r == 0 || (r < 0 && errno != EAGAIN)) {
+                        sub_conn->on_closed(sub_conn);
+                        continue;
                     }
-                    read_total += x;
                 }
-                int p = sub_conn->read(sub_conn, read_buf, (size_t) read_total);
+                int p = sub_conn->read(sub_conn, read_buf, read_total);
                 if (p == 1) {
                     sub_conn->on_closed(sub_conn);
                     continue;
                 }
             }
-            if ((revents & POLLOUT) == POLLOUT) {
-                for (struct llist_node* node = sub_conn->write_buffer.buffers->head; node != NULL; ) {
-                    struct buffer_entry* entry = node->data;
-                    ssize_t mtr = sub_conn->tls ?
-                                  SSL_write(sub_conn->tls_session, entry->data, (int) entry->size) :
-                                  write(poll_fds[i].fd, entry->data, entry->size);
-                    int serr = (sub_conn->tls && mtr < 0) ? SSL_get_error(sub_conn->tls_session, mtr) : 0;
-                    if (mtr < 0 && (sub_conn->tls ? ((serr != SSL_ERROR_SYSCALL || errno != EAGAIN) &&
-                                                  serr != SSL_ERROR_WANT_WRITE && serr != SSL_ERROR_WANT_READ) :
-                                    errno != EAGAIN)) { // use error queue?
-                        sub_conn->on_closed(sub_conn);
-                        break;
-                    } else if (mtr < 0) {
-                        break;
-                    } else if (mtr < entry->size) {
-                        entry->data += mtr;
-                        entry->size -= mtr;
-                        sub_conn->write_buffer.size -= mtr;
-                        break;
-                    } else {
-                        sub_conn->write_buffer.size -= mtr;
-                        pprefree_strict(sub_conn->write_buffer.pool, entry->data_root);
-                        struct llist_node* next = node->next;
-                        llist_del(sub_conn->write_buffer.buffers, node);
-                        node = next;
-                        if (node == NULL) {
-                            break;
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-            }
+
             cont:;
         }
-        for (struct llist_node* node = to_remove_flattened->head; node != NULL; ) {
-            struct llist_node* next = node->next;
-            struct llist_node* proper_node = node->data;
-            llist_del(to_remove_flattened, node);
-            llist_del(flattened_connections, proper_node);
-            node = next;
-        }
-        pfree(iter_pool);
     }
+    close(param->epoll_fd);
 }
 
 

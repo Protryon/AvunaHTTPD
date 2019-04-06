@@ -32,10 +32,11 @@ struct sub_conn {
     SSL* tls_session;
     struct buffer read_buffer;
     struct buffer write_buffer;
-    int tls_next_direction;
+    int write_available;
     int (*read)(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len);
     void (*on_closed)(struct sub_conn* sub_conn);
     void* extra;
+    int safe_close; // to allow closing when there might be pending events
 };
 
 struct connection_manager;
@@ -58,5 +59,7 @@ struct connection_manager {
 };
 
 int configure_fd(struct logsess* logger, int fd, int is_tcp);
+
+void trigger_write(struct sub_conn* sub_conn);
 
 #endif //AVUNA_HTTPD_CONNECTION_H

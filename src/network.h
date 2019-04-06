@@ -17,7 +17,8 @@
 struct work_param {
     size_t i;
     struct server_info* server;
-    int pipes[2];
+    int epoll_fd;
+    struct connection_manager* manager;
 };
 
 struct http_server_extra {

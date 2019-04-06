@@ -33,6 +33,7 @@
 #include <dlfcn.h>
 #include <dirent.h>
 #include <avuna/module.h>
+#include <sys/epoll.h>
 
 int load_vhost(struct config_node* config_node, struct vhost* vhost) {
     vhost->name = config_node->name;
@@ -649,8 +650,11 @@ int main(int argc, char* argv[]) {
             struct work_param* param = pmalloc(server->pool, sizeof(struct work_param));
             param->i = j;
             param->server = server;
-            param->pipes[0] = -1;
-            param->pipes[1] = -1;
+            param->epoll_fd = epoll_create1(0);
+            if (param->epoll_fd < 0) {
+                errlog(param->server->logsess, "Failed to create epoll fd! %s", strerror(errno));
+                continue;
+            }
             pthread_t pt;
             int pthread_err = pthread_create(&pt, NULL, (void*) run_work, param);
             if (pthread_err != 0) {

@@ -102,6 +102,7 @@ int fcgi_forward(struct fcgi_stream_data* extra) {
         if (data.size > 0) {
             pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
             buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
+            trigger_write(extra->rs->src_conn);
         }
         return 0;
     } else if (total_read == -2) {
@@ -110,6 +111,7 @@ int fcgi_forward(struct fcgi_stream_data* extra) {
     } else {
         pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
         buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
+        trigger_write(extra->rs->src_conn);
     }
     return 1;
 }
@@ -428,6 +430,7 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
 
     frame.len = 0;
     fcgi_writeFrame(&sub_conn->write_buffer, &frame);
+    trigger_write(sub_conn);
     if (rs->response->body != NULL) {
         rs->response->body = NULL;
     }

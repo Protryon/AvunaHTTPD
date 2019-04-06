@@ -143,9 +143,7 @@ void run_accept(struct accept_param* param) {
                 continue;
             } else {
                 int err = SSL_get_error(sub_conn->tls_session, r);
-                if (err == SSL_ERROR_WANT_READ) sub_conn->tls_next_direction = 1;
-                else if (err == SSL_ERROR_WANT_WRITE) sub_conn->tls_next_direction = 2;
-                else {
+                if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
                     pfree(pool);
                     continue;
                 }
