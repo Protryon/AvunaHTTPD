@@ -313,7 +313,7 @@ void run_work(struct work_param* param) {
                 struct sub_conn* base_conn = new_conn->sub_conns->head->data;
                 struct conn_node_arg* arg = pmalloc(base_conn->pool, sizeof(struct conn_node_arg));
                 arg->list = to_remove_flattened;
-                arg->node = llist_append(flattened_connections, base_conn);
+                arg->node = llist_prepend(flattened_connections, base_conn);
                 phook(base_conn->pool, add_conn_node, arg);
             }
             // TODO: module connection initiated hook
@@ -323,7 +323,7 @@ void run_work(struct work_param* param) {
             llist_append(sub_conn->conn->sub_conns, sub_conn);
             struct conn_node_arg* arg = pmalloc(sub_conn->pool, sizeof(struct conn_node_arg));
             arg->list = to_remove_flattened;
-            arg->node = llist_append(flattened_connections, sub_conn);
+            arg->node = llist_prepend(flattened_connections, sub_conn);
             phook(sub_conn->pool, add_conn_node, arg);
             struct llist_node* next = node->next;
             llist_del(manager->pending_sub_conns, node);

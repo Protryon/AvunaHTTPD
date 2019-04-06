@@ -23,6 +23,14 @@ int handle_vhost_htdocs(struct request_session* rs) {
     if (htdocs->base.scacheEnabled && check_cache(rs)) {
         return VHOST_ACTION_NONE;
     }
+
+    // empty initialized body
+    struct mempool* body_pool = mempool_new();
+    rs->response->body = pcalloc(body_pool, sizeof(struct provision));
+    rs->response->body->pool = body_pool;
+    pchild(rs->pool, rs->response->body->pool);
+    rs->response->body->type = PROVISION_DATA;
+
     int isStatic = 1;
     // make path relative to htdocs
     char* htpath;
@@ -223,12 +231,6 @@ int handle_vhost_htdocs(struct request_session* rs) {
         goto return_error;
     }
 
-    // empty initialized body
-    struct mempool* body_pool = mempool_new();
-    rs->response->body = pcalloc(body_pool, sizeof(struct provision));
-    rs->response->body->pool = body_pool;
-    pchild(rs->pool, rs->response->body->pool);
-    rs->response->body->type = PROVISION_DATA;
     char* ext = strrchr(htpath, '.');
     char* content_type = NULL;
     if (ext == NULL) {
@@ -292,8 +294,8 @@ int handle_vhost_htdocs(struct request_session* rs) {
         }
         if (len < 1024 * 1024) { // perhaps make this configurable?
             rs->response->body->type = PROVISION_DATA;
-            rs->response->body->data.data.size = (size_t) len;
-            rs->response->body->data.data.data = pmalloc(rs->pool, (size_t) len);
+            rs->response->body->data.data.size = 0;
+            rs->response->body->data.data.data = pmalloc(rs->response->body->pool, (size_t) len);
             ssize_t r = 0;
             while ((r = read(ffd, rs->response->body->data.data.data + rs->response->body->data.data.size,
                              len - rs->response->body->data.data.size)) > 0) {
@@ -381,8 +383,10 @@ int handle_vhost_htdocs(struct request_session* rs) {
         sc->pool = scpool;
         pchild(htdocs->base.cache->pool, sc->pool);
         pxfer_parent(rs->pool, sc->pool, rs->response->body->pool);
+        sc->body = rs->response->body;
         sc->content_encoding = do_gzip == 1 || do_gzip == -1; // done or already done
         sc->code = pxfer(rs->pool, sc->pool, rs->response->code);
+        sc->size = sc->body->data.data.size;
         if (rs->response->body != NULL)
             header_setoradd(rs->response->headers, "Content-Type", rs->response->body->content_type);
         char l[16];

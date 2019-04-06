@@ -96,23 +96,22 @@ int fcgi_forward(struct fcgi_stream_data* extra) {
     ssize_t total_read = provision->data.stream.read(provision, &data);
     if (total_read == -1) {
         // backend server failed during stream
-        // pfree(extra->rs->pool);
-        return 1;
+        return -1;
     } else if (total_read == 0) {
         // end of stream
-        // pfree(extra->rs->pool);
         if (data.size > 0) {
             pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
             buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
         }
-        return 1;
+        return 0;
     } else if (total_read == -2) {
         // nothing to read, not end of stream
+        return 2;
     } else {
         pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
         buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
     }
-    return 0;
+    return 1;
 }
 
 int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len) {
@@ -121,13 +120,10 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
     struct fcgi_frame frame;
     frame.type = FCGI_BEGIN_REQUEST;
     int output_ready = 0;
-    if (fcgi_forward(extra)) {
-        return 1;
-    }
     while (frame.type != FCGI_END_REQUEST) {
         ssize_t status = fcgi_readFrame(&sub_conn->read_buffer, &frame, sub_conn->pool);
         if (status == -2) {
-            if (output_ready && fcgi_forward(extra)) {
+            if (output_ready && fcgi_forward(extra) <= 0) {
                 return 1;
             }
             return 0;
@@ -212,13 +208,13 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
     }
 
 
-    if (output_ready && fcgi_forward(extra)) {
+    if (output_ready && fcgi_forward(extra) <= 0) {
         return 1;
     }
 
     extra->complete = 1;
 
-    fcgi_forward(extra); // flush streams
+    while (fcgi_forward(extra) == 1) { }
 
     return 1;
 }

@@ -56,7 +56,7 @@ void conn_disconnect_handler(struct conn* conn) {
     ITER_LLIST(loaded_modules, value) {
         struct module* module = value;
         if (module->events.on_disconnect) {
-            module->events.on_disconnect(module, conn));
+            module->events.on_disconnect(module, conn);
         }
         ITER_LLIST_END();
     }
