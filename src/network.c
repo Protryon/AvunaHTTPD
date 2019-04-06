@@ -208,8 +208,7 @@ int handle_http_server_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
                     return 1;
                 }
                 rs->response = pcalloc(rs->pool, sizeof(struct response));
-                rs->response->headers = pcalloc(rs->pool, sizeof(struct headers));
-                rs->response->headers->pool = rs->pool;
+                rs->response->headers = header_new(rs->pool);
                 rs->response->http_version = "HTTP/1.1";
                 rs->response->http_version = rs->request->http_version;
                 rs->response->code = "200 OK";

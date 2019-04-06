@@ -44,8 +44,7 @@ int parseRequest(struct request_session* rs, char* data, size_t maxPost) {
     request->http_version = pmalloc(rs->pool, temp_len);
     memcpy(request->http_version, temp, temp_len);
     temp += temp_len + 1;
-    request->headers = pcalloc(rs->pool, sizeof(struct headers));
-    header_parse(request->headers, temp, 0, rs->pool);
+    request->headers = header_parse(temp, rs->pool);
     request->body = NULL;
 
     //TODO: for streaming posts (large posts or chunked posts), return a streamed type provision
@@ -119,7 +118,7 @@ int parseResponse(struct request_session* rs, struct sub_conn* sub_conn, char* d
     size_t eol_length = strlen(eol);
     if (eol[eol_length - 1] == '\r') eol[eol_length - 1] = 0;
     rs->response->code = str_dup(eol, 0, rs->pool);
-    header_parse(rs->response->headers, headers, 3, rs->pool);
+    rs->response->headers = header_parse(headers, rs->pool);
     const char* content_length = header_get(rs->response->headers, "Content-Length");
     if (content_length != NULL && str_isunum(content_length)) {
         size_t content_length_int = strtoull(content_length, NULL, 10);

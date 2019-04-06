@@ -392,14 +392,8 @@ int handle_vhost_htdocs(struct request_session* rs) {
         char l[16];
         if (rs->response->body != NULL) sprintf(l, "%u", (unsigned int) rs->response->body->data.data.size);
         header_setoradd(rs->response->headers, "Content-Length", rs->response->body == NULL ? "0" : l);
-        sc->headers = pxfer(rs->pool, sc->pool, rs->response->headers);
-        sc->headers->pool = sc->pool;
-        pxfer(rs->pool, sc->pool, sc->headers->names);
-        pxfer(rs->pool, sc->pool, sc->headers->values);
-        for (size_t i = 0; i < sc->headers->count; ++i) {
-            pxfer(rs->pool, sc->pool, sc->headers->names[i]);
-            pxfer(rs->pool, sc->pool, sc->headers->values[i]);
-        }
+        pxfer_parent(rs->pool, sc->pool, rs->response->headers->pool);
+        sc->headers = rs->response->headers;
         sc->request_path = pxfer(rs->pool, sc->pool, rs->request->path);
         if (!has_etag) {
             if (rs->response->body == NULL) {

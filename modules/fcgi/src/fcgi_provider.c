@@ -173,22 +173,20 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
 
                 if (extra->stdout_state == 1) {
                     extra->stdout_state = 2;
-                    struct headers* hdrs = pcalloc(extra->rs->pool, sizeof(struct headers));
-                    hdrs->pool = extra->rs->pool;
                     char* headers = pmalloc(extra->rs->pool, extra->headers.size + 1);
                     headers[extra->headers.size] = 0;
                     buffer_pop(&extra->headers, extra->headers.size, (uint8_t*) headers);
-                    header_parse(hdrs, headers, 0, extra->rs->pool);
-                    for (int i = 0; i < hdrs->count; i++) {
-                        char* name = hdrs->names[i];
-                        char* value = hdrs->values[i];
-                        if (str_eq(name, "Content-Type")) {
-                            extra->rs->response->body->content_type = value;
-                        } else if (str_eq(name, "Status")) {
-                            extra->rs->response->code = value;
-                        } else if (str_eq(name, "ETag")) {
+                    struct headers* hdrs = header_parse(headers, extra->rs->pool);
+                    ITER_LLIST(hdrs->header_list, value) {
+                        struct header_entry* entry = value;
+                        if (str_eq(entry->name, "Content-Type")) {
+                            extra->rs->response->body->content_type = entry->value;
+                        } else if (str_eq(entry->name, "Status")) {
+                            extra->rs->response->code = entry->value;
+                        } else if (str_eq(entry->name, "ETag")) {
                             // we handle ETags, ignore FCGI-given ones
-                        } else header_add(extra->rs->response->headers, name, value);
+                        } else header_add(extra->rs->response->headers, entry->name, entry->value);
+                        ITER_LLIST_END();
                     }
                 }
             }
@@ -385,20 +383,20 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     hashmap_put(fcgi_params, "DOCUMENT_ROOT", htdocs->htdocs);
     hashmap_put(fcgi_params, "SCRIPT_FILENAME", rs->request_htpath);
 
-    for (int i = 0; i < rs->request->headers->count; i++) {
-        const char* name = rs->request->headers->names[i];
-        if (str_eq(name, "Accept-Encoding")) continue;
-        const char* value = rs->request->headers->values[i];
-        size_t name_length = strlen(name);
+    ITER_LLIST(rs->request->headers->header_list, pre_entry) {
+        struct header_entry* entry = pre_entry;
+        if (str_eq(entry->name, "Accept-Encoding")) continue;
+        size_t name_length = strlen(entry->name);
         char* nname = pmalloc(rs->pool, name_length + 6);
         memcpy(nname, "HTTP_", 5);
-        memcpy(nname + 5, name, name_length + 1);
+        memcpy(nname + 5, entry->name, name_length + 1);
         name_length += 5;
         for (int x = 5; x < name_length; x++) {
             if (nname[x] >= 'a' && nname[x] <= 'z') nname[x] -= ' ';
             else if (nname[x] == '-') nname[x] = '_';
         }
-        hashmap_put(fcgi_params, nname, (void*) value);
+        hashmap_put(fcgi_params, nname, (void*) entry->value);
+        ITER_LLIST_END();
     }
     ITER_MAP(fcgi_params) {
         fcgi_writeParam(&sub_conn->write_buffer, frame.request_id, str_key, (char*) value);

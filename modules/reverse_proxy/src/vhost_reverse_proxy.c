@@ -240,8 +240,7 @@ int rproxy_parse_config(struct vhost* vhost, struct config_node* node) {
     ITER_MAP(node->map) {
         if (str_prefixes(str_key, "header-")) {
             if (rproxy->appended_headers == NULL) {
-                rproxy->appended_headers = pcalloc(vhost->pool, sizeof(struct headers));
-                rproxy->appended_headers->pool = vhost->pool;
+                rproxy->appended_headers = header_new(vhost->pool);
             }
             header_add(rproxy->appended_headers, str_key + 7, value);
         }
