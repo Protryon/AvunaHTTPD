@@ -155,6 +155,7 @@ void run_work(struct work_param* param) {
                             read_capacity = 1024;
                         }
                     }
+                    ++read_capacity;
                     read_buf = pmalloc(sub_conn->pool, read_capacity);
                     ssize_t r;
                     while ((r = SSL_read(sub_conn->tls_session, read_buf + read_total, (int) (read_capacity - read_total))) > 0) {
@@ -177,6 +178,7 @@ void run_work(struct work_param* param) {
                 } else {
                     size_t read_capacity = 0;
                     ioctl(sub_conn->fd, FIONREAD, &read_capacity);
+                    ++read_capacity;
                     read_buf = pmalloc(sub_conn->pool, read_capacity);
                     ssize_t r;
                     while ((r = read(sub_conn->fd, read_buf + read_total, read_capacity - read_total)) > 0) {
