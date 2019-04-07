@@ -37,6 +37,8 @@ void queue_block(struct queue* queue);
 
 void* queue_pop(struct queue* queue);
 
+void* queue_index(struct queue* queue, size_t index);
+
 void* queue_maybepop(struct queue* queue);
 
 void* queue_peek(struct queue* queue);

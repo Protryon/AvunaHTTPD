@@ -145,6 +145,25 @@ void* queue_pop(struct queue* queue) {
     return data;
 }
 
+void* queue_index(struct queue* queue, size_t index) {
+    if (queue->size < index) { // assuming atomic access
+        return NULL;
+    }
+    if (queue->multithreaded) {
+        pthread_mutex_lock(&queue->data_mutex);
+    }
+    index += queue->start;
+    size_t rp = queue->capacity > 0 ? queue->capacity : queue->real_capacity;
+    if (queue->start >= rp) {
+        queue->start -= rp;
+    }
+    void* data = queue->data[index];
+    if (queue->multithreaded) {
+        pthread_mutex_unlock(&queue->data_mutex);
+    }
+    return data;
+}
+
 void* queue_maybepop(struct queue* queue) {
     if (queue->multithreaded) {
         pthread_mutex_lock(&queue->data_mutex);
