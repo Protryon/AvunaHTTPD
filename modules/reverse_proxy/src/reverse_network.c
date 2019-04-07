@@ -27,12 +27,12 @@ int handle_http_client_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
         data.size = 0;
         ssize_t total_read = provision->data.stream.read(provision, &data);
         if (total_read == -1) {
-            // backend server failed during stream
+            // backend server failed during stream_id
             pfree(extra->currently_forwarding->pool);
             extra->currently_forwarding = NULL;
             return 0;
         } else if (total_read == 0) {
-            // end of stream
+            // end of stream_id
             queue_pop(extra->forwarding_sessions);
             if (data.size > 0) {
                 pxfer(provision->pool, extra->currently_forwarding->src_conn->pool, data.data);
@@ -42,7 +42,7 @@ int handle_http_client_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
             pfree(extra->currently_forwarding->pool);
             extra->currently_forwarding = NULL;
         } else if (total_read == -2) {
-            // nothing to read, not end of stream
+            // nothing to read, not end of stream_id
         } else {
             pxfer(provision->pool, extra->currently_forwarding->src_conn->pool, data.data);
             buffer_push(&extra->currently_forwarding->src_conn->write_buffer, data.data, data.size);

@@ -22,8 +22,8 @@
 #define BINDING_MODE_HTTPS 2
 // #define BINDING_MODE_ADAPTIVE 3 // not implemented
 #define BINDING_MODE_HTTP11_ONLY 4
-#define BINDING_MODE_HTTP2_ONLY 8
-#define BINDING_MODE_HTTP2_UPGRADABLE 12
+#define BINDING_MODE_HTTP2_UPGRADABLE 8
+#define BINDING_MODE_HTTP2_ONLY 16
 
 struct server_binding {
     struct mempool* pool;

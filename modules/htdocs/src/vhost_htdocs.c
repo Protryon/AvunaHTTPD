@@ -234,11 +234,11 @@ int handle_vhost_htdocs(struct request_session* rs) {
     char* ext = strrchr(htpath, '.');
     char* content_type = NULL;
     if (ext == NULL) {
-        content_type = rs->response->body->content_type = "application/octet-stream";
+        content_type = rs->response->body->content_type = "application/octet-stream_id";
     } else {
         char* mime = getMimeForExt(ext + 1);
         if (mime == NULL) {
-            content_type = rs->response->body->content_type = "application/octet-stream";
+            content_type = rs->response->body->content_type = "application/octet-stream_id";
         } else {
             content_type = rs->response->body->content_type = mime;
         }

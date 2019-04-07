@@ -95,10 +95,10 @@ int fcgi_forward(struct fcgi_stream_data* extra) {
     data.size = 0;
     ssize_t total_read = provision->data.stream.read(provision, &data);
     if (total_read == -1) {
-        // backend server failed during stream
+        // backend server failed during stream_id
         return -1;
     } else if (total_read == 0) {
-        // end of stream
+        // end of stream_id
         if (data.size > 0) {
             pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
             buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
@@ -106,7 +106,7 @@ int fcgi_forward(struct fcgi_stream_data* extra) {
         }
         return 0;
     } else if (total_read == -2) {
-        // nothing to read, not end of stream
+        // nothing to read, not end of stream_id
         return 2;
     } else {
         pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
@@ -438,7 +438,7 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     stream_data->provision = provision;
     provision->pool = provision_pool;
     provision->type = PROVISION_STREAM;
-    provision->content_type = "application/octet-stream";
+    provision->content_type = "application/octet-stream_id";
     provision->extra = stream_data;
     provision->data.stream.read = fcgi_provision_read;
     provision->data.stream.stream_fd = -1;

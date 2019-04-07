@@ -5,7 +5,8 @@
  *      Author: root
  */
 #include "accept.h"
-#include "network.h"
+#include "http_network.h"
+#include "http2_network.h"
 #include "http_pipeline.h"
 #include <avuna/connection.h>
 #include <avuna/tls.h>
@@ -13,6 +14,7 @@
 #include <avuna/globals.h>
 #include <avuna/pmem_hooks.h>
 #include <avuna/module.h>
+#include <avuna/string.h>
 #include <errno.h>
 #include <netinet/tcp.h>
 #include <fcntl.h>
@@ -62,6 +64,38 @@ void conn_disconnect_handler(struct conn* conn) {
     }
 }
 
+int alpn_select_callback (SSL* ssl,
+           const unsigned char** out,
+           unsigned char* outlen,
+           const unsigned char* in,
+           unsigned int inlen,
+           void* arg) {
+    size_t i = 0;
+    const unsigned char* http11 = NULL;
+    while (i < inlen) {
+        uint8_t length = in[i++];
+        if (i + length > inlen) {
+            break;
+        }
+        char protocol[length + 1];
+        memcpy(protocol, in + i, length);
+        protocol[length] = 0;
+        if (str_eq_case(protocol, "h2")) {
+            *out = in + i;
+            *outlen = (unsigned char) (length);
+            return 0;
+        } else if (str_eq_case(protocol, "http/1.1")) {
+            http11 = in + i;
+        }
+        i += length;
+    }
+    if (http11 != NULL) {
+        *out = http11;
+        *outlen = 8;
+    }
+    return 0;
+}
+
 void run_accept(struct accept_param* param) {
     struct mempool* accept_pool = mempool_new();
     struct pollfd spfd;
@@ -72,9 +106,13 @@ void run_accept(struct accept_param* param) {
     if (ssl && param->binding->ssl_cert == NULL) {
         param->binding->ssl_cert = pclaim(param->binding->pool, dummyCert(accept_pool));
     }
+    int http2 = param->binding->mode & BINDING_MODE_HTTP2_ONLY;
     if (ssl) {
         SSL_CTX_set_tlsext_servername_callback(param->binding->ssl_cert->ctx, accept_sni_callback);
         SSL_CTX_set_tlsext_servername_arg(param->binding->ssl_cert->ctx, param);
+        if (http2) {
+            SSL_CTX_set_alpn_select_cb(param->binding->ssl_cert->ctx, alpn_select_callback, NULL);
+        }
     }
     while (1) {
         struct mempool* pool = mempool_new();
@@ -88,12 +126,22 @@ void run_accept(struct accept_param* param) {
         pchild(conn->pool, pool);
         struct sub_conn* sub_conn = pcalloc(pool, sizeof(struct sub_conn));
         sub_conn->pool = pool;
-        sub_conn->read = handle_http_server_read;
+        sub_conn->read = http2 ? handle_http2_server_read : handle_http_server_read;
+        if (http2) {
+            struct http2_server_extra* extra = sub_conn->extra = pcalloc(sub_conn->pool, sizeof(struct http2_server_extra));
+            extra->other_min_next_stream = 3;
+            extra->streams = hashmap_new(32, sub_conn->pool);
+            extra->max_frame_size = 65536;
+            extra->frame_buffer = pmalloc(sub_conn->pool, 65536 + 9);
+            extra->our_next_stream = 2;
+            extra->remote_idle_streams = llist_new(sub_conn->pool);
+        } else {
+            sub_conn->extra = pcalloc(sub_conn->pool, sizeof(struct http_server_extra));
+        }
         sub_conn->conn = conn;
         sub_conn->on_closed = http_on_closed;
-        sub_conn->extra = pcalloc(sub_conn->pool, sizeof(struct http_server_extra));
-        buffer_init(&sub_conn->read_buffer, conn->pool);
-        buffer_init(&sub_conn->write_buffer, conn->pool);
+        buffer_init(&sub_conn->read_buffer, sub_conn->pool);
+        buffer_init(&sub_conn->write_buffer, sub_conn->pool);
         llist_append(conn->sub_conns, sub_conn);
 
         sub_conn->tls = ssl;
@@ -103,9 +151,6 @@ void run_accept(struct accept_param* param) {
             SSL_set_mode(sub_conn->tls_session, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
             SSL_set_accept_state(sub_conn->tls_session);
         }
-
-        //conn->proto = (param->binding->mode & BINDING_MODE_HTTP2_ONLY != 0) &&
-        //              (param->binding->mode & BINDING_MODE_HTTP11_ONLY == 0) ? PROTO_HTTP2 : PROTO_HTTP1;
 
         if (poll(&spfd, 1, -1) < 0) {
             errlog(param->server->logsess, "Error while polling server: %s", strerror(errno));

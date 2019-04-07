@@ -202,10 +202,10 @@ int load_binding(struct config_node* bind_node, struct server_binding* binding) 
     const char* protocol = config_get(bind_node, "protocol");
     if (protocol == NULL || str_eq_case(protocol, "http/1.1")) {
         binding->mode |= BINDING_MODE_HTTP2_UPGRADABLE;
-    } else if (str_eq_case(protocol, "http/2.0")) {
+    } else if (str_eq_case(protocol, "http/2")) {
         binding->mode |= BINDING_MODE_HTTP2_ONLY;
     } else {
-        errlog(delog, "Invalid protocol for binding: %s, %s", bind_node->name, strerror(errno));
+        errlog(delog, "Invalid protocol for binding: %s, %s", bind_node->name, protocol);
         return 1;
     }
 

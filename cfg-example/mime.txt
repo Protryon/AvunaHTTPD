@@ -49,7 +49,7 @@ application/mp21 m21 mp21
 application/mp4 mp4s
 application/msword doc dot
 application/mxf mxf
-application/octet-stream bin dms lrf mar so dist distz pkg bpk dump elc deploy
+application/octet-stream_id bin dms lrf mar so dist distz pkg bpk dump elc deploy
 application/oda oda
 application/oebps-package+xml opf
 application/ogg ogx

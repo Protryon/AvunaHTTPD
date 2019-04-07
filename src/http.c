@@ -43,6 +43,7 @@ int parseRequest(struct request_session* rs, char* data, size_t maxPost) {
     temp_len = strlen(temp) + 1;
     request->http_version = pmalloc(rs->pool, temp_len);
     memcpy(request->http_version, temp, temp_len);
+    printf("version: %s\n", request->http_version);
     temp += temp_len + 1;
     request->headers = header_parse(temp, rs->pool);
     request->body = NULL;

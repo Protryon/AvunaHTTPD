@@ -10,13 +10,19 @@
 
 
 char* header_get(struct headers* headers, char* name) {
-    struct llist* list = hashmap_get(headers->header_map, name);
+    char lower[strlen(name) + 1];
+    memcpy(lower, name, strlen(name) + 1);
+    str_tolower(lower);
+    struct llist* list = hashmap_get(headers->header_map, lower);
     if (list == NULL) return NULL;
     struct header_entry* entry = list->head->data;
     return entry->value;
 }
 
 int header_set(struct headers* headers, char* name, char* value) {
+    char lower[strlen(name) + 1];
+    memcpy(lower, name, strlen(name) + 1);
+    str_tolower(lower);
     struct llist* list = hashmap_get(headers->header_map, name);
     if (list == NULL) return 0;
     struct header_entry* entry = list->head->data;
@@ -26,7 +32,7 @@ int header_set(struct headers* headers, char* name, char* value) {
 
 int header_add(struct headers* headers, char* name, char* value) {
     struct llist* list = hashmap_get(headers->header_map, name);
-    char* new_name = str_dup(name, 0, headers->pool);
+    char* new_name = str_tolower(str_dup(name, 0, headers->pool));
     if (list == NULL) {
         list = llist_new(headers->pool);
         hashmap_put(headers->header_map, new_name, list);

@@ -32,8 +32,8 @@ struct provision_stream {
     int stream_fd;
     void* extra;
     ssize_t known_length;
-    ssize_t (*read)(struct provision* provision, struct provision_data* buffer); // -2 == no data, not broken, -1 = error, 0 = end of stream, > 0 = data returned
-    int delay_header_output; // if true, headers will not be sent until the last moment before stream data is sent.
+    ssize_t (*read)(struct provision* provision, struct provision_data* buffer); // -2 == no data, not broken, -1 = error, 0 = end of stream_id, > 0 = data returned
+    int delay_header_output; // if true, headers will not be sent until the last moment before stream_id data is sent.
     struct timespec delayed_start;
     void (*delay_finish)(struct request_session* rs, struct timespec* ts);
 };

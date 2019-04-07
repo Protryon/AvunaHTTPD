@@ -32,11 +32,11 @@ ssize_t chunked_read(struct provision* provision, struct provision_data* buffer)
             char* post_length = NULL;
             size_t length_int = strtoull(length, &post_length, 10);
             if (post_length == NULL || !str_prefixes(post_length, "\r\n")) {
-                return -2; // stream blocked, not an error
+                return -2; // stream_id blocked, not an error
             }
             size_t read_length = post_length - length + 2; // includes trailing \r\n
             if (length_int == 0) {
-                return 0; // end of stream
+                return 0; // end of stream_id
             }
             buffer_skip(&extra->sub_conn->read_buffer, read_length);
             extra->remaining = length_int;
