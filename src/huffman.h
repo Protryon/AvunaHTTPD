@@ -9,4 +9,6 @@
 
 uint8_t* huffman_decode(struct mempool* pool, uint8_t* input, size_t length, size_t* out_length);
 
+uint8_t* huffman_encode(struct mempool* pool, uint8_t* input, size_t length, size_t* out_length);
+
 #endif //AVUNA_HTTPD_HUFFMAN_H
