@@ -6,6 +6,7 @@
 #include "http_pipeline.h"
 #include "http2_network.h"
 #include <avuna/connection.h>
+#include <avuna/hpack.h>
 #include <avuna/http2.h>
 #include <avuna/http.h>
 #include <avuna/network.h>
@@ -71,6 +72,7 @@ int receive_http2_frame(struct sub_conn* sub_conn, struct frame* frame) {
                 goto ret; // TODO: close
             }
             pxfer(frame->pool, stream->pool, frame->data.headers.data);
+            // struct headers* headers = hpack_decode(extra->hpack_ctx, frame->pool, frame->data.headers.data, frame->data.headers.data_length);
             buffer_push(&stream->header_buffer, frame->data.headers.data, frame->data.headers.data_length);
             if (frame->flags & 0x4) {
                 stream->headers_finished = 1;
@@ -89,6 +91,18 @@ int receive_http2_frame(struct sub_conn* sub_conn, struct frame* frame) {
             for (size_t i = 0; i < frame->data.settings.entry_count; ++i) {
                 switch (frame->data.settings.entries[i].key) {
                     case HTTP2_SETTINGS_HEADER_TABLE_SIZE:;
+                        if (frame->data.settings.entries[i].value > 65536) {
+                            extra->hpack_ctx->real_max_dynamic_size = extra->hpack_ctx->max_dynamic_size = 65536;
+                            struct frame* settings = make_frame(sub_conn, FRAME_SETTINGS_ID);
+                            settings->data.settings.entry_count = 1;
+                            settings->data.settings.entries = pcalloc(frame->pool, 6);
+                            settings->data.settings.entries[0].key = HTTP2_SETTINGS_HEADER_TABLE_SIZE;
+                            settings->data.settings.entries[0].value = 65536;
+                            send_frame(sub_conn, settings);
+                            //TODO: expect ack?
+                        } else {
+                            extra->hpack_ctx->real_max_dynamic_size = extra->hpack_ctx->max_dynamic_size = frame->data.settings.entries[i].value;
+                        }
                     case HTTP2_SETTINGS_ENABLE_PUSH:;
                     case HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS:;
                     case HTTP2_SETTINGS_INITIAL_WINDOW_SIZE:;

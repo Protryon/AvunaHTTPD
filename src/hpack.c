@@ -2,8 +2,8 @@
 // Created by p on 4/6/19.
 //
 
-#include "hpack.h"
 #include "huffman.h"
+#include <avuna/hpack.h>
 #include <avuna/headers.h>
 #include <string.h>
 
@@ -21,7 +21,7 @@ size_t hpack_decode_integer(uint8_t prefix, uint8_t prefix_mask, const uint8_t* 
         bit <<= 7;
         ++(*offset);
     }
-    return ret;
+    return ret + prefix_mask;
 }
 
 char* hpack_decode_string(struct mempool* pool, const uint8_t* input, size_t* offset, size_t length, size_t* out_length) {
@@ -31,8 +31,8 @@ char* hpack_decode_string(struct mempool* pool, const uint8_t* input, size_t* of
     uint8_t prefix = input[*offset];
     ++(*offset);
     int huffman_coded = prefix >> 7;
-    size_t string_length = hpack_decode_integer(prefix >> 1 << 1, 0b1111111, input, offset, length);
-    if (*offset + string_length >= length) {
+    size_t string_length = hpack_decode_integer((uint8_t) (prefix & 0b1111111u), 0b1111111, input, offset, length);
+    if (*offset + string_length > length) {
         return NULL;
     }
     uint8_t* str = pmalloc(pool, string_length + 1);
@@ -181,8 +181,18 @@ struct hpack_ctx* hpack_init(struct mempool* pool, size_t max_dynamic_size) {
     ctx->pool = pool;
     ctx->dynamic_table = queue_new(0, 0, pool);
     ctx->lookup_map = hashmap_new(50, pool);
-    ctx->max_dynamic_size = max_dynamic_size;
+    ctx->max_dynamic_size = ctx->real_max_dynamic_size = max_dynamic_size;
     return ctx;
+}
+
+void hpack_fix(struct hpack_ctx* ctx, size_t extra) {
+    while (ctx->dynamic_size + extra > ctx->max_dynamic_size) {
+        struct hpack_entry* popped = queue_pop(ctx->dynamic_table);
+        if (popped == NULL) {
+            break;
+        }
+        ctx->dynamic_size -= popped->size;
+    }
 }
 
 struct hpack_entry* hpack_lookup(struct hpack_ctx* ctx, size_t index) {
@@ -191,20 +201,15 @@ struct hpack_entry* hpack_lookup(struct hpack_ctx* ctx, size_t index) {
     } else if (index < 62) {
         return &static_entries[index - 1];
     } else {
+        hpack_fix(ctx, 0);
         index -= 62;
         return queue_index(ctx->dynamic_table, index);
     }
 }
 
 void hpack_add_entry(struct hpack_ctx* ctx, struct hpack_entry* entry) {
-    entry->size = strlen(entry->value) + strlen(entry->key) + 32;
-    while (ctx->dynamic_size + entry->size > ctx->max_dynamic_size) {
-        struct hpack_entry* popped = queue_pop(ctx->dynamic_table);
-        if (popped == NULL) {
-            break;
-        }
-        ctx->dynamic_size -= entry->size;
-    }
+    entry->size = (entry->value == NULL ? 0 : strlen(entry->value)) + strlen(entry->key) + 32;
+    hpack_fix(ctx, entry->size);
     ctx->dynamic_size += entry->size;
     queue_push(ctx->dynamic_table, entry);
 }
@@ -214,7 +219,7 @@ struct headers* hpack_decode(struct hpack_ctx* ctx, struct mempool* pool, uint8_
     for (size_t i = 0; i < data_length;) {
         uint8_t octet = data[i++];
         if (octet >> 7) { // 6.1.  Indexed Header Field Representation
-            size_t index = octet << 1 >> 1;
+            size_t index = octet & 0b1111111lu;
             index = hpack_decode_integer((uint8_t) index, 0b1111111, data, &i, data_length);
             if (index == 0) {
                 return NULL;
@@ -225,7 +230,7 @@ struct headers* hpack_decode(struct hpack_ctx* ctx, struct mempool* pool, uint8_
             }
             header_add(headers, entry->key, entry->value == NULL ? "" : entry->value);
         } else if (octet >> 6 == 0b01) { // 6.2.1.  Literal Header Field with Incremental Indexing
-            size_t index = octet ^ (uint8_t) 0b01;
+            size_t index = octet & 0b111111lu;
             index = hpack_decode_integer((uint8_t) index, 0b111111, data, &i, data_length);
             if (index == 0) {
                 size_t name_length = 0;
@@ -251,8 +256,11 @@ struct headers* hpack_decode(struct hpack_ctx* ctx, struct mempool* pool, uint8_
                 header_add(headers, entry->key, value);
             }
         } else if (octet >> 5 == 0b001) { // 6.3.  Dynamic Table Size Update
-            size_t new_size = octet << 3 >> 3;
+            size_t new_size = octet & 0b11111lu;
             new_size = hpack_decode_integer((uint8_t) new_size, 0b11111, data, &i, data_length);
+            if (new_size > ctx->real_max_dynamic_size) {
+                return NULL;
+            }
             ctx->max_dynamic_size = new_size;
         } else if (octet >> 4 == 0b0001 || octet >> 4 == 0) { // 6.2.3.  Literal Header Field Never Indexed, 6.2.2.  Literal Header Field without Indexing
             size_t index = octet & (uint8_t) 0b1111;

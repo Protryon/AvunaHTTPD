@@ -5,6 +5,7 @@
 #ifndef AVUNA_HTTPD_HTTP2_NETWORK_H
 #define AVUNA_HTTPD_HTTP2_NETWORK_H
 
+#include <avuna/hpack.h>
 #include <avuna/http.h>
 #include <avuna/connection.h>
 #include <stdint.h>
@@ -17,6 +18,7 @@ struct http2_server_extra {
     uint32_t our_next_stream;
     uint32_t other_min_next_stream;
     int has_received_preface;
+    struct hpack_ctx* hpack_ctx;
 };
 
 int handle_http2_server_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len);

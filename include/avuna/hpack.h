@@ -22,6 +22,7 @@ struct hpack_ctx {
     struct hashmap* lookup_map;
     struct queue* dynamic_table;
     size_t dynamic_size;
+    size_t real_max_dynamic_size;
     size_t max_dynamic_size;
 };
 

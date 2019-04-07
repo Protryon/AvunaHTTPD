@@ -44,7 +44,7 @@ struct frame* parse_frame(struct mempool* pool, uint8_t* data, size_t length, ui
             frame->data.data.data_length = length - padding - (is_padded ? 1 : 0);
             ASSERT_STRONG_LENGTH(frame->data.data.data_length);
             frame->data.data.data = pmalloc(pool, frame->data.data.data_length);
-            memcpy(data + i, frame->data.data.data, frame->data.data.data_length);
+            memcpy(frame->data.data.data, data + i, frame->data.data.data_length);
             break;
         case FRAME_HEADERS_ID:;
             is_padded = frame->flags & 0x08;
@@ -64,7 +64,7 @@ struct frame* parse_frame(struct mempool* pool, uint8_t* data, size_t length, ui
             frame->data.headers.data_length = length - padding - (is_padded ? 1 : 0) - (is_priority ? 5 : 0);
             ASSERT_STRONG_LENGTH(frame->data.headers.data_length);
             frame->data.headers.data = pmalloc(pool, frame->data.headers.data_length);
-            memcpy(data + i, frame->data.headers.data, frame->data.headers.data_length);
+            memcpy(frame->data.headers.data, data + i, frame->data.headers.data_length);
             break;
         case FRAME_PRIORITY_ID:;
             ASSERT_STRONG_LENGTH(5);
@@ -105,7 +105,7 @@ struct frame* parse_frame(struct mempool* pool, uint8_t* data, size_t length, ui
             frame->data.push_promise.data_length = length - padding - (is_padded ? 1 : 0) - 4;
             ASSERT_STRONG_LENGTH(frame->data.push_promise.data_length);
             frame->data.push_promise.data = pmalloc(pool, frame->data.push_promise.data_length);
-            memcpy(data + i, frame->data.push_promise.data, frame->data.push_promise.data_length);
+            memcpy(frame->data.push_promise.data, data + i, frame->data.push_promise.data_length);
             break;
         case FRAME_PING_ID:;
             ASSERT_STRONG_LENGTH(8);
@@ -131,7 +131,7 @@ struct frame* parse_frame(struct mempool* pool, uint8_t* data, size_t length, ui
             frame->data.continuation.data_length = length;
             ASSERT_STRONG_LENGTH(frame->data.continuation.data_length);
             frame->data.continuation.data = pmalloc(pool, frame->data.continuation.data_length);
-            memcpy(data + i, frame->data.continuation.data, frame->data.continuation.data_length);
+            memcpy(frame->data.continuation.data, data + i, frame->data.continuation.data_length);
             break;
         default:;
             *error_code = HTTP2_PROTOCOL_ERROR;

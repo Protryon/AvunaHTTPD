@@ -8,6 +8,7 @@
 #include "http_network.h"
 #include "http2_network.h"
 #include "http_pipeline.h"
+#include <avuna/hpack.h>
 #include <avuna/connection.h>
 #include <avuna/tls.h>
 #include <avuna/vhost.h>
@@ -135,6 +136,7 @@ void run_accept(struct accept_param* param) {
             extra->frame_buffer = pmalloc(sub_conn->pool, 65536 + 9);
             extra->our_next_stream = 2;
             extra->remote_idle_streams = llist_new(sub_conn->pool);
+            extra->hpack_ctx = hpack_init(sub_conn->pool, 4096);
         } else {
             sub_conn->extra = pcalloc(sub_conn->pool, sizeof(struct http_server_extra));
         }
