@@ -9,7 +9,7 @@
 #include <avuna/mime.h>
 #include <avuna/provider.h>
 #include <avuna/pmem_hooks.h>
-#include <avuna/util.h>
+#include <avuna/http_util.h>
 #include <avuna/module.h>
 #include <avuna/globals.h>
 #include <errno.h>

@@ -13,8 +13,8 @@
 #include <avuna/log.h>
 #include <avuna/http.h>
 #include <avuna/server.h>
+#include <avuna/buffer.h>
 #include <openssl/ssl.h>
-#include "buffer.h"
 #include <sys/socket.h>
 #include <openssl/ssl.h>
 #include <openssl/md5.h>

@@ -5,7 +5,7 @@
 #include "http_pipeline.h"
 #include "http2_network.h"
 #include <avuna/string.h>
-#include <avuna/util.h>
+#include <avuna/http_util.h>
 #include <avuna/version.h>
 #include <avuna/mime.h>
 #include <avuna/pmem_hooks.h>

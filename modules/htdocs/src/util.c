@@ -9,7 +9,7 @@
 #include <avuna/http.h>
 #include <avuna/provider.h>
 #include <avuna/globals.h>
-#include <avuna/util.h>
+#include <avuna/http_util.h>
 #include <stdlib.h>
 #include <zlib.h>
 

@@ -13,6 +13,7 @@
 #include <avuna/version.h>
 #include <avuna/llist.h>
 #include <avuna/util.h>
+#include <avuna/http_util.h>
 #include <avuna/globals.h>
 #include <avuna/mime.h>
 #include <avuna/tls.h>

@@ -4,7 +4,7 @@
 
 #include "http_network.h"
 #include "http_pipeline.h"
-#include <avuna/util.h>
+#include <avuna/http_util.h>
 #include <avuna/vhost.h>
 #include <avuna/http.h>
 #include <avuna/pmem.h>

@@ -10,7 +10,7 @@
 #include <avuna/pmem.h>
 #include <avuna/string.h>
 #include <avuna/globals.h>
-#include <avuna/util.h>
+#include <avuna/http_util.h>
 #include <avuna/version.h>
 #include <avuna/pmem_hooks.h>
 #include <mod_htdocs/util.h>

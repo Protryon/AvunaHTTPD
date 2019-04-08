@@ -7,7 +7,7 @@
 #include <avuna/http.h>
 #include <avuna/vhost.h>
 #include <avuna/pmem_hooks.h>
-#include <avuna/util.h>
+#include <avuna/http_util.h>
 #include <avuna/module.h>
 #include <avuna/string.h>
 #include <avuna/globals.h>

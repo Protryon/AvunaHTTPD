@@ -5,7 +5,8 @@
 #include "huffman.h"
 #include <avuna/hpack.h>
 #include <avuna/headers.h>
-#include <string.h>
+#include <avuna/globals.h>
+#include <avuna/string.h>
 
 // https://tools.ietf.org/html/rfc7541
 
@@ -171,6 +172,12 @@ void hpack_init_static_entries() {
     static_entries[x++].value = NULL;
     static_entries[x].key = "www-authenticate";
     static_entries[x++].value = NULL;
+    // no duplicates in static_entries, so no sublists
+    static_entry_map = hashmap_new(64, global_pool);
+    for (size_t i = 0; i < x; ++i) {
+        struct hpack_entry* entry = &static_entries[i];
+        hashmap_put(static_entry_map, entry->key, entry->value == NULL ? "" : entry->value);
+    }
 }
 
 struct hpack_ctx* hpack_init(struct mempool* pool, size_t max_dynamic_size) {
@@ -211,6 +218,7 @@ void hpack_add_entry(struct hpack_ctx* ctx, struct hpack_entry* entry) {
     entry->size = (entry->value == NULL ? 0 : strlen(entry->value)) + strlen(entry->key) + 32;
     hpack_fix(ctx, entry->size);
     ctx->dynamic_size += entry->size;
+    entry->push_index = ctx->push_index++;
     queue_push(ctx->dynamic_table, entry);
 }
 
@@ -285,5 +293,37 @@ struct headers* hpack_decode(struct hpack_ctx* ctx, struct mempool* pool, uint8_
         }
     }
     return headers;
+}
+
+uint8_t* hpack_encode(struct hpack_ctx* ctx, struct mempool* pool, struct headers* headers, size_t* out_length) {
+    uint8_t* out = pmalloc(pool, 1024);
+    size_t out_cap = 1024;
+    size_t out_i = 0;
+    ITER_LLIST(headers->header_list, value) {
+        struct header_entry* entry = value;
+        char* static_value = hashmap_get(static_entry_map, entry->name);
+        if (static_value == NULL) {
+            struct llist* entries = hashmap_get(ctx->lookup_map, entry->name);
+            if (entries == NULL) {
+                // 6.2.1
+            } else if (entries->size > 5) { // optimize magic number, check lower numbers?
+                // 6.2.2
+            } else {
+                ITER_LLIST(entries, entry_value) {
+                    struct hpack_entry* hpack_entry = entry_value;
+                    if (str_eq_case(hpack_entry->value, entry->value)) {
+
+                    }
+                    ITER_LLIST_END();
+                }
+            }
+        } else if (static_value[0] == 0) {
+            // 6.2.2
+            //TODO: maybe 6.2.1 if dynamic has a better entry
+        } else {
+            // 6.1
+        }
+        ITER_LLIST_END();
+    }
 }
 

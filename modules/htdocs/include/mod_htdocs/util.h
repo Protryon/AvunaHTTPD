@@ -17,6 +17,4 @@ int check_cache(struct request_session* rs);
 
 void check_client_cache(struct request_session* rs);
 
-char* config_get_default(struct config_node* node, char* key, char* def);
-
 #endif //AVUNA_HTTPD_UTIL_H

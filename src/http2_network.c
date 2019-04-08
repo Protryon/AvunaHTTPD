@@ -7,7 +7,7 @@
 #include <avuna/connection.h>
 #include <avuna/http2.h>
 #include <avuna/buffer.h>
-#include <avuna/util.h>
+#include <avuna/http_util.h>
 #include <stdint.h>
 
 const uint8_t* preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
