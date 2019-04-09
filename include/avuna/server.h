@@ -37,7 +37,6 @@ struct server_binding {
     uint32_t mode;
     struct cert* ssl_cert;
     size_t conn_limit;
-    //todo: ssl
 };
 
 struct server_info {
