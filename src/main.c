@@ -559,7 +559,7 @@ int main(int argc, char* argv[]) {
         info->bindings = list_new(8, info->pool);
         info->vhosts = list_new(16, info->pool);
         info->prepared_connections = queue_new(0, 1, info->pool);
-        list_add(server_infos, info);
+        list_append(server_infos, info);
         const char* bindings = config_get(serv, "bindings");
         struct list* binding_names = list_new(8, info->pool);
         char bindings_dup[strlen(bindings) + 1];
@@ -573,7 +573,7 @@ int main(int argc, char* argv[]) {
                 errlog(delog, "Invalid binding name for server: %s, %s", serv->name, name_trimmed);
                 continue;
             }
-            list_add(info->bindings, data);
+            list_append(info->bindings, data);
         }
 
         const char* vhosts = config_get(serv, "vhosts");
@@ -589,7 +589,7 @@ int main(int argc, char* argv[]) {
                 errlog(delog, "Invalid vhost name for server: %s, %s", serv->name, name_trimmed);
                 continue;
             }
-            list_add(info->vhosts, data);
+            list_append(info->vhosts, data);
         }
 
         const char* tcc = config_get(serv, "threads");
@@ -662,7 +662,7 @@ int main(int argc, char* argv[]) {
                 errlog(delog, "Error creating work thread: pthread errno = %i.", pthread_err);
                 continue;
             }
-            list_add(works, param);
+            list_append(works, param);
         }
 
         struct wake_thread_arg* wt_arg = pmalloc(server->pool, sizeof(struct wake_thread_arg));

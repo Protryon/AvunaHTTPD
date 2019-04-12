@@ -7,6 +7,7 @@
 #include <avuna/vhost.h>
 #include <avuna/string.h>
 #include <avuna/module.h>
+#include <avuna/http_util.h>
 
 int handle_vhost_mount(struct request_session* rs) {
     struct vhost* vhost = rs->vhost;
@@ -48,7 +49,7 @@ int mount_parse_config(struct vhost* vhost, struct config_node* node) {
             struct mountpoint* point = pmalloc(vhost->pool, sizeof(struct mountpoint));
             point->path = str_key;
             point->vhost = value;
-            list_add(mount->mounts, point);
+            list_append(mount->mounts, point);
         }
         ITER_MAP_END();
     }

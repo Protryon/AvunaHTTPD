@@ -43,7 +43,7 @@ void cache_add(struct cache* cache, struct scache* scache) {
         local_list = list_new(8, cache->pool);
         hashmap_put(cache->entries, scache->request_path, local_list);
     }
-    list_add(local_list, scache);
+    list_append(local_list, scache);
     pthread_rwlock_unlock(&cache->scachelock);
 }
 
