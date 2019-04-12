@@ -8,7 +8,7 @@
 #ifndef VERSION_H_
 #define VERSION_H_
 
-#define VERSION "2.0.0"
+#define VERSION "3.0.0"
 #define DAEMON_NAME "HTTPD"
 
 #endif /* VERSION_H_ */
