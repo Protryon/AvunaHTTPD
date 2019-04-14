@@ -209,9 +209,9 @@ int handle_http_client_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
                     return 1;
                 }
                 if (rs->response->body != NULL) {
-                    rs->response->body->content_type = (char*) header_get(rs->response->headers, "Content-Type");
+                    rs->response->body->content_type = header_get(rs->response->headers, "Content-Type");
                 }
-                send_request_session(rs, &stt);
+                send_request_session_http11(rs, &stt);
                 if (rs->response->body != NULL) {
                     if (rs->response->body->type == PROVISION_DATA) {
                         pxfer(rs->response->body->pool, sub_conn->pool, rs->response->body->data.data.data);

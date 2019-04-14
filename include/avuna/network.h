@@ -8,6 +8,6 @@
 #include <avuna/http.h>
 #include <time.h>
 
-void send_request_session(struct request_session* rs, struct timespec* start);
+void send_request_session_http11(struct request_session* rs, struct timespec* start);
 
 #endif //AVUNA_HTTPD_NETWORK_H

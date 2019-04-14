@@ -15,6 +15,8 @@ ssize_t raw_stream_read(struct provision* provision, struct provision_data* buff
     return buffer->size = (size_t) read(provision->data.stream.stream_fd, buffer->data, (size_t) length);
 }
 
+//TODO: subconns for raw_stream!
+
 ssize_t chunked_read(struct provision* provision, struct provision_data* buffer) {
     struct chunked_stream_extra* extra = provision->extra;
     buffer->size = extra->sub_conn->read_buffer.size + 128;

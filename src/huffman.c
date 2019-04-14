@@ -1559,7 +1559,7 @@ uint16_t huffman_decode_char(uint32_t data) {
 uint8_t* huffman_decode(struct mempool* pool, uint8_t* input, size_t length, size_t* out_length) {
     size_t index = 0;
     uint8_t bit_index = 0;
-    uint8_t* out = pmalloc(pool, length + 1);
+    uint8_t* out = pmalloc(pool, length * 2 + 1);
     size_t out_cap = length;
     size_t out_i = 0;
     while (index < length) {
@@ -1578,7 +1578,7 @@ uint8_t* huffman_decode(struct mempool* pool, uint8_t* input, size_t length, siz
             index_used += bit_index / 8;
             bit_index = (uint8_t) (bit_index % 8);
         }
-        if (index + index_used >= length) {
+        if (index + index_used > length || (index + index_used == length && bit_index > 0)) {
             break;
         }
         index += index_used;
@@ -1604,26 +1604,32 @@ uint8_t* huffman_encode(struct mempool* pool, uint8_t* input, size_t length, siz
         size_t encoded_width = bit_widths[c];
         size_t encoded_bytes = encoded_width / 8;
         size_t encoded_bits = encoded_width % 8;
-        size_t encoded_bytes_zealous = encoded_bytes + (encoded_bits > 0 ? 1 : 0);
-        if (out_i + encoded_bytes_zealous > out_cap) {
+        if (out_i + 5 > out_cap) {
             out_cap *= 2;
             out = prealloc(pool, out, out_cap + 1);
         }
-        uint64_t encoded_adjusted = encoded;
+        uint64_t encoded_adjusted = 0;
         if (bit_index > 0) {
-            encoded_adjusted >>= bit_index;
-            encoded_adjusted |= ((uint8_t) (((uint8_t) out[out_i]) >> (8 - bit_index)) << (8 - bit_index));
+            memcpy(((uint8_t*) &encoded_adjusted) + 4, out + out_i, 1);
+            encoded_adjusted |= (uint64_t) encoded << (40 - encoded_width - bit_index);
+        } else {
+            encoded_adjusted = (uint64_t) encoded << (40 - encoded_width);
         }
-        memcpy(out + out_i, &encoded, encoded_bytes_zealous);
+        out[out_i + 4] = (uint8_t) (encoded_adjusted & 0xFF);
+        out[out_i + 3] = (uint8_t) ((encoded_adjusted >> 8) & 0xFF);
+        out[out_i + 2] = (uint8_t) ((encoded_adjusted >> 16) & 0xFF);
+        out[out_i + 1] = (uint8_t) ((encoded_adjusted >> 24) & 0xFF);
+        out[out_i] = (uint8_t) ((encoded_adjusted >> 32) & 0xFF);
         out_i += encoded_bytes;
         bit_index += encoded_bits;
         if (bit_index >= 8) {
-            bit_index = 0;
+            out_i += bit_index / 8;
+            bit_index %= 8;
         }
     }
     static uint8_t all_bits = (uint8_t) -1;
     if (bit_index > 0) {
-        out[out_i] |= (uint8_t) (all_bits >> bit_index);
+        out[out_i++] |= (uint8_t) (all_bits >> bit_index);
     }
     *out_length = out_i;
     return out;

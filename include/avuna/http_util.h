@@ -5,8 +5,8 @@
  *      Author: root
  */
 
-#ifndef UTIL_H_
-#define UTIL_H_
+#ifndef HTTP_UTIL_H_
+#define HTTP_UTIL_H_
 
 #include <avuna/pmem.h>
 #include <avuna/http.h>
@@ -19,4 +19,4 @@ void generateBaseErrorPage(struct request_session* rs, const char* msg);
 
 char* config_get_default(struct config_node* node, char* key, char* def);
 
-#endif /* UTIL_H_ */
+#endif /* HTTP_UTIL_H_ */

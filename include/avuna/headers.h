@@ -29,6 +29,10 @@ int header_set(struct headers* headers, char* name, char* value);
 
 int header_add(struct headers* headers, char* name, char* value);
 
+int header_prepend(struct headers* headers, char* name, char* value);
+
+void header_del(struct headers* headers, char* name);
+
 int header_tryadd(struct headers* headers, char* name, char* value);
 
 int header_setoradd(struct headers* headers, char* name, char* value);

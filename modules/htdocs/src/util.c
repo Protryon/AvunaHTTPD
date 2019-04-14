@@ -18,7 +18,7 @@ void generateDefaultErrorPage(struct request_session* rs, const char* msg) {
     if (rs->vhost == NULL) {
         return;
     }
-    char* page = hashmap_getptr(HTBASE(rs->vhost)->error_pages, (void*) strtoul(rs->response->code, NULL, 10));
+    char* page = hashmap_getint(HTBASE(rs->vhost)->error_pages, strtoul(rs->response->code, NULL, 10));
     if (page != NULL) {
         header_add(rs->response->headers, "Location", page);
     }

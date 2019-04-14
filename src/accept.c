@@ -132,13 +132,17 @@ void run_accept(struct accept_param* param) {
             struct http2_server_extra* extra = sub_conn->extra = pcalloc(sub_conn->pool, sizeof(struct http2_server_extra));
             extra->other_min_next_stream = 3;
             extra->streams = hashmap_new(32, sub_conn->pool);
-            extra->max_frame_size = 65536;
+            extra->our_max_frame_size = 65536;
+            extra->other_max_frame_size = 65536;
             extra->frame_buffer = pmalloc(sub_conn->pool, 65536 + 9);
             extra->our_next_stream = 2;
             extra->remote_idle_streams = llist_new(sub_conn->pool);
-            extra->hpack_ctx = hpack_init(sub_conn->pool, 4096);
+            extra->send_hpack_ctx = hpack_init(sub_conn->pool, 4096);
+            extra->recv_hpack_ctx = hpack_init(sub_conn->pool, 4096);
+            sub_conn->notifier = http2_stream_notify;
         } else {
             sub_conn->extra = pcalloc(sub_conn->pool, sizeof(struct http_server_extra));
+            sub_conn->notifier = http_stream_notify;
         }
         sub_conn->conn = conn;
         sub_conn->on_closed = http_on_closed;

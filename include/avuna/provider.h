@@ -33,6 +33,7 @@ struct provision_stream {
     void* extra;
     ssize_t known_length;
     ssize_t (*read)(struct provision* provision, struct provision_data* buffer); // -2 == no data, not broken, -1 = error, 0 = end of stream_id, > 0 = data returned
+    int (*notify)(struct request_session* rs); // called by a provision's resource (say a sub_conn) to notify the requester that data is available to read (0 = nop, else = kill provider). if NULL, stream is an intermediary ONLY
     int delay_header_output; // if true, headers will not be sent until the last moment before stream_id data is sent.
     struct timespec delayed_start;
     void (*delay_finish)(struct request_session* rs, struct timespec* ts);

@@ -153,5 +153,6 @@ int init_gzip_stream(struct request_session* rs, struct provision* parent, struc
     }
     provision->data.stream.extra = data;
     provision->data.stream.read = gzip_stream_read;
+    provision->data.stream.notify = NULL;
     return 0;
 }

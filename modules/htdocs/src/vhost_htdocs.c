@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <avuna/util.h>
 
 
 int handle_vhost_htdocs(struct request_session* rs) {
@@ -315,6 +316,7 @@ int handle_vhost_htdocs(struct request_session* rs) {
             rs->response->body->type = PROVISION_STREAM;
             rs->response->body->data.stream.stream_fd = ffd;
             rs->response->body->data.stream.read = raw_stream_read;
+            rs->response->body->data.stream.notify = rs->src_conn->notifier;
             rs->response->body->data.stream.known_length = len;
         }
     }
@@ -487,7 +489,7 @@ int htdocs_parse_config(struct vhost* vhost, struct config_node* node) {
                 errlog(delog, "Invalid error page specifier at vhost: %s", node->name);
                 continue;
             }
-            hashmap_putptr(htdocs->base.error_pages, (void*) strtoul(en, NULL, 10), value);
+            hashmap_putint(htdocs->base.error_pages, strtoul(en, NULL, 10), value);
         }
         ITER_MAP_END();
     }

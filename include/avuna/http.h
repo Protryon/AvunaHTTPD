@@ -43,6 +43,7 @@ struct request_session {
     char* request_extra_path;
     struct vhost* vhost;
     struct mempool* pool;
+    void* extra;
 };
 
 

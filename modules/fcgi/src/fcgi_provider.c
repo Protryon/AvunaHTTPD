@@ -13,6 +13,7 @@
 #include <avuna/http_util.h>
 #include <avuna/version.h>
 #include <avuna/pmem_hooks.h>
+#include <avuna/util.h>
 #include <mod_htdocs/util.h>
 #include <mod_htdocs/vhost_htdocs.h>
 #include <netinet/in.h>
@@ -88,34 +89,6 @@ struct fcgi_stream_data {
     int complete;
 };
 
-int fcgi_forward(struct fcgi_stream_data* extra) {
-    struct provision* provision = extra->rs->response->body;
-    struct provision_data data;
-    data.data = NULL;
-    data.size = 0;
-    ssize_t total_read = provision->data.stream.read(provision, &data);
-    if (total_read == -1) {
-        // backend server failed during stream_id
-        return -1;
-    } else if (total_read == 0) {
-        // end of stream_id
-        if (data.size > 0) {
-            pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
-            buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
-            trigger_write(extra->rs->src_conn);
-        }
-        return 0;
-    } else if (total_read == -2) {
-        // nothing to read, not end of stream_id
-        return 2;
-    } else {
-        pxfer(provision->pool, extra->rs->src_conn->pool, data.data);
-        buffer_push(&extra->rs->src_conn->write_buffer, data.data, data.size);
-        trigger_write(extra->rs->src_conn);
-    }
-    return 1;
-}
-
 int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len) {
     buffer_push(&sub_conn->read_buffer, read_buf, read_buf_len);
     struct fcgi_stream_data* extra = sub_conn->extra;
@@ -125,7 +98,7 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
     while (frame.type != FCGI_END_REQUEST) {
         ssize_t status = fcgi_readFrame(&sub_conn->read_buffer, &frame, sub_conn->pool);
         if (status == -2) {
-            if (output_ready && fcgi_forward(extra) <= 0) {
+            if (output_ready && extra->provision->data.stream.notify(extra->rs)) {
                 return 1;
             }
             return 0;
@@ -208,13 +181,13 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
     }
 
 
-    if (output_ready && fcgi_forward(extra) <= 0) {
+    if (output_ready && extra->provision->data.stream.notify(extra->rs)) {
         return 1;
     }
 
     extra->complete = 1;
 
-    while (fcgi_forward(extra) == 1) { }
+    while (!extra->provision->data.stream.notify(extra->rs)) { }
 
     return 1;
 }
@@ -287,7 +260,6 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     sub_conn->conn = rs->conn;
     sub_conn->pool = sub_pool;
     phook(sub_conn->pool, close_hook, (void*) fcgi_fd);
-    pchild(rs->pool, sub_conn->pool);
     buffer_init(&sub_conn->read_buffer, sub_conn->pool);
     buffer_init(&sub_conn->write_buffer, sub_conn->pool);
     sub_conn->fd = fcgi_fd;
@@ -441,6 +413,7 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     provision->content_type = "application/octet-stream_id";
     provision->extra = stream_data;
     provision->data.stream.read = fcgi_provision_read;
+    provision->data.stream.notify = rs->src_conn->notifier;
     provision->data.stream.stream_fd = -1;
     provision->requested_vhost_action = VHOST_ACTION_NO_CONTENT_UPDATE;
     provision->data.stream.delay_header_output = 1;

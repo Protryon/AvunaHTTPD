@@ -45,6 +45,39 @@ int header_add(struct headers* headers, char* name, char* value) {
     return 1;
 }
 
+int header_prepend(struct headers* headers, char* name, char* value) {
+    struct llist* list = hashmap_get(headers->header_map, name);
+    char* new_name = str_tolower(str_dup(name, 0, headers->pool));
+    if (list == NULL) {
+        list = llist_new(headers->pool);
+        hashmap_put(headers->header_map, new_name, list);
+    }
+    struct header_entry* entry = pcalloc(headers->pool, sizeof(struct header_entry));
+    entry->name = new_name;
+    entry->value = str_dup(value, 0, headers->pool);
+    entry->map_node = llist_prepend(list, entry);
+    entry->node = llist_prepend(headers->header_list, entry);
+    return 1;
+}
+
+
+void header_del(struct headers* headers, char* name) {
+    char lower[strlen(name) + 1];
+    memcpy(lower, name, strlen(name) + 1);
+    str_tolower(lower);
+    struct llist* list = hashmap_get(headers->header_map, lower);
+    if (list == NULL) {
+        return;
+    }
+    ITER_LLIST(list, value) {
+        struct header_entry* entry = value;
+        llist_del(headers->header_list, entry->node);
+        ITER_LLIST_END();
+    }
+    hashmap_put(headers->header_map, lower, NULL);
+}
+
+
 int header_tryadd(struct headers* headers, char* name, char* value) {
     if (header_get(headers, name) != NULL) return 1;
     return header_add(headers, name, value);

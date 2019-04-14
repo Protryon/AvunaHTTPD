@@ -28,6 +28,9 @@ void fcgi_writeParam(struct buffer* buffer, uint16_t reqid, const char* name, co
     struct fcgi_frame frame;
     frame.type = FCGI_PARAMS;
     frame.request_id = reqid;
+    if (value == NULL) {
+        value = "";
+    }
     size_t name_len = strlen(name);
     size_t value_len = strlen(value);
     int large_name = name_len > 127;

@@ -75,7 +75,7 @@ struct frame_settings {
     struct {
         uint16_t key;
         uint32_t value;
-    }* __attribute__((packed)) entries;
+    } __attribute__((packed))* entries;
 };
 
 struct frame_push_promise {

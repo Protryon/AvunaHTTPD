@@ -150,7 +150,8 @@ int serialize_frame(struct frame* frame, struct buffer* buffer, uint8_t padding)
     uint8_t* header = pcalloc(buffer->pool, 32);
     header[3] = frame->type;
     header[4] = frame->flags;
-    memcpy(header + 5, &frame->stream_id, 4);
+    uint32_t stream_id = htonl(frame->stream_id);
+    memcpy(header + 5, &stream_id, 4);
     int is_padded = 0, is_priority = 0;
     size_t i = 9;
     switch (frame->type) {
@@ -173,7 +174,7 @@ int serialize_frame(struct frame* frame, struct buffer* buffer, uint8_t padding)
             }
             is_priority = frame->flags & 0x20;
             if (is_priority) {
-                uint32_t total_stream = frame->data.headers.stream_dependency | ((uint32_t) frame->data.headers.exclusive << 31);
+                uint32_t total_stream = htonl(frame->data.headers.stream_dependency | ((uint32_t) frame->data.headers.exclusive << 31));
                 memcpy(header + i, &total_stream, 4);
                 i += 4;
                 header[i++] = frame->data.headers.weight;
@@ -186,7 +187,7 @@ int serialize_frame(struct frame* frame, struct buffer* buffer, uint8_t padding)
             }
             break;
         case FRAME_PRIORITY_ID:;
-            uint32_t total_stream = frame->data.priority.stream_dependency | ((uint32_t) frame->data.priority.exclusive << 31);
+            uint32_t total_stream = htonl(frame->data.priority.stream_dependency | ((uint32_t) frame->data.priority.exclusive << 31));
             memcpy(header + i, &total_stream, 4);
             i += 4;
             header[i++] = frame->data.priority.weight;
@@ -194,7 +195,8 @@ int serialize_frame(struct frame* frame, struct buffer* buffer, uint8_t padding)
             buffer_push(buffer, header, i);
             break;
         case FRAME_RST_STREAM_ID:;
-            memcpy(header + i, &frame->data.rst_stream.error_code, 4);
+            uint32_t error_code = htonl(frame->data.rst_stream.error_code);
+            memcpy(header + i, &error_code, 4);
             i += 4;
             SET_LENGTH(i);
             buffer_push(buffer, header, i);
@@ -203,7 +205,15 @@ int serialize_frame(struct frame* frame, struct buffer* buffer, uint8_t padding)
             SET_LENGTH(i + frame->data.settings.entry_count * 6);
             buffer_push(buffer, header, i);
             if (frame->data.settings.entry_count > 0) {
-                buffer_push(buffer, frame->data.settings.entries, frame->data.settings.entry_count * 6);
+                struct {
+                    uint16_t key;
+                    uint32_t value;
+                } __attribute__((packed))* out = pmalloc(buffer->pool, frame->data.settings.entry_count * 6);
+                for (size_t x = 0; x < frame->data.settings.entry_count; ++x) {
+                    out[x].key = htons(frame->data.settings.entries[x].key);
+                    out[x].value = htonl(frame->data.settings.entries[x].value);
+                }
+                buffer_push(buffer, out, frame->data.settings.entry_count * 6);
             }
             break;
         case FRAME_PUSH_PROMISE_ID:;
@@ -211,7 +221,8 @@ int serialize_frame(struct frame* frame, struct buffer* buffer, uint8_t padding)
             if (is_padded) {
                 header[i++] = padding;
             }
-            memcpy(header + i, &frame->data.push_promise.stream_id, 4);
+            uint32_t push_stream_id = htonl(frame->data.push_promise.stream_id);
+            memcpy(header + i, &push_stream_id, 4);
             i += 4;
             SET_LENGTH(i + padding + frame->data.push_promise.data_length);
             buffer_push(buffer, header, i);
@@ -227,16 +238,19 @@ int serialize_frame(struct frame* frame, struct buffer* buffer, uint8_t padding)
             buffer_push(buffer, header, i);
             break;
         case FRAME_GOAWAY_ID:;
-            memcpy(header + i, &frame->data.goaway.last_stream_id, 4);
+            uint32_t last_stream_id = htonl(frame->data.goaway.last_stream_id);
+            memcpy(header + i, &last_stream_id, 4);
             i += 4;
-            memcpy(header + i, &frame->data.goaway.error_code, 4);
+            uint32_t error_code2 = htonl(frame->data.goaway.error_code);
+            memcpy(header + i, &error_code2, 4);
             i += 4;
             // debug data ignored
             SET_LENGTH(i);
             buffer_push(buffer, header, i);
             break;
         case FRAME_WINDOW_UPDATE_ID:;
-            memcpy(header + i, &frame->data.window_update.increment, 4);
+            uint32_t increment = htonl(frame->data.window_update.increment);
+            memcpy(header + i, &increment, 4);
             i += 4;
             SET_LENGTH(i);
             buffer_push(buffer, header, i);

@@ -51,5 +51,6 @@ int init_chunked_stream(struct request_session* rs, struct provision* parent, st
     provision->data.stream.known_length = -1;
     provision->data.stream.extra = data;
     provision->data.stream.read = chunked_stream_read;
+    provision->data.stream.notify = NULL;
     return 0;
 }

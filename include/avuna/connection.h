@@ -37,6 +37,7 @@ struct sub_conn {
     void (*on_closed)(struct sub_conn* sub_conn);
     void* extra;
     int safe_close; // to allow closing when there might be pending events
+    int (*notifier)(struct request_session* rs); // used for streams
 };
 
 struct connection_manager;

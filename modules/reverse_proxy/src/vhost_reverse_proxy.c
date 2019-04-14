@@ -231,7 +231,7 @@ int rproxy_parse_config(struct vhost* vhost, struct config_node* node) {
                 errlog(delog, "Invalid error page specifier at vhost: %s", node->name);
                 continue;
             }
-            hashmap_putptr(rproxy->base.error_pages, (void*) strtoul(en, NULL, 10), value);
+            hashmap_putint(rproxy->base.error_pages, strtoul(en, NULL, 10), value);
         }
         ITER_MAP_END();
     }

@@ -142,6 +142,7 @@ int parseResponse(struct request_session* rs, struct sub_conn* sub_conn, char* d
         rs->response->body->data.stream.stream_fd = -1;
         rs->response->body->data.stream.known_length = -1;
         rs->response->body->data.stream.read = chunked_read;
+        rs->response->body->data.stream.notify = NULL;
         struct chunked_stream_extra* extra = rs->response->body->data.stream.extra = pcalloc(rs->response->body->pool, sizeof(struct chunked_stream_extra));
         extra->sub_conn = sub_conn;
         extra->remaining = -1;
@@ -197,7 +198,7 @@ void updateContentHeaders(struct request_session* rs) {
         char len_str[16];
         sprintf(len_str, "%lu", len);
         header_setoradd(rs->response->headers, "Content-Length", len_str);
-    } else {
+    } else if (str_eq(rs->request->http_version, "HTTP/1.1")) {
         header_setoradd(rs->response->headers, "Transfer-Encoding", "chunked");
         struct mempool* pool = mempool_new();
         pchild(rs->pool, pool);

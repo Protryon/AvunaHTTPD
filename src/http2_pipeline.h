@@ -5,6 +5,7 @@
 #ifndef AVUNA_HTTPD_HTTP2_PIPELINE_H
 #define AVUNA_HTTPD_HTTP2_PIPELINE_H
 
+#include <avuna/headers.h>
 #include <avuna/http2.h>
 #include <avuna/connection.h>
 
@@ -22,9 +23,11 @@ struct http2_stream {
     uint8_t state;
     uint8_t headers_finished;
     uint32_t identifier;
-    struct buffer header_buffer;
+    struct headers* headers;
     struct buffer data_buffer;
 };
+
+int http2_start_connection(struct sub_conn* sub_conn);
 
 int receive_http2_frame(struct sub_conn* sub_conn, struct frame* frame);
 
