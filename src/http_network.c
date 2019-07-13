@@ -86,14 +86,16 @@ void http_on_closed(struct sub_conn* sub_conn) {
 }
 
 int http_stream_notify(struct request_session* rs) {
+    struct http_server_extra* extra = rs->src_conn->extra;
     struct provision* provision = rs->response->body;
     struct provision_data data;
     data.data = NULL;
     data.size = 0;
     ssize_t total_read = provision->data.stream.read(provision, &data);
     if (total_read == -1) {
-        // backend server failed during stream
         pfree(rs->pool);
+        extra->currently_streaming = NULL;
+        // backend server failed during stream
     } else if (total_read == 0) {
         // end of stream
         if (data.size > 0) {
@@ -102,6 +104,7 @@ int http_stream_notify(struct request_session* rs) {
             trigger_write(rs->src_conn);
         }
         pfree(rs->pool);
+        extra->currently_streaming = NULL;
     } else if (total_read == -2) {
         // nothing to read, not end of stream
         return 0;

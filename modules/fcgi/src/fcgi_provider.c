@@ -96,7 +96,7 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
     frame.type = FCGI_BEGIN_REQUEST;
     int output_ready = 0;
     while (frame.type != FCGI_END_REQUEST) {
-        ssize_t status = fcgi_readFrame(&sub_conn->read_buffer, &frame, sub_conn->pool);
+        ssize_t status = fcgi_readFrame(&sub_conn->read_buffer, &frame, extra->output->pool);
         if (status == -2) {
             if (output_ready && extra->provision->data.stream.notify(extra->rs)) {
                 return 1;
@@ -171,7 +171,6 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
                     extra->stdout_state = 3;
                 }
 
-                pxfer(sub_conn->pool, extra->rs->src_conn->pool, frame.data);
                 void* offset_data = frame.data + headers_read;
                 size_t len = frame.len - headers_read;
                 buffer_push(extra->output, offset_data, len);
@@ -208,6 +207,10 @@ void fcgi_on_closed(struct sub_conn* sub_conn) {
     struct fcgi_stream_data* extra = sub_conn->extra;
     extra->complete = 1;
     pfree(sub_conn->pool);
+}
+
+void safe_close_fcgi(struct sub_conn* sub_conn) {
+    sub_conn->safe_close = 1;
 }
 
 struct provision* fcgi_provide_data(struct provider* provider, struct request_session* rs) {
@@ -256,6 +259,8 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     }
     struct mempool* provision_pool = mempool_new();
     struct mempool* sub_pool = mempool_new();
+    phook(rs->pool, (void (*)(void*)) safe_close_fcgi, sub_pool);
+    pchild(rs->src_conn->conn->pool, sub_pool);
     struct sub_conn* sub_conn = pcalloc(sub_pool, sizeof(struct sub_conn));
     sub_conn->conn = rs->conn;
     sub_conn->pool = sub_pool;
@@ -263,10 +268,10 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     buffer_init(&sub_conn->read_buffer, sub_conn->pool);
     buffer_init(&sub_conn->write_buffer, sub_conn->pool);
     sub_conn->fd = fcgi_fd;
-    struct fcgi_stream_data* stream_data = pcalloc(provision_pool, sizeof(struct fcgi_stream_data));
+    struct fcgi_stream_data* stream_data = pcalloc(sub_conn->pool, sizeof(struct fcgi_stream_data));
     buffer_init(&stream_data->headers, sub_conn->pool);
-    stream_data->output = pcalloc(provision_pool, sizeof(struct buffer));
-    buffer_init(stream_data->output, provision_pool);
+    stream_data->output = pcalloc(sub_conn->pool, sizeof(struct buffer));
+    buffer_init(stream_data->output, sub_conn->pool);
     stream_data->rs = rs;
     sub_conn->extra = stream_data;
     sub_conn->read = fcgi_read;
@@ -417,6 +422,7 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     provision->data.stream.stream_fd = -1;
     provision->requested_vhost_action = VHOST_ACTION_NO_CONTENT_UPDATE;
     provision->data.stream.delay_header_output = 1;
+    provision->data.stream.known_length = -1;
     return provision;
 
 }

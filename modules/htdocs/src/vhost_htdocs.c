@@ -359,7 +359,7 @@ int handle_vhost_htdocs(struct request_session* rs) {
 
     int do_gzip = should_gzip(rs);
 
-    if (do_gzip == 1) {
+    if (0 && do_gzip == 1) {
         if (rs->response->body->type == PROVISION_DATA) {
             if (gzip_total(rs)) {
                 // gzip failed, continue without it

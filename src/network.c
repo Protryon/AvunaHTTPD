@@ -105,11 +105,11 @@ void run_work(struct work_param* param) {
         for (int i = 0; i < epoll_status; ++i) {
             struct epoll_event* event = &events[i];
             struct sub_conn* sub_conn = event->data.ptr;
+            if (event->events == 0) continue;
             if (sub_conn->safe_close) {
                 sub_conn->on_closed(sub_conn);
                 continue;
             }
-            if (event->events == 0) continue;
 
             if (event->events & EPOLLHUP) {
                 sub_conn->on_closed(sub_conn);
@@ -198,8 +198,6 @@ void run_work(struct work_param* param) {
                     continue;
                 }
             }
-
-            cont:;
         }
     }
 }

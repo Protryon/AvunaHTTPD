@@ -164,7 +164,7 @@ void run_accept(struct accept_param* param) {
             continue;
         }
         if ((spfd.revents ^ POLLIN) != 0) {
-            errlog(param->server->logsess, "Error after polling server: %i (poll revents), closing server!",
+            errlog(param->server->logsess, "Error after polling server: %i (poll revents)!",
                    spfd.revents);
             pfree(pool);
             break;

@@ -21,7 +21,9 @@ void fcgi_writeFrame(struct buffer* buffer, struct fcgi_frame* frame) {
     header[6] = 0; // 0 padding
     header[7] = 0; // reserved
     buffer_push(buffer, header, 8);
-    buffer_push(buffer, frame->data, frame->len);
+    if (frame->data != NULL && frame->len > 0) {
+        buffer_push(buffer, frame->data, frame->len);
+    }
 }
 
 void fcgi_writeParam(struct buffer* buffer, uint16_t reqid, const char* name, const char* value) {
@@ -62,6 +64,9 @@ void fcgi_writeParam(struct buffer* buffer, uint16_t reqid, const char* name, co
 }
 
 ssize_t fcgi_readFrame(struct buffer* buffer, struct fcgi_frame* frame, struct mempool* pool) {
+    if (buffer->size < 8) {
+        return -2;
+    }
     uint8_t header[8];
     buffer_peek(buffer, 8, header);
     if (header[0] != FCGI_VERSION_1) {

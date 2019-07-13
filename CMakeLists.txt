@@ -72,7 +72,7 @@ target_include_directories(mod_reverse_proxy PRIVATE modules/htdocs/include/)
 target_link_libraries(mod_reverse_proxy -lavuna-util)
 
 install(TARGETS mod_fcgi mod_htdocs mod_mount mod_redirect mod_reverse_proxy
-        LIBRARY DESTINATION lib)
+        LIBRARY DESTINATION /etc/avuna/httpd/modules)
 
 
 set(CPACK_DEBIAN_PACKAGE_NAME avunahttpd)

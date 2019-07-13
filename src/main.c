@@ -458,7 +458,7 @@ int main(int argc, char* argv[]) {
     struct hashmap* binding_map = hashmap_new(16, global_pool);
 
     struct list* binding_list = hashmap_get(cfg->nodeListsByCat, "binding");
-    for (int i = 0; i < binding_list->count; i++) {
+    for (int i = 0; i < (binding_list == NULL ? 0 : binding_list->count); i++) {
         struct config_node* bind_node = binding_list->data[i];
         if (bind_node->name == NULL) {
             errlog(delog, "All bind nodes must have names, skipping node.");
@@ -476,7 +476,7 @@ int main(int argc, char* argv[]) {
     }
 
     struct list* provider_list = hashmap_get(cfg->nodeListsByCat, "provider");
-    for (int i = 0; i < provider_list->count; i++) {
+    for (int i = 0; i < (provider_list == NULL ? 0 : provider_list->count); i++) {
         struct config_node* provider_node = provider_list->data[i];
         if (provider_node->name == NULL) {
             errlog(delog, "All provider nodes must have names, skipping node.");
@@ -525,7 +525,7 @@ int main(int argc, char* argv[]) {
     struct hashmap* vhost_map = hashmap_new(16, global_pool);
 
     struct list* vhost_list = hashmap_get(cfg->nodeListsByCat, "vhost");
-    for (int i = 0; i < vhost_list->count; i++) {
+    for (int i = 0; i < (vhost_list == NULL ? 0 : vhost_list->count); i++) {
         struct config_node* vhost_node = vhost_list->data[i];
         if (vhost_node->name == NULL) {
             errlog(delog, "All vhost nodes must have names, skipping node.");
@@ -546,7 +546,7 @@ int main(int argc, char* argv[]) {
 
     struct list* server_infos = list_new(8, global_pool);
 
-    for (size_t i = 0; i < server_list->count; i++) {
+    for (size_t i = 0; i < (server_list == NULL ? 0 : server_list->count); i++) {
         struct config_node* serv = server_list->data[i];
         if (serv->name == NULL) {
             errlog(delog, "All server nodes must have names, skipping node.");
