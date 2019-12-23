@@ -16,6 +16,7 @@
 #include <avuna/provider.h>
 #include <avuna/globals.h>
 #include <avuna/network.h>
+#include <avuna/llist.h>
 #include <avuna/module.h>
 #include <errno.h>
 #include <sys/epoll.h>
@@ -195,6 +196,8 @@ void run_work(struct work_param* param) {
                 int p = sub_conn->read(sub_conn, read_buf, read_total);
                 if (p == 1) {
                     sub_conn->on_closed(sub_conn);
+                    continue;
+                } else if (p == -1) { // already closed
                     continue;
                 }
             }

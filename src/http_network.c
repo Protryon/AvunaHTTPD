@@ -166,7 +166,7 @@ int handle_http_server_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t
         return 0;
     }
 
-    //TODO: while the HTTP spec doesn't allow \n\n, we should probably accept it similar to other implementations
+    //TODO: while the HTTP spec doesn't allow \n, we should probably accept it similar to other implementations
     size_t match_length = 0;
     static unsigned char newlines[4] = {0x0D, 0x0A, 0x0D, 0x0A};
 

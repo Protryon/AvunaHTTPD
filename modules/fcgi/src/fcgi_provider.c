@@ -99,13 +99,12 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
         ssize_t status = fcgi_readFrame(&sub_conn->read_buffer, &frame, extra->output->pool);
         if (status == -2) {
             if (output_ready && extra->provision->data.stream.notify(extra->rs)) {
-                return 1;
+                return -1;
             }
             return 0;
         } else if (status == -1) {
             return 1;
         }
-
         // fcgi server messed up and replied to wrong request on wrong connection
         if (frame.request_id != extra->request_id) {
             frame.type = FCGI_BEGIN_REQUEST; // to prevent termination of loop
@@ -163,7 +162,6 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
                     }
                 }
             }
-
             if (headers_read <= frame.len) {
                 if (extra->stdout_state == 2) {
                     updateContentHeaders(extra->rs);
@@ -181,14 +179,14 @@ int fcgi_read(struct sub_conn* sub_conn, uint8_t* read_buf, size_t read_buf_len)
 
 
     if (output_ready && extra->provision->data.stream.notify(extra->rs)) {
-        return 1;
+        return -1;
     }
 
     extra->complete = 1;
 
     while (!extra->provision->data.stream.notify(extra->rs)) { }
 
-    return 1;
+    return -1;
 }
 
 ssize_t fcgi_provision_read(struct provision* provision, struct provision_data* buffer) {
@@ -207,10 +205,6 @@ void fcgi_on_closed(struct sub_conn* sub_conn) {
     struct fcgi_stream_data* extra = sub_conn->extra;
     extra->complete = 1;
     pfree(sub_conn->pool);
-}
-
-void safe_close_fcgi(struct sub_conn* sub_conn) {
-    sub_conn->safe_close = 1;
 }
 
 struct provision* fcgi_provide_data(struct provider* provider, struct request_session* rs) {
@@ -259,8 +253,8 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     }
     struct mempool* provision_pool = mempool_new();
     struct mempool* sub_pool = mempool_new();
-    phook(rs->pool, (void (*)(void*)) safe_close_fcgi, sub_pool);
     pchild(rs->src_conn->conn->pool, sub_pool);
+    pchild(rs->pool, sub_pool);
     struct sub_conn* sub_conn = pcalloc(sub_pool, sizeof(struct sub_conn));
     sub_conn->conn = rs->conn;
     sub_conn->pool = sub_pool;
@@ -291,10 +285,13 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     fcgi_writeFrame(&sub_conn->write_buffer, &frame);
 
     //TODO: SERVER_ADDR?
-
     struct hashmap* fcgi_params = hashmap_new(16, rs->pool);
     hashmap_put(fcgi_params, "REQUEST_URI", rs->request->path);
-    hashmap_put(fcgi_params, "CONTENT_LENGTH", "0");
+    if (rs->request->body != NULL && rs->request->body->type == PROVISION_DATA) {
+        hashmap_put(fcgi_params, "CONTENT_LENGTH", pprintf(fcgi_params->pool, "%lu", rs->request->body->data.data.size));
+    } else {
+        hashmap_put(fcgi_params, "CONTENT_LENGTH", "0");
+    }
     if (rs->request->body != NULL && rs->request->body->content_type != NULL) {
         hashmap_put(fcgi_params, "CONTENT_TYPE", rs->request->body->content_type);
     }
@@ -396,7 +393,7 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
                 cr += frame.len;
                 left -= frame.len;
                 // pxfer should handle the invalid pointers correctly in writeFrame
-                fcgi_writeFrame(&sub_conn->read_buffer, &frame);
+                fcgi_writeFrame(&sub_conn->write_buffer, &frame);
             }
         } else {
             // TODO: implement once we have streaming post bodies implemented
@@ -424,7 +421,6 @@ struct provision* fcgi_provide_data(struct provider* provider, struct request_se
     provision->data.stream.delay_header_output = 1;
     provision->data.stream.known_length = -1;
     return provision;
-
 }
 
 void initialize(struct module* module) {
